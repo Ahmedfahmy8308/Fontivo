@@ -455,10 +455,10 @@ fn test_validate_executable_path_non_exe_rejected() {
     let bat_file = temp_dir.join("malicious.bat");
     fs::write(&bat_file, b"@echo off\necho test").unwrap();
 
-    let res = validate_executable_path(bat_file.to_str().unwrap());
+    let _res = validate_executable_path(bat_file.to_str().unwrap());
     #[cfg(windows)]
     assert!(
-        res.is_err(),
+        _res.is_err(),
         "Expected non-exe script file to be rejected on Windows"
     );
 

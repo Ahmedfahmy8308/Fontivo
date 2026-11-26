@@ -347,11 +347,8 @@ fn real_main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(target_os = "linux")]
     {
-        // Linux (Wayland / X11): set proper App ID and WM_CLASS for desktop environment integration
-        use tao::platform::unix::WindowBuilderExtUnix;
-        window_builder = window_builder
-            .with_app_id("com.fontivo.app".to_string())
-            .with_decorations(false);
+        // Linux (Wayland / X11): borderless frame matching desktop window chrome
+        window_builder = window_builder.with_decorations(false);
     }
 
     let window = window_builder.build(&event_loop)?;
