@@ -221,6 +221,8 @@ pub struct Workspace {
     pub updated_at: u64,
     #[serde(default)]
     pub typography: WorkspaceTypography,
+    #[serde(default, alias = "projectFonts")]
+    pub project_fonts: Vec<TypographyFont>,
     #[serde(default, alias = "colors")]
     pub palette: Vec<WorkspaceColor>,
     #[serde(default)]
@@ -814,15 +816,21 @@ pub fn sync_workspace_physical_files(
     let palettes_dir = project_dir.join("Palettes");
     let guidelines_dir = project_dir.join("Guidelines");
 
-    // 1. Copy workspace typography fonts into Fonts/
-    let typography_slots = [
+    // 1. Copy workspace typography & project fonts into Fonts/
+    let mut all_font_slots: Vec<&TypographyFont> = [
         &ws.typography.heading_font,
         &ws.typography.body_font,
         &ws.typography.accent_font,
         &ws.typography.code_font,
-    ];
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    for pf in &ws.project_fonts {
+        all_font_slots.push(pf);
+    }
 
-    for f_item in typography_slots.into_iter().flatten() {
+    for f_item in all_font_slots {
         let mut resolved_font = None;
         if let Some(fid) = f_item.font_id {
             resolved_font = fonts_snapshot.iter().find(|f| f.id == fid);
@@ -990,7 +998,7 @@ fn save_workspace_to_disk(dir: &Path, ws: &Workspace) -> Result<(), String> {
     fs::write(&yaml_path, yaml_str)
         .map_err(|e| format!("Failed to write workspace YAML: {}", e))?;
 
-    let _ = sync_workspace_physical_files(ws, &[], None);
+    let _ = sync_workspace_physical_files(ws, &[], ws.folder_path.as_deref());
 
     Ok(())
 }
@@ -1038,6 +1046,7 @@ fn load_workspace_from_disk(dir: &Path, id: &str) -> Option<Workspace> {
                 description: None,
                 updated_at: current_timestamp(),
                 typography: WorkspaceTypography::default(),
+                project_fonts: Vec::new(),
                 palette: Vec::new(),
                 tasks: Vec::new(),
                 notes,
@@ -1125,6 +1134,7 @@ fn get_default_workspace() -> Workspace {
                 style: Some("Regular".to_string()),
             }),
         },
+        project_fonts: Vec::new(),
         palette: vec![
             WorkspaceColor { name: "Deep Violet".to_string(), hex: "#5200EA".to_string(), role: "primary".to_string() },
             WorkspaceColor { name: "Electric Indigo".to_string(), hex: "#7C3AED".to_string(), role: "secondary".to_string() },
@@ -1795,6 +1805,13 @@ pub fn save_workspace(
         resolve_single_typography_slot(&mut ws.typography.body_font, &fonts_snapshot);
         resolve_single_typography_slot(&mut ws.typography.accent_font, &fonts_snapshot);
         resolve_single_typography_slot(&mut ws.typography.code_font, &fonts_snapshot);
+        for pf in &mut ws.project_fonts {
+            let mut slot = Some(pf.clone());
+            resolve_single_typography_slot(&mut slot, &fonts_snapshot);
+            if let Some(resolved) = slot {
+                *pf = resolved;
+            }
+        }
 
         // Ensure valid physical path and nested custom folders exist on disk
         if let Ok(phys) = ensure_workspace_physical_dir(&ws.id, ws.folder_path.as_deref()) {
@@ -1891,6 +1908,29 @@ pub fn save_workspace_with_id(
             (st.data_dir.clone(), st.fonts.clone())
         };
 
+        resolve_single_typography_slot(&mut ws.typography.heading_font, &fonts_snapshot);
+        resolve_single_typography_slot(&mut ws.typography.body_font, &fonts_snapshot);
+        resolve_single_typography_slot(&mut ws.typography.accent_font, &fonts_snapshot);
+        resolve_single_typography_slot(&mut ws.typography.code_font, &fonts_snapshot);
+        for pf in &mut ws.project_fonts {
+            let mut slot = Some(pf.clone());
+            resolve_single_typography_slot(&mut slot, &fonts_snapshot);
+            if let Some(resolved) = slot {
+                *pf = resolved;
+            }
+        }
+
+        if let Ok(phys) = ensure_workspace_physical_dir(&ws.id, ws.folder_path.as_deref()) {
+            ws.folder_path = Some(phys.to_string_lossy().to_string());
+            for rel in &ws.folders {
+                if let Ok(safe_rel) = validate_relative_subfolder(rel) {
+                    if !safe_rel.is_empty() {
+                        let _ = fs::create_dir_all(phys.join(safe_rel));
+                    }
+                }
+            }
+        }
+
         let dir = get_workspaces_dir(&data_dir);
         if let Err(e) = save_workspace_to_disk(&dir, &ws) {
             respond_json(
@@ -1902,7 +1942,7 @@ pub fn save_workspace_with_id(
             );
             return;
         }
-        let _ = sync_workspace_physical_files(&ws, &fonts_snapshot, None);
+        let _ = sync_workspace_physical_files(&ws, &fonts_snapshot, ws.folder_path.as_deref());
 
         respond_json_str(
             req,
@@ -1954,6 +1994,9 @@ pub fn delete_workspace(
     let json_path = dir.join(format!("{}.json", safe_id));
     let yaml_path = dir.join(format!("{}.yaml", safe_id));
     let folder_dir = dir.join(safe_id);
+    let app_ws_dir = crate::engine::lifecycle::get_app_data_dir()
+        .join("Workspaces")
+        .join(safe_id);
 
     let mut removed = false;
     if json_path.exists() {
@@ -1966,6 +2009,10 @@ pub fn delete_workspace(
     }
     if folder_dir.exists() && folder_dir.is_dir() {
         let _ = fs::remove_dir_all(folder_dir);
+        removed = true;
+    }
+    if app_ws_dir.exists() && app_ws_dir.is_dir() {
+        let _ = fs::remove_dir_all(app_ws_dir);
         removed = true;
     }
 
@@ -2024,14 +2071,18 @@ pub fn activate_workspace_ram(
     let mut activated_ids = Vec::new();
     let mut activated_names = Vec::new();
 
-    let typography_slots: Vec<Option<TypographyFont>> = vec![
+    let mut all_slots: Vec<TypographyFont> = vec![
         ws.typography.heading_font,
         ws.typography.body_font,
         ws.typography.accent_font,
         ws.typography.code_font,
-    ];
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    all_slots.extend(ws.project_fonts.clone());
 
-    for font_opt in typography_slots.into_iter().flatten() {
+    for font_opt in all_slots {
         let target_font = if let Some(fid) = font_opt.font_id {
             st.fonts.iter().find(|f| f.id == fid).cloned()
         } else if let Some(ref path_str) = font_opt.path {
@@ -2077,6 +2128,31 @@ pub fn activate_workspace_ram(
                         .to_string_lossy()
                         .to_string()
                 }));
+            }
+        }
+    }
+
+    // Also activate any physical font files dropped directly inside the workspace's Fonts/ directory
+    if let Ok(phys_dir) = ensure_workspace_physical_dir(safe_id, ws.folder_path.as_deref()) {
+        let fonts_dir = phys_dir.join("Fonts");
+        if let Ok(entries) = fs::read_dir(fonts_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file() {
+                    let ext = p
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    if matches!(ext.as_str(), "ttf" | "otf" | "ttc") {
+                        let _ = st.activator.activate_ram(&p.to_string_lossy());
+                        if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                            if !activated_names.iter().any(|n| n.eq_ignore_ascii_case(stem)) {
+                                activated_names.push(stem.to_string());
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2594,14 +2670,34 @@ pub fn open_workspace_folder(
     );
 }
 
+fn encode_uri_component_safe(val: &str) -> String {
+    let mut out = String::with_capacity(val.len());
+    for byte in val.as_bytes() {
+        let ch = *byte;
+        if ch.is_ascii_alphanumeric() || matches!(ch, b'-' | b'_' | b'.' | b'~' | b'/') {
+            out.push(ch as char);
+        } else {
+            out.push_str(&format!("%{:02X}", ch));
+        }
+    }
+    out
+}
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscoveredDesignFile {
     pub name: String,
     pub path: String,
+    pub relative_path: String,
+    pub subfolder: String,
     pub extension: String,
+    pub format: String,
     pub size: u64,
     pub fonts_used: Vec<String>,
+    pub used_fonts: Vec<String>,
+    pub missing_fonts: Vec<String>,
+    pub all_active: bool,
+    pub preview_url: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -2614,6 +2710,7 @@ pub struct DiscoveredFontFile {
     pub format: String,
     pub size: u64,
     pub is_arabic: bool,
+    pub is_active: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -2627,7 +2724,7 @@ pub struct SubfolderTreeNode {
 }
 
 /// POST /api/workspaces/scan-folder: recursively scans folder (depth <= 4, max 500 files)
-/// for `.psd/.ai/.indd/.pdf/.svg` design files and `.ttf/.otf/.ttc` font files
+/// for `.psd/.ai/.indd/.pdf/.svg/.png/.jpg/.webp/.fig/.xd` design files and `.ttf/.otf/.ttc` font files
 pub fn scan_workspace_folder(
     mut req: Request,
     state: &Arc<RwLock<AppState>>,
@@ -2638,7 +2735,7 @@ pub fn scan_workspace_folder(
     #[derive(Deserialize, Default)]
     #[serde(rename_all = "camelCase")]
     struct ScanFolderReq {
-        #[serde(default)]
+        #[serde(default, alias = "workspaceId")]
         id: Option<String>,
         #[serde(default)]
         folder_path: Option<String>,
@@ -2658,6 +2755,17 @@ pub fn scan_workspace_folder(
         }
     };
 
+    let (data_dir, fonts_snapshot) = {
+        let st = state.read().unwrap();
+        (st.data_dir.clone(), st.fonts.clone())
+    };
+    let ws_dir = get_workspaces_dir(&data_dir);
+    let ws_custom_root = parsed
+        .id
+        .as_deref()
+        .and_then(|id| load_workspace_from_disk(&ws_dir, id))
+        .and_then(|w| w.folder_path);
+
     let target_folder = if let Some(fp) =
         parsed.folder_path.as_ref().filter(|s| !s.trim().is_empty())
     {
@@ -2671,9 +2779,18 @@ pub fn scan_workspace_folder(
             );
             return;
         }
-        PathBuf::from(fp.trim())
+        let candidate = PathBuf::from(fp.trim());
+        if !candidate.exists() && parsed.id.is_some() {
+            ensure_workspace_physical_dir(
+                parsed.id.as_deref().unwrap_or("default"),
+                ws_custom_root.as_deref(),
+            )
+            .unwrap_or(candidate)
+        } else {
+            candidate
+        }
     } else if let Some(id_str) = parsed.id.as_ref().filter(|s| !s.trim().is_empty()) {
-        match ensure_workspace_physical_dir(id_str, None) {
+        match ensure_workspace_physical_dir(id_str, ws_custom_root.as_deref()) {
             Ok(d) => d,
             Err(e) => {
                 respond_json(
@@ -2711,16 +2828,22 @@ pub fn scan_workspace_folder(
     let mut design_files: Vec<DiscoveredDesignFile> = Vec::new();
     let mut font_files: Vec<DiscoveredFontFile> = Vec::new();
     let mut subfolder_tree: Vec<SubfolderTreeNode> = Vec::new();
+    let mut discovered_folders: Vec<String> = Vec::new();
     let mut all_fonts_used_set = std::collections::HashSet::new();
     let mut total_scanned = 0usize;
 
+    #[allow(clippy::too_many_arguments)]
     fn walk_workspace_dir(
+        root: &Path,
         dir: &Path,
+        ws_id: Option<&str>,
+        fonts_snapshot: &[crate::server::state::FontRecord],
         depth: usize,
         total_scanned: &mut usize,
         design_files: &mut Vec<DiscoveredDesignFile>,
         font_files: &mut Vec<DiscoveredFontFile>,
         subfolder_tree: &mut Vec<SubfolderTreeNode>,
+        discovered_folders: &mut Vec<String>,
         all_fonts_used_set: &mut std::collections::HashSet<String>,
     ) {
         if depth > 4 || *total_scanned >= 500 {
@@ -2730,6 +2853,13 @@ pub fn scan_workspace_folder(
         let mut local_designs = 0usize;
         let mut local_fonts = 0usize;
         let mut child_dirs = Vec::new();
+
+        if let Ok(rel_dir) = dir.strip_prefix(root) {
+            let rel_str = rel_dir.to_string_lossy().replace('\\', "/");
+            if !rel_str.is_empty() {
+                discovered_folders.push(rel_str);
+            }
+        }
 
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
@@ -2753,20 +2883,71 @@ pub fn scan_workspace_folder(
                     .to_string();
                 let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
 
-                if matches!(ext.as_str(), "psd" | "ai" | "indd" | "pdf" | "svg") {
+                if matches!(
+                    ext.as_str(),
+                    "psd" | "ai" | "indd" | "pdf" | "svg" | "png" | "jpg" | "jpeg" | "webp" | "fig" | "xd"
+                ) {
                     *total_scanned += 1;
                     local_designs += 1;
-                    let extracted =
-                        crate::scanner::AdobeScanner::extract_font_names(&p).unwrap_or_default();
-                    for f in &extracted {
-                        all_fonts_used_set.insert(f.clone());
+                    let extracted = if matches!(ext.as_str(), "psd" | "ai" | "indd" | "pdf" | "svg") {
+                        crate::scanner::AdobeScanner::extract_font_names(&p).unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    let mut missing_fonts = Vec::new();
+                    for ufont in &extracted {
+                        all_fonts_used_set.insert(ufont.clone());
+                        let ulow = ufont.to_ascii_lowercase();
+                        let active_match = fonts_snapshot.iter().any(|f| {
+                            f.is_active
+                                && (f.name.to_ascii_lowercase().contains(&ulow)
+                                    || f.family
+                                        .as_deref()
+                                        .map(|fam| fam.to_ascii_lowercase().contains(&ulow))
+                                        .unwrap_or(false))
+                        });
+                        if !active_match {
+                            missing_fonts.push(ufont.clone());
+                        }
                     }
+
+                    let rel_file = p
+                        .strip_prefix(root)
+                        .ok()
+                        .map(|r| r.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_else(|| fname.clone());
+                    let rel_sub = p
+                        .parent()
+                        .and_then(|par| par.strip_prefix(root).ok())
+                        .map(|r| r.to_string_lossy().replace('\\', "/"))
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "Designs".to_string());
+                    let is_image = matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "svg");
+                    let preview_url = if is_image {
+                        ws_id.map(|id_str| {
+                            format!(
+                                "/api/workspaces/{}/asset?path={}",
+                                id_str,
+                                encode_uri_component_safe(&rel_file)
+                            )
+                        })
+                    } else {
+                        None
+                    };
+
                     design_files.push(DiscoveredDesignFile {
                         name: fname,
                         path: p.to_string_lossy().to_string(),
+                        relative_path: rel_file,
+                        subfolder: rel_sub,
                         extension: ext.to_uppercase(),
+                        format: ext.to_uppercase(),
                         size,
-                        fonts_used: extracted,
+                        fonts_used: extracted.clone(),
+                        used_fonts: extracted,
+                        all_active: missing_fonts.is_empty(),
+                        missing_fonts,
+                        preview_url,
                     });
                 } else if matches!(ext.as_str(), "ttf" | "otf" | "ttc") {
                     *total_scanned += 1;
@@ -2786,6 +2967,16 @@ pub fn scan_workspace_folder(
                         .as_ref()
                         .map(|m| m.coverage.supports_arabic)
                         .unwrap_or(false);
+                    let fam_low = family.to_ascii_lowercase();
+                    let name_low = fname.to_ascii_lowercase();
+                    let is_active = fonts_snapshot.iter().any(|f| {
+                        f.is_active
+                            && (f.name.to_ascii_lowercase() == name_low
+                                || f.family
+                                    .as_deref()
+                                    .map(|fam| fam.to_ascii_lowercase() == fam_low)
+                                    .unwrap_or(false))
+                    });
                     all_fonts_used_set.insert(family.clone());
 
                     font_files.push(DiscoveredFontFile {
@@ -2796,6 +2987,7 @@ pub fn scan_workspace_folder(
                         format: ext.to_uppercase(),
                         size,
                         is_arabic,
+                        is_active,
                     });
                 }
             }
@@ -2816,12 +3008,16 @@ pub fn scan_workspace_folder(
 
         for child in child_dirs {
             walk_workspace_dir(
+                root,
                 &child,
+                ws_id,
+                fonts_snapshot,
                 depth + 1,
                 total_scanned,
                 design_files,
                 font_files,
                 subfolder_tree,
+                discovered_folders,
                 all_fonts_used_set,
             );
         }
@@ -2829,11 +3025,15 @@ pub fn scan_workspace_folder(
 
     walk_workspace_dir(
         &target_folder,
+        &target_folder,
+        parsed.id.as_deref(),
+        &fonts_snapshot,
         0,
         &mut total_scanned,
         &mut design_files,
         &mut font_files,
         &mut subfolder_tree,
+        &mut discovered_folders,
         &mut all_fonts_used_set,
     );
 
@@ -2879,7 +3079,8 @@ pub fn scan_workspace_folder(
             "designFiles": design_files,
             "fontFiles": font_files,
             "fontsUsed": fonts_used,
-            "subfolderTree": subfolder_tree
+            "subfolderTree": subfolder_tree,
+            "discoveredFolders": discovered_folders
         }),
         cors_origin,
         json_header,
@@ -3213,7 +3414,7 @@ pub fn upload_workspace_design(
         Some(format!(
             "/api/workspaces/{}/asset?path={}",
             safe_id,
-            super::common::urlencoding_decode(&rel_file).replace(' ', "%20")
+            encode_uri_component_safe(&rel_file)
         ))
     } else {
         None
@@ -3237,6 +3438,203 @@ pub fn upload_workspace_design(
                 "previewUrl": preview_url
             }
         }),
+        cors_origin,
+        json_header,
+    );
+}
+
+/// POST /api/workspaces/save-palette: persists updated color palette + writes Palettes/palette.{ase,css,json}
+pub fn save_workspace_palette(
+    mut req: Request,
+    state: &Arc<RwLock<AppState>>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let body = read_body(&mut req);
+    #[derive(Deserialize, Default)]
+    #[serde(rename_all = "camelCase")]
+    struct SavePaletteReq {
+        #[serde(default, alias = "id")]
+        workspace_id: Option<String>,
+        #[serde(default)]
+        palette: Vec<WorkspaceColor>,
+    }
+
+    let parsed = match serde_json::from_str::<SavePaletteReq>(&body) {
+        Ok(p) => p,
+        Err(e) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": format!("Invalid palette payload: {}", e) }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let safe_id = match parsed
+        .workspace_id
+        .as_deref()
+        .map(validate_workspace_id)
+        .transpose()
+    {
+        Ok(Some(v)) => v,
+        _ => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": "Missing or invalid workspaceId" }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let (data_dir, fonts_snapshot) = {
+        let st = state.read().unwrap();
+        (st.data_dir.clone(), st.fonts.clone())
+    };
+    let ws_dir = get_workspaces_dir(&data_dir);
+    let mut ws = load_workspace_from_disk(&ws_dir, safe_id).unwrap_or_else(|| Workspace {
+        id: safe_id.to_string(),
+        name: safe_id.to_string(),
+        ..Default::default()
+    });
+    ws.palette = parsed
+        .palette
+        .into_iter()
+        .map(|mut c| {
+            c.hex = sanitize_hex_color(&c.hex);
+            c
+        })
+        .collect();
+    ws.updated_at = current_timestamp();
+
+    if let Err(e) = save_workspace_to_disk(&ws_dir, &ws) {
+        respond_json(
+            req,
+            500,
+            serde_json::json!({ "success": false, "error": e }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let phys = sync_workspace_physical_files(&ws, &fonts_snapshot, ws.folder_path.as_deref())
+        .ok()
+        .map(|d| d.join("Palettes").join("palette.ase").to_string_lossy().to_string());
+
+    respond_json(
+        req,
+        200,
+        serde_json::json!({
+            "success": true,
+            "id": safe_id,
+            "asePath": phys,
+            "paletteCount": ws.palette.len()
+        }),
+        cors_origin,
+        json_header,
+    );
+}
+
+/// DELETE /api/workspaces/:id/design-file?path=...: removes an uploaded design asset cleanly from disk
+pub fn delete_workspace_design_file(
+    req: Request,
+    state: &Arc<RwLock<AppState>>,
+    id: &str,
+    query_params: &std::collections::HashMap<String, String>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let safe_id = match validate_workspace_id(id) {
+        Ok(v) => v,
+        Err(err) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": err }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let rel_raw = query_params.get("path").map(|s| s.as_str()).unwrap_or("");
+    let clean_rel = match validate_relative_subfolder(rel_raw) {
+        Ok(r) if !r.is_empty() => r,
+        _ => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": "Invalid file path" }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let data_dir = {
+        let st = state.read().unwrap();
+        st.data_dir.clone()
+    };
+    let ws_dir = get_workspaces_dir(&data_dir);
+    let custom_root = load_workspace_from_disk(&ws_dir, safe_id).and_then(|w| w.folder_path);
+    let root = match ensure_workspace_physical_dir(safe_id, custom_root.as_deref()) {
+        Ok(d) => d,
+        Err(e) => {
+            respond_json(
+                req,
+                404,
+                serde_json::json!({ "success": false, "error": e }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let mut target = root.clone();
+    for seg in clean_rel.split('/') {
+        target = target.join(seg);
+    }
+
+    let ok_contained = match (root.canonicalize(), target.canonicalize()) {
+        (Ok(cr), Ok(ct)) => ct.starts_with(cr) && ct.is_file(),
+        _ => false,
+    };
+    if !ok_contained {
+        respond_json(
+            req,
+            404,
+            serde_json::json!({ "success": false, "error": "Design file not found" }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    if let Err(e) = fs::remove_file(&target) {
+        respond_json(
+            req,
+            500,
+            serde_json::json!({ "success": false, "error": format!("Failed to delete file: {}", e) }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    respond_json(
+        req,
+        200,
+        serde_json::json!({ "success": true, "removedPath": clean_rel }),
         cors_origin,
         json_header,
     );
@@ -3319,6 +3717,9 @@ pub fn serve_workspace_asset(
             "svg" => "image/svg+xml",
             "webp" => "image/webp",
             "pdf" => "application/pdf",
+            "html" => "text/html; charset=utf-8",
+            "css" => "text/css; charset=utf-8",
+            "json" => "application/json; charset=utf-8",
             _ => "application/octet-stream",
         };
         let mime_h = Header::from_bytes(&b"Content-Type"[..], mime.as_bytes()).unwrap();

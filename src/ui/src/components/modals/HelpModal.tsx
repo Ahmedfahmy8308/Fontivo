@@ -1,4 +1,7 @@
 import { X, HelpCircle, Keyboard } from "lucide-react";
+import uiPkg from "../../../package.json";
+
+const APP_VERSION = uiPkg.version;
 
 export default function HelpModal({
   isOpen,
@@ -84,7 +87,7 @@ export default function HelpModal({
         </div>
 
         <div className="p-3 bg-[var(--color-back-side)] border-t border-[var(--color-border)] text-center text-[11px] text-[var(--color-text-muted)] font-mono">
-          Fontivo v1.0.0 • Open Source Community
+          Fontivo v{APP_VERSION} • Open Source Community
         </div>
       </div>
     </div>

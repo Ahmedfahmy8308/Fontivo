@@ -201,3 +201,39 @@ fn test_parse_github_releases_api_payload_detects_newer_version_and_sha256() {
     assert!(parsed.sha256_checksum.is_some());
     assert!(parsed.download_url.contains("v9.9.9"));
 }
+
+#[test]
+fn test_parse_site_cdn_manifest_fallback_and_strip_cli_footer() {
+    let site_manifest = r#"{
+        "name": "Fontivo",
+        "desktop": {
+            "version": "9.8.7",
+            "platforms": {
+                "windows": {
+                    "installer": "Fontivo-Setup.exe",
+                    "sizeBytes": 4624701,
+                    "sha256": "f4e72f4e4af9d183e0f0a1d24a663c09a588ccb63cbd5f6fca01655a2303efa6",
+                    "downloadUrl": "https://github.com/Ahmedfahmy8308/Fontivo/releases/download/v9.8.7/Fontivo-Setup.exe"
+                },
+                "macos": {
+                    "downloadUrl": "https://github.com/Ahmedfahmy8308/Fontivo/releases/download/v9.8.7/Fontivo-macos-arm64.tar.gz"
+                },
+                "linux": {
+                    "downloadUrl": "https://github.com/Ahmedfahmy8308/Fontivo/releases/download/v9.8.7/Fontivo-linux-x86_64.tar.gz"
+                }
+            }
+        }
+    }"#;
+
+    let parsed =
+        AutoUpdater::parse_release_payload(site_manifest).expect("Must parse Fontivo-Site manifest");
+    assert_eq!(parsed.latest_version, "9.8.7");
+    assert!(parsed.has_update);
+    assert_eq!(parsed.status, "downloading");
+    assert!(parsed.download_url.contains("9.8.7"));
+
+    let raw_body = "Fixed & Improved\n- Cleaned updater UI\n\n---\n### Platform Install Channels & Verification\n- **Windows:** Download";
+    let clean = AutoUpdater::strip_release_notes_cli_footer(raw_body);
+    assert!(clean.contains("Cleaned updater UI"));
+    assert!(!clean.contains("Platform Install Channels"));
+}

@@ -351,6 +351,7 @@ fn test_styleguide_html_escapes_all_xss_payloads_and_sanitizes_hex() {
                 ..Default::default()
             }),
         },
+        project_fonts: Vec::new(),
         palette: vec![
             WorkspaceColor {
                 name: r#"EvilColor <script>alert(4)</script>"#.into(),
@@ -843,7 +844,109 @@ fn test_http_api_security_headers_collections_and_endpoints() {
         Some(1)
     );
 
-    // 11. POST /api/fonts/delete
+    // 11. Full Workspace CRUD + Palette + Design Upload/Scan/Delete roundtrip
+    let ws_id = "e2e-audit-workspace";
+    let custom_ws_root = temp_data.join("Workspaces").join(ws_id);
+    let create_ws_resp = ureq::post(&format!("{}/api/workspaces", base))
+        .set("Content-Type", "application/json")
+        .send_string(
+            &serde_json::json!({
+                "id": ws_id,
+                "name": "E2E Audit Brand",
+                "client": "Audit Client",
+                "folderPath": custom_ws_root.to_string_lossy(),
+                "projectFonts": [{ "name": "Cairo Bold", "family": "Cairo" }],
+                "palette": [{ "name": "Coral", "hex": "#F16B50", "role": "primary" }],
+                "tasks": [{ "id": "t1", "text": "Initial task", "status": "todo" }],
+                "notes": "Initial notes"
+            })
+            .to_string(),
+        )
+        .expect("POST /api/workspaces should succeed");
+    let created_ws = resp_json(create_ws_resp);
+    assert_eq!(created_ws["success"], true);
+    assert_eq!(created_ws["projectFonts"].as_array().map(|a| a.len()), Some(1));
+
+    // Update palette via /api/workspaces/save-palette
+    let pal_resp = ureq::post(&format!("{}/api/workspaces/save-palette", base))
+        .set("Content-Type", "application/json")
+        .send_string(
+            &serde_json::json!({
+                "workspaceId": ws_id,
+                "palette": [
+                    { "name": "Coral", "hex": "#F16B50", "role": "primary" },
+                    { "name": "Mint", "hex": "#10B981", "role": "accent" }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("POST /api/workspaces/save-palette should succeed");
+    let pal_json = resp_json(pal_resp);
+    assert_eq!(pal_json["success"], true);
+    assert_eq!(pal_json["paletteCount"], 2);
+    assert!(custom_ws_root.join("Palettes").join("palette.ase").is_file());
+
+    // Upload a real PNG design into Designs/Campaigns
+    let png_bytes = vec![
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+        0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    ];
+    let up_resp = ureq::post(&format!(
+        "{}/api/workspaces/{}/upload-design?fileName=hero.png&subfolder=Designs%2FCampaigns",
+        base, ws_id
+    ))
+    .send_bytes(&png_bytes)
+    .expect("upload-design should succeed");
+    let up_json = resp_json(up_resp);
+    assert_eq!(up_json["success"], true);
+    assert_eq!(up_json["design"]["relativePath"], "Designs/Campaigns/hero.png");
+
+    // Scan workspace folder & verify uploaded PNG appears with previewUrl
+    let scan_ws_resp = ureq::post(&format!("{}/api/workspaces/scan-folder", base))
+        .set("Content-Type", "application/json")
+        .send_string(
+            &serde_json::json!({
+                "id": ws_id,
+                "folderPath": custom_ws_root.to_string_lossy()
+            })
+            .to_string(),
+        )
+        .expect("scan-folder on workspace should succeed");
+    let scan_ws_json = resp_json(scan_ws_resp);
+    assert_eq!(scan_ws_json["success"], true);
+    assert_eq!(
+        scan_ws_json["designFiles"].as_array().map(|a| a.len()),
+        Some(1)
+    );
+    assert_eq!(
+        scan_ws_json["designFiles"][0]["relativePath"],
+        "Designs/Campaigns/hero.png"
+    );
+
+    // Delete the uploaded design file
+    let del_design_resp = ureq::delete(&format!(
+        "{}/api/workspaces/{}/design-file?path=Designs%2FCampaigns%2Fhero.png",
+        base, ws_id
+    ))
+    .call()
+    .expect("DELETE /api/workspaces/:id/design-file should succeed");
+    let del_design_json = resp_json(del_design_resp);
+    assert_eq!(del_design_json["success"], true);
+    assert!(!custom_ws_root
+        .join("Designs")
+        .join("Campaigns")
+        .join("hero.png")
+        .exists());
+
+    // Delete workspace completely
+    let del_ws_resp = ureq::delete(&format!("{}/api/workspaces/{}", base, ws_id))
+        .call()
+        .expect("DELETE /api/workspaces/:id should succeed");
+    let del_ws_json = resp_json(del_ws_resp);
+    assert_eq!(del_ws_json["success"], true);
+    assert!(ureq::get(&format!("{}/api/workspaces/{}", base, ws_id)).call().is_err());
+
+    // 12. POST /api/fonts/delete
     let total_before = {
         let st = state_arc.read().unwrap();
         st.fonts.len()

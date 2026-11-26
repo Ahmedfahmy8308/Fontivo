@@ -11,6 +11,9 @@ import {
   Github,
   Users,
 } from "lucide-react";
+import uiPkg from "../../../package.json";
+
+const APP_VERSION = uiPkg.version;
 
 export interface AboutDeveloperModalProps {
   isOpen: boolean;
@@ -60,7 +63,7 @@ export default function AboutDeveloperModal({
                     : "Fontivo Team & Creators"}
                 </h3>
                 <span className="px-2 py-0.5 rounded-full bg-[var(--color-action)]/15 border border-[var(--color-action)]/30 text-[var(--color-action)] text-[10px] font-mono font-bold">
-                  v1.0.0
+                  v{APP_VERSION}
                 </span>
               </div>
               <p className="text-xs text-[var(--color-text-muted)] mt-0.5">

@@ -186,5 +186,8 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain("رفع تصميم");
     expect(html).toContain("مجلد داخلي");
     expect(html).toContain("تعديل المشروع");
+    expect(html).toContain("تعديل الملاحظات");
+    expect(html).toContain("max-w-7xl");
+    expect(html).toContain('dir="ltr"');
   });
 });

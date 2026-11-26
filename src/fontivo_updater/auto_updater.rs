@@ -92,9 +92,34 @@ pub type UpdateCheckResult = UpdateStatus;
 pub struct AutoUpdater;
 
 impl AutoUpdater {
-    pub const CURRENT_VERSION: &'static str = "1.1.1";
+    pub const CURRENT_VERSION: &'static str = "1.1.2";
     pub const DEFAULT_MANIFEST_URL: &'static str =
         "https://api.github.com/repos/Ahmedfahmy8308/Fontivo/releases/latest";
+    pub const DEFAULT_FALLBACK_MANIFEST_URL: &'static str =
+        "https://ahmedfahmy8308.github.io/Fontivo-Site/api/manifest.json";
+
+    /// Removes CI-generated CLI install / attestation trailers from GitHub release notes
+    /// so UI banners and changelog modals remain clean and readable.
+    pub fn strip_release_notes_cli_footer(raw: &str) -> String {
+        let mut cleaned = raw.replace("\r\n", "\n");
+        for marker in [
+            "\n---\n### Platform Install Channels",
+            "\n### Platform Install Channels",
+            "--- ### Platform Install Channels",
+            "### Platform Install Channels & Verification",
+            "**Cryptographic Verification (Free SLSA",
+        ] {
+            if let Some(idx) = cleaned.find(marker) {
+                cleaned.truncate(idx);
+            }
+        }
+        let trimmed = cleaned.trim().trim_end_matches("---").trim();
+        if trimmed.is_empty() {
+            "Performance improvements, security updates, and bug fixes.".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
 
     fn expected_release_asset_name() -> &'static str {
         if cfg!(windows) {
@@ -139,7 +164,8 @@ impl AutoUpdater {
         None
     }
 
-    /// Parses either a GitHub Releases API JSON payload (`tag_name` + `assets[]`)
+    /// Parses a GitHub Releases API payload (`tag_name` + `assets[]`),
+    /// the Fontivo static CDN manifest (`desktop`),
     /// or a direct custom manifest JSON payload (`version` + `downloadUrl`).
     pub fn parse_release_payload(raw_json: &str) -> Result<UpdateStatus, String> {
         let json: serde_json::Value = serde_json::from_str(raw_json)
@@ -156,10 +182,10 @@ impl AutoUpdater {
 
             let notes = json["body"]
                 .as_str()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .unwrap_or("Performance improvements, security updates, and bug fixes.")
-                .to_string();
+                .map(Self::strip_release_notes_cli_footer)
+                .unwrap_or_else(|| {
+                    "Performance improvements, security updates, and bug fixes.".to_string()
+                });
 
             let published_at = json["published_at"]
                 .as_str()
@@ -230,7 +256,67 @@ impl AutoUpdater {
             });
         }
 
-        // 2. Legacy custom manifest schema (`version`, `downloadUrl`)
+        // 2. Fontivo static CDN manifest schema (`desktop.version` + `desktop.platforms`)
+        if let Some(desktop_ver) = json["desktop"]["version"].as_str() {
+            let latest_version = desktop_ver.trim().trim_start_matches(['v', 'V']).to_string();
+            if !latest_version.is_empty() {
+                let platform_key = if cfg!(windows) {
+                    "windows"
+                } else if cfg!(target_os = "macos") {
+                    "macos"
+                } else {
+                    "linux"
+                };
+                let plat = &json["desktop"]["platforms"][platform_key];
+                let download_url = plat["downloadUrl"]
+                    .as_str()
+                    .or_else(|| plat["scriptUrl"].as_str())
+                    .unwrap_or("https://github.com/Ahmedfahmy8308/Fontivo/releases/latest")
+                    .to_string();
+                let asset_size_bytes = plat["sizeBytes"].as_u64().unwrap_or(0);
+                let sha256_checksum = plat["sha256"]
+                    .as_str()
+                    .map(|s| s.trim().to_ascii_lowercase())
+                    .filter(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()));
+                let notes = json["desktop"]["releaseNotes"]
+                    .as_str()
+                    .map(Self::strip_release_notes_cli_footer)
+                    .unwrap_or_else(|| {
+                        format!(
+                            "Fontivo v{} official stable desktop release (SHA-256 verified).",
+                            latest_version
+                        )
+                    });
+                let published_at = json["desktop"]["publishedAt"]
+                    .as_str()
+                    .unwrap_or(&now_iso)
+                    .to_string();
+                let has_update = Self::compare_versions(&latest_version, Self::CURRENT_VERSION) > 0;
+
+                return Ok(UpdateStatus {
+                    status: if has_update {
+                        "downloading".to_string()
+                    } else {
+                        "idle".to_string()
+                    },
+                    current_version: Self::CURRENT_VERSION.to_string(),
+                    latest_version,
+                    has_update,
+                    release_notes: notes,
+                    published_at,
+                    download_url,
+                    asset_size_bytes,
+                    sha256_checksum,
+                    download_progress: 0,
+                    bytes_downloaded: 0,
+                    installer_path: None,
+                    error: None,
+                    last_checked: Some(now_iso),
+                });
+            }
+        }
+
+        // 3. Legacy custom manifest schema (`version`, `downloadUrl`)
         let latest_version = json["version"]
             .as_str()
             .unwrap_or(Self::CURRENT_VERSION)
@@ -240,8 +326,8 @@ impl AutoUpdater {
         let notes = json["releaseNotes"]
             .as_str()
             .or_else(|| json["notes"].as_str())
-            .unwrap_or("Performance improvements and bug fixes.")
-            .to_string();
+            .map(Self::strip_release_notes_cli_footer)
+            .unwrap_or_else(|| "Performance improvements and bug fixes.".to_string());
         let download_url = json["downloadUrl"].as_str().unwrap_or("").to_string();
         let published_at = json["publishedAt"]
             .as_str()
@@ -399,49 +485,86 @@ impl AutoUpdater {
             .redirects(5)
             .build();
 
-        // Attempt live HTTP fetch against GitHub Releases API (or FONTIVO_UPDATE_URL override)
-        if !Self::is_test_mode() || std::env::var("FONTIVO_UPDATE_URL").is_ok() {
-            match agent
-                .get(&manifest_url)
-                .set("User-Agent", "Fontivo-AutoUpdater/1.0")
-                .set("Accept", "application/vnd.github+json")
-                .call()
-            {
-                Ok(resp) if resp.status() == 200 => {
-                    if let Ok(text) = resp.into_string() {
-                        if let Ok(mut parsed) = Self::parse_release_payload(&text) {
-                            if parsed.sha256_checksum.is_none() {
-                                if let Ok(raw_json) =
-                                    serde_json::from_str::<serde_json::Value>(&text)
-                                {
-                                    if let Some(assets) = raw_json["assets"].as_array() {
-                                        parsed.sha256_checksum =
-                                            Self::resolve_sha256_from_release_assets(
-                                                &agent,
-                                                assets,
-                                                Self::expected_release_asset_name(),
-                                            );
-                                    }
+        // Attempt live HTTP fetch against GitHub Releases API (or FONTIVO_UPDATE_URL override),
+        // with automatic fallback to zero-rate-limit Fontivo-Site static manifest.json.
+        let custom_override = std::env::var("FONTIVO_UPDATE_URL").is_ok();
+        if !Self::is_test_mode() || custom_override {
+            let fetch_and_parse = |url: &str| -> Result<UpdateStatus, String> {
+                let mut req = agent.get(url).set("User-Agent", "Fontivo-AutoUpdater/1.1");
+                if url.contains("api.github.com") {
+                    req = req.set("Accept", "application/vnd.github+json");
+                }
+                match req.call() {
+                    Ok(resp) if resp.status() == 200 => {
+                        let text = resp
+                            .into_string()
+                            .map_err(|e| format!("Failed to read update manifest: {}", e))?;
+                        let mut parsed = Self::parse_release_payload(&text)?;
+                        if parsed.sha256_checksum.is_none() {
+                            if let Ok(raw_json) = serde_json::from_str::<serde_json::Value>(&text) {
+                                if let Some(assets) = raw_json["assets"].as_array() {
+                                    parsed.sha256_checksum = Self::resolve_sha256_from_release_assets(
+                                        &agent,
+                                        assets,
+                                        Self::expected_release_asset_name(),
+                                    );
                                 }
                             }
-                            discovered = parsed;
                         }
+                        Ok(parsed)
+                    }
+                    Ok(resp) => Err(format!("Update server returned HTTP {}", resp.status())),
+                    Err(err) => Err(format!("Unable to check updates: {}", err)),
+                }
+            };
+
+            match fetch_and_parse(&manifest_url) {
+                Ok(parsed) => {
+                    discovered = parsed;
+                }
+                Err(primary_err) => {
+                    if !custom_override {
+                        match fetch_and_parse(Self::DEFAULT_FALLBACK_MANIFEST_URL) {
+                            Ok(fallback_parsed) => {
+                                discovered = fallback_parsed;
+                            }
+                            Err(_) => {
+                                discovered.status = "error".to_string();
+                                discovered.error = Some(primary_err);
+                            }
+                        }
+                    } else {
+                        discovered.status = "error".to_string();
+                        discovered.error = Some(primary_err);
                     }
                 }
-                Ok(resp) => {
-                    discovered.error =
-                        Some(format!("Update server returned HTTP {}", resp.status()));
-                }
-                Err(err) => {
-                    discovered.error = Some(format!("Unable to check updates: {}", err));
+            }
+        }
+
+        // Check if installer for this version is already downloaded and SHA-256 verified on disk
+        if discovered.has_update {
+            if let Some(ref expected_hash) = discovered.sha256_checksum {
+                let filename = Self::expected_release_asset_name();
+                let candidate = Self::get_updates_dir().join(filename);
+                if candidate.exists() && Self::verify_checksum(&candidate, expected_hash) {
+                    discovered.status = "ready_to_install".to_string();
+                    discovered.download_progress = 100;
+                    discovered.bytes_downloaded = discovered.asset_size_bytes;
+                    discovered.installer_path = Some(candidate.to_string_lossy().to_string());
                 }
             }
         }
 
         // Compare versions: if update exists and installer isn't ready, auto-download in background
         let current_state = UPDATER_STATE.read().unwrap().clone();
-        if discovered.has_update {
-            if current_state.status != "ready_to_install" && current_state.status != "downloading" {
+        if discovered.status == "ready_to_install" {
+            *UPDATER_STATE.write().unwrap() = discovered.clone();
+            Ok(discovered)
+        } else if discovered.has_update {
+            let same_ready_version = current_state.status == "ready_to_install"
+                && Self::compare_versions(&discovered.latest_version, &current_state.latest_version)
+                    <= 0;
+            if !same_ready_version && current_state.status != "downloading" {
                 discovered.status = "downloading".to_string();
                 *UPDATER_STATE.write().unwrap() = discovered.clone();
                 Self::spawn_background_download(discovered.clone());

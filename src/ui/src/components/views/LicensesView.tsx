@@ -17,10 +17,11 @@ import {
   Sparkles,
   Layers,
   Zap,
+  AlertCircle,
 } from "lucide-react";
 import uiPkg from "../../../package.json";
 
-const APP_VERSION = uiPkg.version || "1.1.1";
+const APP_VERSION = uiPkg.version;
 
 export interface LicensesViewProps {
   families?: any[];
@@ -231,25 +232,58 @@ export default function LicensesView({
             </div>
 
             {updateInfo && (
-              <div className="p-3.5 rounded-xl bg-[var(--color-back-subtle)] border border-[var(--color-border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div
+                className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+                  updateInfo.error || updateInfo.status === "error"
+                    ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                    : updateInfo.status === "ready_to_install"
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                      : "bg-[var(--color-back-subtle)] border-[var(--color-border)] text-[var(--color-text-header)]"
+                }`}
+              >
                 <div className="flex items-center gap-2 min-w-0">
-                  <CheckCircle2 className="w-4 h-4 text-[var(--color-action)] shrink-0" />
-                  <span className="text-[var(--color-text-header)]">
-                    {updateInfo.status === "ready_to_install"
+                  {updateInfo.error || updateInfo.status === "error" ? (
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                  ) : updateInfo.status === "downloading" ||
+                    updateInfo.hasUpdate ? (
+                    <RefreshCw
+                      className={`w-4 h-4 text-[var(--color-action)] shrink-0 ${
+                        updateInfo.status === "downloading"
+                          ? "animate-spin"
+                          : ""
+                      }`}
+                    />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  )}
+                  <span className="min-w-0 break-words">
+                    {updateInfo.error || updateInfo.status === "error"
                       ? isRtl
-                        ? `التحديث Fontivo v${updateInfo.latestVersion || "1.0.1"} جاهز للتثبيت الآن.`
-                        : `Update Fontivo v${updateInfo.latestVersion || "1.0.1"} is downloaded and ready.`
-                      : updateInfo.message ||
-                        (isRtl
-                          ? "أنت تستخدم أحدث إصدار مستقر حالياً (v1.0.0)."
-                          : "You are running the latest stable version (v1.0.0).")}
+                        ? `تعذر التحقق من التحديثات حالياً: ${updateInfo.error || updateInfo.message || "يرجى المحاولة مجدداً"}`
+                        : `Unable to check for updates: ${updateInfo.error || updateInfo.message || "Please try again"}`
+                      : updateInfo.status === "ready_to_install"
+                        ? isRtl
+                          ? `التحديث Fontivo v${updateInfo.latestVersion || APP_VERSION} جاهز للتثبيت الآن.`
+                          : `Update Fontivo v${updateInfo.latestVersion || APP_VERSION} is downloaded and ready.`
+                        : updateInfo.status === "downloading"
+                          ? isRtl
+                            ? `جاري تنزيل الإصدار v${updateInfo.latestVersion || APP_VERSION} (${updateInfo.downloadProgress ?? 0}%)...`
+                            : `Downloading Fontivo v${updateInfo.latestVersion || APP_VERSION} (${updateInfo.downloadProgress ?? 0}%)...`
+                          : updateInfo.hasUpdate && updateInfo.latestVersion
+                            ? isRtl
+                              ? `يتوفر إصدار جديد v${updateInfo.latestVersion} (المثبت: v${updateInfo.currentVersion || APP_VERSION}).`
+                              : `A newer version v${updateInfo.latestVersion} is available (installed: v${updateInfo.currentVersion || APP_VERSION}).`
+                            : updateInfo.message ||
+                              (isRtl
+                                ? `أنت تستخدم أحدث إصدار مستقر حالياً (v${updateInfo.currentVersion || APP_VERSION}).`
+                                : `You are running the latest stable version (v${updateInfo.currentVersion || APP_VERSION}).`)}
                   </span>
                 </div>
                 {updateInfo.status === "ready_to_install" && (
                   <button
                     onClick={handleApplyUpdate}
                     disabled={applyingUpdate}
-                    className="px-3 py-1.5 rounded-lg bg-[var(--color-action)] text-[#130C16] font-bold text-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                    className="px-3 py-1.5 rounded-lg bg-[var(--color-action)] text-[#130C16] font-bold text-xs flex items-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50"
                   >
                     <RefreshCw
                       className={`w-3.5 h-3.5 ${applyingUpdate ? "animate-spin" : ""}`}
@@ -495,7 +529,7 @@ export default function LicensesView({
         <div className="p-4 sm:p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full">
           <div className="space-y-0.5">
             <span className="font-bold text-[var(--color-text-header)] block text-xs">
-              Fontivo Desktop • v1.0.0
+              Fontivo Desktop • v{APP_VERSION}
             </span>
             <span>
               {isRtl

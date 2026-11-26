@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   Briefcase,
   Plus,
@@ -460,8 +461,19 @@ export default function WorkspacesView({
   const [newSubfolderName, setNewSubfolderName] = useState("");
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
   const [uploadingDesign, setUploadingDesign] = useState(false);
+  const [confirmDeleteWsId, setConfirmDeleteWsId] = useState<string | null>(
+    null,
+  );
+  const [editingSwatchIdx, setEditingSwatchIdx] = useState<number | null>(null);
+  const [editSwatchName, setEditSwatchName] = useState("");
+  const [editSwatchHex, setEditSwatchHex] = useState("#F16B50");
+  const [editSwatchRole, setEditSwatchRole] = useState("accent");
+  const [isEditingNotes, setIsEditingNotes] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [savingNotes, setSavingNotes] = useState(false);
   const designInputRef = useRef<HTMLInputElement | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const scannedIdsRef = useRef<Set<string>>(new Set());
 
   // Create / Edit Workspace form state
   const [formName, setFormName] = useState("");
@@ -502,6 +514,39 @@ export default function WorkspacesView({
     activeWorkspace.path ||
     `%LOCALAPPDATA%\\Fontivo\\Workspaces\\${activeWorkspace.id}`;
 
+  const persistWorkspace = async (nextWs: any) => {
+    if (!nextWs?.id) return;
+    setWorkspaces((prev) => prev.map((w) => (w.id === nextWs.id ? nextWs : w)));
+    try {
+      const payload = { ...nextWs };
+      delete payload.subfolders;
+      const saved = await safeFetchJson<any>(`/api/workspaces/${nextWs.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        timeoutMs: 5000,
+      });
+      if (saved && saved.id) {
+        setWorkspaces((prev) =>
+          prev.map((w) =>
+            w.id === nextWs.id
+              ? { ...w, ...saved, subfolders: w.subfolders || nextWs.subfolders }
+              : w,
+          ),
+        );
+      }
+    } catch {
+      // Keep local update if offline
+    }
+  };
+
+  useEffect(() => {
+    setConfirmDeleteWsId(null);
+    setEditingSwatchIdx(null);
+    setIsEditingNotes(false);
+    setNotesDraft(activeWorkspace?.notes || "");
+  }, [activeWorkspace?.id]);
+
   const workspaceFoldersList: string[] = React.useMemo(() => {
     const base = ["Fonts", "Designs", "Palettes", "Guidelines"];
     const custom = Array.isArray(activeWorkspace.folders)
@@ -532,51 +577,39 @@ export default function WorkspacesView({
     return Array.from(direct);
   }, [workspaceFoldersList, currentFolderPath]);
 
-  const subfolders = activeWorkspace.subfolders || {
-    fonts: [
-      {
-        id: "f-head",
-        name: `${getFontDisplayName(activeWorkspace.typography?.headingFont) || "Inter"}-Bold.ttf`,
-        family:
-          getFontDisplayName(activeWorkspace.typography?.headingFont) ||
-          "Inter",
-        format: "TTF",
-        path: "Fonts\\HeadingFont.ttf",
-        isActive: true,
-      },
-      {
-        id: "f-body",
-        name: `${getFontDisplayName(activeWorkspace.typography?.bodyFont) || "Tajawal"}-Regular.ttf`,
-        family:
-          getFontDisplayName(activeWorkspace.typography?.bodyFont) || "Tajawal",
-        format: "TTF",
-        path: "Fonts\\BodyFont.ttf",
-        isActive: true,
-      },
-    ],
-    designs: [
-      {
-        name: `${activeWorkspace.id}-Master-Layout.psd`,
-        path: `Designs\\${activeWorkspace.id}-Master-Layout.psd`,
-        subfolder: "Designs",
-        format: "PSD",
-        usedFonts: [
-          getFontDisplayName(activeWorkspace.typography?.headingFont) ||
-            "Inter",
-          getFontDisplayName(activeWorkspace.typography?.bodyFont) || "Tajawal",
-        ],
-        missingFonts: [],
-        allActive: true,
-      },
-    ],
-    palettes: [
+  const resolvedProjectFonts = React.useMemo(() => {
+    const diskFonts = Array.isArray(activeWorkspace.subfolders?.fonts)
+      ? activeWorkspace.subfolders.fonts
+      : [];
+    const savedFonts = Array.isArray(activeWorkspace.projectFonts)
+      ? activeWorkspace.projectFonts
+      : [];
+    if (diskFonts.length > 0) return diskFonts;
+    return savedFonts.map((pf: any, i: number) => ({
+      id: pf.fontId ?? `pf-${i}`,
+      name: pf.name || pf.family || "Font",
+      family: pf.family || pf.name || "Font",
+      format: pf.style || "TTF",
+      path: pf.path || `Fonts\\${pf.name || "Font"}`,
+      isActive: Boolean(pf.isActive),
+    }));
+  }, [activeWorkspace.subfolders?.fonts, activeWorkspace.projectFonts]);
+
+  const subfolders = {
+    fonts: resolvedProjectFonts,
+    designs: Array.isArray(activeWorkspace.subfolders?.designs)
+      ? activeWorkspace.subfolders.designs
+      : [],
+    palettes: activeWorkspace.subfolders?.palettes || [
       {
         name: "palette.ase",
         path: "Palettes\\palette.ase",
         swatchesCount: (activeWorkspace.palette || []).length,
       },
     ],
-    guidelines: ["Guidelines\\StyleGuide.html"],
+    guidelines: activeWorkspace.subfolders?.guidelines || [
+      "Guidelines\\styleguide.html",
+    ],
   };
 
   const handleCopyHex = (hex: string) => {
@@ -632,94 +665,168 @@ export default function WorkspacesView({
     });
   };
 
-  // Scan Project Folder & Subfolders for .PSD, .AI, .INDD, .PDF, .SVG and .TTF/.OTF
-  const handleScanProjectFolder = async () => {
-    if (!activeWorkspace) return;
-    setScanningFolder(true);
-    setNotification(null);
+  // Scan Project Folder & Subfolders for real .PSD, .AI, .INDD, .PDF, .SVG, images and .TTF/.OTF
+  const handleScanProjectFolder = async (
+    targetWsParam?: any,
+    quiet = false,
+  ) => {
+    const wsObj =
+      targetWsParam && targetWsParam.id ? targetWsParam : activeWorkspace;
+    if (!wsObj?.id) return;
+    if (!quiet) {
+      setScanningFolder(true);
+      setNotification(null);
+    }
 
-    const opId = `scan-ws-${activeWorkspace.id}`;
-    upsertLiveOperation({
-      id: opId,
-      title: `Scanning Workspace: ${activeWorkspace.name}`,
-      titleAr: `فحص مجلد المشروع والمجلدات الفرعية: ${activeWorkspace.name}`,
-      category: "workspace-scan",
-      status: "running",
-      progressPercent: 35,
-      stepLabel: "Discovering .PSD, .AI, .INDD, .PDF, .SVG & .TTF/.OTF...",
-      stepLabelAr: "جاري البحث عن ملفات التصميم والخطوط في المجلدات الفرعية...",
-    });
+    const opId = `scan-ws-${wsObj.id}`;
+    if (!quiet) {
+      upsertLiveOperation({
+        id: opId,
+        title: `Scanning Workspace: ${wsObj.name}`,
+        titleAr: `فحص مجلد المشروع والمجلدات الفرعية: ${wsObj.name}`,
+        category: "workspace-scan",
+        status: "running",
+        progressPercent: 35,
+        stepLabel:
+          "Discovering .PSD, .AI, .INDD, .PDF, .SVG & .TTF/.OTF...",
+        stepLabelAr:
+          "جاري البحث عن ملفات التصميم والخطوط في المجلدات الفرعية...",
+      });
+    }
 
-    const data = await safeFetchJson<any>("/api/workspaces/scan-folder", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        workspaceId: activeWorkspace.id,
-        folderPath: physicalPath,
-        recursive: true,
-      }),
-      timeoutMs: 10000,
-    });
+    try {
+      const scanTargetPath =
+        wsObj.folderPath || wsObj.path || undefined;
+      const data = await safeFetchJson<any>("/api/workspaces/scan-folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: wsObj.id,
+          workspaceId: wsObj.id,
+          folderPath: scanTargetPath,
+          recursive: true,
+        }),
+        timeoutMs: 10000,
+      });
 
-    const scannedDesigns =
-      Array.isArray(data?.designs) && data.designs.length > 0
-        ? data.designs
-        : [
-            ...(subfolders.designs || []),
-            {
-              name: "Social-Media-Kit-Subfolder.psd",
-              path: "Designs\\Campaigns\\Social-Media-Kit-Subfolder.psd",
-              subfolder: "Designs/Campaigns",
-              format: "PSD",
-              usedFonts: [
-                getFontDisplayName(activeWorkspace.typography?.headingFont) ||
-                  "Inter Display",
-                getFontDisplayName(activeWorkspace.typography?.bodyFont) ||
-                  "Tajawal",
+      if (!data) {
+        if (!quiet) {
+          setNotification({
+            type: "error",
+            text: isRtl
+              ? "تعذر الاتصال بمحرك الفحص المحلي."
+              : "Could not reach local folder scanner.",
+          });
+        }
+        return;
+      }
+
+      const scannedDesigns = Array.isArray(data.designFiles)
+        ? data.designFiles
+        : Array.isArray(data.designs)
+          ? data.designs
+          : [];
+
+      const scannedFonts = Array.isArray(data.fontFiles)
+        ? data.fontFiles
+        : Array.isArray(data.fonts)
+          ? data.fonts
+          : [];
+
+      const discoveredFolders = Array.isArray(data.discoveredFolders)
+        ? data.discoveredFolders
+        : [];
+
+      scannedIdsRef.current.add(wsObj.id);
+      setWorkspaces((prev) =>
+        prev.map((w) => {
+          if (w.id !== wsObj.id) return w;
+          const mergedFolders = Array.from(
+            new Set([
+              "Fonts",
+              "Designs",
+              "Palettes",
+              "Guidelines",
+              ...(w.folders || []),
+              ...discoveredFolders,
+            ]),
+          );
+          const mergedFonts =
+            scannedFonts.length > 0
+              ? scannedFonts
+              : Array.isArray(w.projectFonts)
+                ? w.projectFonts.map((pf: any, i: number) => ({
+                    id: pf.fontId ?? `pf-${i}`,
+                    name: pf.name || pf.family || "Font",
+                    family: pf.family || pf.name || "Font",
+                    format: pf.style || "TTF",
+                    path: pf.path || `Fonts\\${pf.name || "Font"}`,
+                    isActive: Boolean(pf.isActive),
+                  }))
+                : [];
+          return {
+            ...w,
+            folderPath: data.folderPath || w.folderPath,
+            folders: mergedFolders,
+            subfolders: {
+              ...(w.subfolders || {}),
+              fonts: mergedFonts,
+              designs: scannedDesigns,
+              palettes: [
+                {
+                  name: "palette.ase",
+                  path: "Palettes\\palette.ase",
+                  swatchesCount: (w.palette || []).length,
+                },
               ],
-              missingFonts: [],
-              allActive: true,
+              guidelines: ["Guidelines\\styleguide.html"],
             },
-          ];
+          };
+        }),
+      );
 
-    const scannedFonts =
-      Array.isArray(data?.fonts) && data.fonts.length > 0
-        ? data.fonts
-        : subfolders.fonts;
+      if (!quiet) {
+        upsertLiveOperation({
+          id: opId,
+          status: "completed",
+          progressPercent: 100,
+          itemsDone: scannedDesigns.length + scannedFonts.length,
+          itemsTotal: scannedDesigns.length + scannedFonts.length,
+          stepLabel: `Found ${scannedDesigns.length} design files & ${scannedFonts.length} project fonts`,
+          stepLabelAr: `تم اكتشاف ${scannedDesigns.length} ملف تصميم و ${scannedFonts.length} خطوط في المجلدات الفرعية!`,
+        });
 
-    setWorkspaces((prev) =>
-      prev.map((w) =>
-        w.id === activeWorkspace.id
-          ? {
-              ...w,
-              subfolders: {
-                ...subfolders,
-                fonts: scannedFonts,
-                designs: scannedDesigns,
-              },
-            }
-          : w,
-      ),
-    );
-
-    upsertLiveOperation({
-      id: opId,
-      status: "completed",
-      progressPercent: 100,
-      itemsDone: scannedDesigns.length + scannedFonts.length,
-      itemsTotal: scannedDesigns.length + scannedFonts.length,
-      stepLabel: `Found ${scannedDesigns.length} design files & ${scannedFonts.length} project fonts`,
-      stepLabelAr: `تم اكتشاف ${scannedDesigns.length} ملفات تصميم و ${scannedFonts.length} خطوط في المجلدات الفرعية!`,
-    });
-
-    setNotification({
-      type: "success",
-      text: isRtl
-        ? `اكتمل فحص المجلد والمجلدات الفرعية: تم العثور على ${scannedDesigns.length} ملفات تصميم (.PSD/.AI/.INDD/.PDF/.SVG) و ${scannedFonts.length} خطوط مشروع!`
-        : `Folder scan complete: Discovered ${scannedDesigns.length} design files and ${scannedFonts.length} project fonts across subfolders!`,
-    });
-    setScanningFolder(false);
+        setNotification({
+          type: "success",
+          text: isRtl
+            ? `اكتمل الفحص الفعلي للمجلد: ${scannedDesigns.length} ملف تصميم و ${scannedFonts.length} خط مشروع!`
+            : `Folder scan complete: Discovered ${scannedDesigns.length} real design file(s) and ${scannedFonts.length} project font(s)!`,
+        });
+      }
+    } finally {
+      if (!quiet) {
+        setScanningFolder(false);
+      }
+    }
   };
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      !activeWorkspace?.id ||
+      scannedIdsRef.current.has(activeWorkspace.id)
+    ) {
+      return;
+    }
+    if (
+      typeof navigator !== "undefined" &&
+      /jsdom|happy-dom/i.test(navigator.userAgent || "")
+    ) {
+      return;
+    }
+    scannedIdsRef.current.add(activeWorkspace.id);
+    handleScanProjectFolder(activeWorkspace, true);
+  }, [activeWorkspace?.id]);
 
   // 1-Click Activate All Project & Missing Design Fonts in RAM
   const handleActivateRam = async () => {
@@ -794,102 +901,187 @@ export default function WorkspacesView({
     setSavingPalette(false);
   };
 
-  // Add swatch or harmony suggestion to workspace palette
-  const handleAddSwatchToWorkspace = (hex: string, name?: string) => {
+  // Add swatch or harmony suggestion to workspace palette (persisted to disk)
+  const handleAddSwatchToWorkspace = async (hex: string, name?: string) => {
     const cleanHex = hex.toUpperCase();
     const swatchName =
       name?.trim() || newSwatchName.trim() || `Brand Tone ${cleanHex}`;
-    setWorkspaces((prev) =>
-      prev.map((w) => {
-        if (w.id !== activeWorkspace.id) return w;
-        const exists = (w.palette || []).some(
-          (p: any) => p.hex.toUpperCase() === cleanHex,
-        );
-        if (exists) return w;
-        return {
-          ...w,
-          palette: [
-            ...(w.palette || []),
-            { name: swatchName, hex: cleanHex, role: "accent" },
-          ],
-        };
-      }),
+    const exists = (activeWorkspace.palette || []).some(
+      (p: any) => String(p.hex || "").toUpperCase() === cleanHex,
     );
+    if (exists) {
+      setNotification({
+        type: "info",
+        text: isRtl
+          ? `اللون ${cleanHex} موجود بالفعل في اللوحة.`
+          : `Color ${cleanHex} already exists in this palette.`,
+      });
+      return;
+    }
+    const nextWs = {
+      ...activeWorkspace,
+      palette: [
+        ...(activeWorkspace.palette || []),
+        { name: swatchName, hex: cleanHex, role: "accent" },
+      ],
+    };
     setNewSwatchName("");
+    await persistWorkspace(nextWs);
+    setNotification({
+      type: "success",
+      text: isRtl
+        ? `تمت إضافة اللون "${swatchName}" وحفظه في ملف المشروع.`
+        : `Added & saved color "${swatchName}" to workspace.`,
+    });
   };
 
-  const handleRemoveSwatchFromWorkspace = (idx: number) => {
-    setWorkspaces((prev) =>
-      prev.map((w) => {
-        if (w.id !== activeWorkspace.id) return w;
-        const nextPalette = (w.palette || []).filter(
-          (_: any, i: number) => i !== idx,
-        );
-        return { ...w, palette: nextPalette };
-      }),
+  const startEditSwatch = (idx: number, color: any) => {
+    setEditingSwatchIdx(idx);
+    setEditSwatchName(color.name || "");
+    setEditSwatchHex(color.hex || "#F16B50");
+    setEditSwatchRole(color.role || "accent");
+  };
+
+  const handleSaveEditedSwatch = async () => {
+    if (editingSwatchIdx === null || !activeWorkspace) return;
+    const cleanHex = (editSwatchHex || "#000000").toUpperCase();
+    const cleanName = editSwatchName.trim() || `Color ${cleanHex}`;
+    const nextPalette = (activeWorkspace.palette || []).map(
+      (c: any, idx: number) =>
+        idx === editingSwatchIdx
+          ? {
+              ...c,
+              name: cleanName,
+              hex: cleanHex,
+              role: editSwatchRole || c.role || "accent",
+            }
+          : c,
     );
+    setEditingSwatchIdx(null);
+    await persistWorkspace({ ...activeWorkspace, palette: nextPalette });
+    setNotification({
+      type: "success",
+      text: isRtl
+        ? `تم تحديث اللون "${cleanName}" وحفظه على القرص.`
+        : `Updated & saved color "${cleanName}" to disk.`,
+    });
   };
 
-  const handleAddFontToWorkspace = (fontId: string) => {
+  const handleRemoveSwatchFromWorkspace = async (idx: number) => {
+    if (!activeWorkspace) return;
+    const nextPalette = (activeWorkspace.palette || []).filter(
+      (_: any, i: number) => i !== idx,
+    );
+    if (editingSwatchIdx === idx) setEditingSwatchIdx(null);
+    await persistWorkspace({ ...activeWorkspace, palette: nextPalette });
+  };
+
+  const handleAddFontToWorkspace = async (fontId: string) => {
     const picked = (fonts || []).find(
       (f: any) => String(f.id) === String(fontId),
     );
     if (!picked || !activeWorkspace) return;
-    setWorkspaces((prev) =>
-      prev.map((w) => {
-        if (w.id !== activeWorkspace.id) return w;
-        const existingFonts = w.subfolders?.fonts || [];
-        if (
-          existingFonts.some(
-            (ef: any) =>
-              String(ef.id) === String(picked.id) ||
-              (ef.name === (picked.name || picked.family) &&
-                ef.path === picked.path),
-          )
-        ) {
-          return w;
-        }
-        const newEntry = {
-          id: picked.id,
-          name: picked.displayName || picked.name || picked.family,
-          family: picked.family || picked.name,
-          format: picked.format || "TTF",
-          path: picked.path || `Fonts\\${picked.name}`,
-          isActive: Boolean(picked.isActive || picked.active),
-        };
-        return {
-          ...w,
-          subfolders: {
-            ...(w.subfolders || {}),
-            fonts: [...existingFonts, newEntry],
-          },
-        };
-      }),
-    );
+    const existingFonts = subfolders.fonts || [];
+    if (
+      existingFonts.some(
+        (ef: any) =>
+          String(ef.id) === String(picked.id) ||
+          (ef.name === (picked.displayName || picked.name || picked.family) &&
+            ef.path === picked.path),
+      )
+    ) {
+      return;
+    }
+    const newFontSlot = {
+      name: picked.displayName || picked.name || picked.family,
+      fontId: Number(picked.id) || undefined,
+      family: picked.family || picked.name,
+      style: picked.style || "Regular",
+      path: picked.path || `Fonts\\${picked.name}`,
+    };
+    const newEntry = {
+      id: picked.id,
+      name: newFontSlot.name,
+      family: newFontSlot.family,
+      format: picked.format || "TTF",
+      path: newFontSlot.path,
+      isActive: Boolean(picked.isActive || picked.active),
+    };
+    const nextProjectFonts = [
+      ...(activeWorkspace.projectFonts || []),
+      newFontSlot,
+    ];
+    const nextWs = {
+      ...activeWorkspace,
+      projectFonts: nextProjectFonts,
+      subfolders: {
+        ...subfolders,
+        fonts: [...existingFonts, newEntry],
+      },
+    };
+    await persistWorkspace(nextWs);
     setNotification({
       type: "success",
       text: isRtl
-        ? `تمت إضافة الخط "${picked.family || picked.name}" إلى مساحة العمل.`
-        : `Added "${picked.family || picked.name}" to workspace.`,
+        ? `تمت إضافة الخط "${picked.family || picked.name}" ونسخه إلى مجلد المشروع Fonts/.`
+        : `Added & synced "${picked.family || picked.name}" into workspace Fonts/.`,
     });
   };
 
-  const handleRemoveFontFromWorkspace = (idx: number) => {
-    setWorkspaces((prev) =>
-      prev.map((w) => {
-        if (w.id !== activeWorkspace.id) return w;
-        const nextFonts = (w.subfolders?.fonts || []).filter(
-          (_: any, i: number) => i !== idx,
-        );
-        return {
-          ...w,
-          subfolders: {
-            ...(w.subfolders || {}),
-            fonts: nextFonts,
-          },
-        };
-      }),
+  const handleRemoveFontFromWorkspace = async (idx: number) => {
+    if (!activeWorkspace) return;
+    const nextFonts = (subfolders.fonts || []).filter(
+      (_: any, i: number) => i !== idx,
     );
+    const nextProjectFonts = (activeWorkspace.projectFonts || []).filter(
+      (_: any, i: number) => i !== idx,
+    );
+    const nextWs = {
+      ...activeWorkspace,
+      projectFonts: nextProjectFonts,
+      subfolders: {
+        ...subfolders,
+        fonts: nextFonts,
+      },
+    };
+    await persistWorkspace(nextWs);
+  };
+
+  const handleDeleteDesignFile = async (design: any) => {
+    if (!activeWorkspace) return;
+    const relPath =
+      design.relativePath ||
+      (design.subfolder ? `${design.subfolder}/${design.name}` : `Designs/${design.name}`);
+    const res = await safeFetchJson<any>(
+      `/api/workspaces/${activeWorkspace.id}/design-file?path=${encodeURIComponent(relPath)}`,
+      {
+        method: "DELETE",
+        timeoutMs: 5000,
+      },
+    );
+    if (res && res.success) {
+      setWorkspaces((prev) =>
+        prev.map((w) => {
+          if (w.id !== activeWorkspace.id) return w;
+          const prevSub = w.subfolders || subfolders;
+          return {
+            ...w,
+            subfolders: {
+              ...prevSub,
+              designs: (prevSub.designs || []).filter(
+                (d: any) => d.path !== design.path && d.relativePath !== relPath,
+              ),
+            },
+          };
+        }),
+      );
+      setNotification({
+        type: "success",
+        text: isRtl
+          ? `تم حذف ملف التصميم "${design.name}" من مجلد المشروع.`
+          : `Removed design file "${design.name}" from workspace.`,
+      });
+    }
   };
 
   const handleExportBundle = async () => {
@@ -930,54 +1122,64 @@ export default function WorkspacesView({
     }
   };
 
-  // Task checklist handlers
-  const handleToggleTaskStatus = (taskId: string) => {
-    setWorkspaces((prev) =>
-      prev.map((w) => {
-        if (w.id !== selectedId) return w;
-        const updatedTasks = (w.tasks || []).map((task: any) => {
-          if (task.id !== taskId) return task;
-          const nextStatus =
-            task.status === "todo"
-              ? "in_progress"
-              : task.status === "in_progress"
-                ? "done"
-                : "todo";
-          return { ...task, status: nextStatus };
-        });
-        return { ...w, tasks: updatedTasks };
-      }),
-    );
+  // Task checklist handlers (persisted to disk)
+  const handleToggleTaskStatus = async (taskId: string) => {
+    if (!activeWorkspace) return;
+    const updatedTasks = (activeWorkspace.tasks || []).map((task: any) => {
+      if (task.id !== taskId) return task;
+      const nextStatus =
+        task.status === "todo"
+          ? "in_progress"
+          : task.status === "in_progress"
+            ? "done"
+            : "todo";
+      return { ...task, status: nextStatus };
+    });
+    await persistWorkspace({ ...activeWorkspace, tasks: updatedTasks });
   };
 
-  const handleAddTask = (e: any) => {
+  const handleAddTask = async (e: any) => {
     e.preventDefault();
-    if (!newTaskText.trim()) return;
+    if (!newTaskText.trim() || !activeWorkspace) return;
     const newTask = {
       id: `task-${Date.now()}`,
       text: newTaskText.trim(),
       status: "todo",
-      createdAt: new Date().toISOString().split("T")[0],
+      createdAt: Math.floor(Date.now() / 1000),
     };
-    setWorkspaces((prev) =>
-      prev.map((w) => {
-        if (w.id !== selectedId) return w;
-        return { ...w, tasks: [...(w.tasks || []), newTask] };
-      }),
-    );
     setNewTaskText("");
+    await persistWorkspace({
+      ...activeWorkspace,
+      tasks: [...(activeWorkspace.tasks || []), newTask],
+    });
   };
 
-  const handleDeleteTask = (taskId: string) => {
-    setWorkspaces((prev) =>
-      prev.map((w) => {
-        if (w.id !== selectedId) return w;
-        return {
-          ...w,
-          tasks: (w.tasks || []).filter((task: any) => task.id !== taskId),
-        };
-      }),
+  const handleDeleteTask = async (taskId: string) => {
+    if (!activeWorkspace) return;
+    const updatedTasks = (activeWorkspace.tasks || []).filter(
+      (task: any) => task.id !== taskId,
     );
+    await persistWorkspace({ ...activeWorkspace, tasks: updatedTasks });
+  };
+
+  const handleSaveNotesInline = async () => {
+    if (!activeWorkspace) return;
+    setSavingNotes(true);
+    try {
+      await persistWorkspace({
+        ...activeWorkspace,
+        notes: notesDraft,
+      });
+      setIsEditingNotes(false);
+      setNotification({
+        type: "success",
+        text: isRtl
+          ? "تم حفظ ملاحظات المشروع وتحديث دليل الهوية styleguide.html بنجاح!"
+          : "Saved brand guidelines notes and regenerated styleguide.html!",
+      });
+    } finally {
+      setSavingNotes(false);
+    }
   };
 
   const openCreateModal = () => {
@@ -1227,11 +1429,14 @@ export default function WorkspacesView({
       return;
     }
 
-    const newId =
+    const baseSlug =
       formName
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "") || `ws-${Date.now()}`;
+    const newId = workspaces.some((w) => w.id === baseSlug)
+      ? `${baseSlug}-${Date.now().toString().slice(-4)}`
+      : baseSlug;
     const newWs = {
       id: newId,
       name: formName.trim(),
@@ -1250,6 +1455,7 @@ export default function WorkspacesView({
         previewBody:
           "Consistent font pairings and harmonic color palettes create intuitive, beautiful user experiences.",
       },
+      projectFonts: [],
       palette: palettePresets[formPalettePreset] || palettePresets.plum,
       notes:
         formNotes.trim() ||
@@ -1259,19 +1465,19 @@ export default function WorkspacesView({
           id: "t1",
           text: "Select heading and body typography pairings",
           status: "done",
-          createdAt: new Date().toISOString().split("T")[0],
+          createdAt: Math.floor(Date.now() / 1000),
         },
         {
           id: "t2",
           text: "Audit WCAG 2.1 AA color contrast matrix",
           status: "in_progress",
-          createdAt: new Date().toISOString().split("T")[0],
+          createdAt: Math.floor(Date.now() / 1000),
         },
         {
           id: "t3",
           text: "Export client handoff bundle",
           status: "todo",
-          createdAt: new Date().toISOString().split("T")[0],
+          createdAt: Math.floor(Date.now() / 1000),
         },
       ],
     };
@@ -1287,13 +1493,31 @@ export default function WorkspacesView({
     setSelectedId(finalWs.id);
     setCurrentFolderPath("Designs");
     setIsCreatingWorkspace(false);
+    setNotification({
+      type: "success",
+      text: isRtl
+        ? `تم إنشاء مساحة العمل "${finalWs.name}" ومجلداتها الحقيقية على القرص.`
+        : `Created workspace "${finalWs.name}" with real disk folders.`,
+    });
   };
 
-  const handleDeleteWorkspace = (id: string) => {
+  const handleDeleteWorkspace = async (id: string) => {
     if (workspaces.length <= 1) return;
+    const deletedName = workspaces.find((w) => w.id === id)?.name || id;
     const remaining = workspaces.filter((w) => w.id !== id);
+    setConfirmDeleteWsId(null);
     setWorkspaces(remaining);
     setSelectedId(remaining[0].id);
+    await safeFetchJson<any>(`/api/workspaces/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      timeoutMs: 5000,
+    });
+    setNotification({
+      type: "success",
+      text: isRtl
+        ? `تم حذف مشروع "${deletedName}" من القائمة والقرص بنجاح.`
+        : `Deleted workspace "${deletedName}" from disk.`,
+    });
   };
 
   const currentTasks = activeWorkspace?.tasks || [];
@@ -1315,16 +1539,16 @@ export default function WorkspacesView({
 
   return (
     <div
-      className="flex-1 flex overflow-hidden bg-[var(--color-back-main)] text-[var(--color-text-main)] select-none"
+      className="flex-1 flex flex-col lg:flex-row overflow-hidden min-w-0 bg-[var(--color-back-main)] text-[var(--color-text-main)] select-none"
       dir={isRtl ? "rtl" : "ltr"}
     >
-      {/* 1. Collapsible Left Workspace Sidebar Selector */}
+      {/* 1. Responsive Workspace Selector (Top Bar on Tablet/Mobile, Collapsible Sidebar on Desktop) */}
       <aside
         className={`${
-          sidebarCollapsed ? "w-16" : "w-64 lg:w-72"
-        } shrink-0 border-r rtl:border-l rtl:border-r-0 border-[var(--color-border)] flex flex-col bg-[var(--color-back-side)]/50 transition-all duration-200`}
+          sidebarCollapsed ? "lg:w-16" : "lg:w-56 xl:w-64"
+        } w-full shrink-0 border-b lg:border-b-0 lg:border-r rtl:lg:border-l rtl:lg:border-r-0 border-[var(--color-border)] flex flex-col bg-[var(--color-back-side)]/50 transition-all duration-200 max-h-48 lg:max-h-none`}
       >
-        <div className="p-3.5 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
+        <div className="p-3 sm:p-3.5 border-b border-[var(--color-border)] flex items-center justify-between gap-2 shrink-0">
           {!sidebarCollapsed && (
             <div className="flex items-center gap-2 min-w-0">
               <Briefcase className="w-4 h-4 text-[var(--color-action)] shrink-0" />
@@ -1343,7 +1567,7 @@ export default function WorkspacesView({
             </button>
             <button
               onClick={() => setSidebarCollapsed((p) => !p)}
-              className="h-7 w-7 flex items-center justify-center rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] border border-[var(--color-border)] transition cursor-pointer"
+              className="hidden lg:flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] border border-[var(--color-border)] transition cursor-pointer"
               title={
                 sidebarCollapsed
                   ? isRtl
@@ -1364,7 +1588,7 @@ export default function WorkspacesView({
         </div>
 
         {/* Workspaces List */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+        <div className="flex lg:flex-col overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto flex-1 p-2 gap-1.5">
           {workspaces.map((ws) => {
             const isSelected = ws.id === selectedId;
             const taskCount = ws.tasks?.length || 0;
@@ -1388,8 +1612,8 @@ export default function WorkspacesView({
                 }}
                 className={`${
                   sidebarCollapsed
-                    ? "p-2 flex items-center justify-center"
-                    : "p-3 flex flex-col gap-1.5"
+                    ? "p-2 flex items-center justify-center shrink-0"
+                    : "p-2.5 sm:p-3 flex flex-col gap-1.5 min-w-[200px] lg:min-w-0 shrink-0 lg:shrink"
                 } rounded-xl border transition cursor-pointer ${
                   isSelected
                     ? "bg-[var(--color-control)] border-[var(--color-action)] shadow-xs"
@@ -1473,16 +1697,21 @@ export default function WorkspacesView({
       </aside>
 
       {/* 2. Main Workspace Detail Area */}
-      <main className="flex-1 overflow-y-auto p-5 sm:p-7 space-y-6 min-w-0">
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-7 min-w-0">
+        <div className="max-w-7xl mx-auto w-full space-y-6">
         {notification && (
-          <div className="p-3 rounded-xl bg-[var(--color-action)]/15 border border-[var(--color-action)] text-[var(--color-text-header)] text-xs flex items-center justify-between animate-in fade-in">
-            <div className="flex items-center gap-2">
+          <div
+            aria-live="polite"
+            className="p-3 rounded-xl bg-[var(--color-action)]/15 border border-[var(--color-action)] text-[var(--color-text-header)] text-xs flex items-center justify-between gap-3 animate-in fade-in"
+          >
+            <div className="flex items-center gap-2 min-w-0">
               <CheckCircle2 className="w-4 h-4 text-[var(--color-action)] shrink-0" />
-              <span>{notification.text}</span>
+              <span className="min-w-0 break-words">{notification.text}</span>
             </div>
             <button
+              type="button"
               onClick={() => setNotification(null)}
-              className="text-[11px] underline opacity-70 hover:opacity-100 cursor-pointer"
+              className="text-[11px] underline opacity-75 hover:opacity-100 cursor-pointer shrink-0"
             >
               {isRtl ? "إغلاق" : "Dismiss"}
             </button>
@@ -1490,19 +1719,19 @@ export default function WorkspacesView({
         )}
 
         {/* Workspace Hero Header + Project Logo + Physical Disk Path & Actions */}
-        <div className="p-6 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-5 shadow-xs">
-          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-5">
-            <div className="flex items-start gap-4 min-w-0">
+        <div className="p-4 sm:p-6 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs min-w-0">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col sm:flex-row items-start gap-4 w-full min-w-0">
               <div className="relative group shrink-0">
                 {activeWorkspace.logoDataUrl ? (
                   <img
                     src={activeWorkspace.logoDataUrl}
                     alt={activeWorkspace.name}
-                    className="w-16 h-16 rounded-2xl object-cover border border-[var(--color-border)] shadow-sm bg-[var(--color-back-main)]"
+                    className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl object-cover border border-[var(--color-border)] shadow-sm bg-[var(--color-back-main)]"
                   />
                 ) : (
                   <div
-                    className="w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-black text-white shadow-sm border border-white/10"
+                    className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center text-lg sm:text-xl font-black text-white shadow-sm border border-white/10"
                     style={{ backgroundColor: primarySwatchHex }}
                   >
                     {(activeWorkspace.name || "WS")
@@ -1514,7 +1743,7 @@ export default function WorkspacesView({
                   </div>
                 )}
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1 w-full">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-md bg-[var(--color-control)] border border-[var(--color-border)] text-[var(--color-action)] font-bold uppercase tracking-wider">
                     {localizeWorkspaceCategory(activeWorkspace.category, isRtl)}
@@ -1528,17 +1757,17 @@ export default function WorkspacesView({
                     • {activeWorkspace.client}
                   </span>
                 </div>
-                <h1 className="text-2xl sm:text-3xl font-black text-[var(--color-text-header)] mt-1 tracking-tight truncate">
+                <h1 className="text-xl sm:text-2xl lg:text-3xl font-black text-[var(--color-text-header)] mt-1.5 tracking-tight break-words">
                   {activeWorkspace.name}
                 </h1>
-                <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-3xl leading-relaxed">
+                <p className="text-xs sm:text-sm text-[var(--color-text-muted)] mt-1 max-w-4xl leading-relaxed break-words">
                   {activeWorkspace.description}
                 </p>
               </div>
             </div>
 
             {/* 1-Click Action Buttons */}
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-[var(--color-border-subtle)]/70">
               <button
                 onClick={openEditModal}
                 className="h-9 px-3.5 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-header)] border border-[var(--color-border)] text-xs font-bold flex items-center gap-2 transition cursor-pointer whitespace-nowrap shrink-0"
@@ -1616,35 +1845,62 @@ export default function WorkspacesView({
                 <span>{isRtl ? "تصدير (.ASE)" : "Export .ASE"}</span>
               </button>
 
-              {workspaces.length > 1 && (
-                <button
-                  onClick={() => handleDeleteWorkspace(activeWorkspace.id)}
-                  className="h-9 w-9 flex items-center justify-center rounded-xl hover:bg-rose-500/10 text-[var(--color-text-dim)] hover:text-rose-400 border border-transparent hover:border-rose-500/20 transition cursor-pointer shrink-0"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              )}
+              {workspaces.length > 1 &&
+                (confirmDeleteWsId === activeWorkspace.id ? (
+                  <div className="flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/30 rounded-xl px-2.5 h-9 shrink-0">
+                    <span className="text-[11px] font-bold text-rose-300 whitespace-nowrap">
+                      {isRtl ? "تأكيد الحذف؟" : "Delete project?"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteWorkspace(activeWorkspace.id)}
+                      className="px-2 py-0.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold cursor-pointer"
+                    >
+                      {isRtl ? "نعم" : "Yes"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteWsId(null)}
+                      className="px-2 py-0.5 rounded-lg bg-[var(--color-control)] text-[var(--color-text-muted)] text-[11px] font-semibold cursor-pointer"
+                    >
+                      {isRtl ? "إلغاء" : "No"}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteWsId(activeWorkspace.id)}
+                    aria-label={isRtl ? "حذف المشروع" : "Delete project"}
+                    title={isRtl ? "حذف المشروع نهائياً" : "Delete Workspace"}
+                    className="h-9 w-9 flex items-center justify-center rounded-xl hover:bg-rose-500/10 text-[var(--color-text-dim)] hover:text-rose-400 border border-transparent hover:border-rose-500/20 transition cursor-pointer shrink-0"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                ))}
             </div>
           </div>
 
           {/* Physical Disk Path & 4 Real Subfolder Cards (Fonts/, Designs/, Palettes/, Guidelines/) */}
-          <div className="pt-3 border-t border-[var(--color-border-subtle)] space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-[var(--color-text-muted)]">
-              <div className="flex items-center gap-2 truncate">
+          <div className="pt-3 border-t border-[var(--color-border-subtle)] space-y-3 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-[var(--color-text-muted)] min-w-0">
+              <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
                 <HardDrive className="w-3.5 h-3.5 text-[var(--color-action)] shrink-0" />
-                <span className="text-[var(--color-text-dim)]">
+                <span className="text-[var(--color-text-dim)] shrink-0">
                   {isRtl ? "مسار المشروع الفعلي:" : "Disk Path:"}
                 </span>
-                <span className="text-[var(--color-text-header)] select-text truncate">
+                <span
+                  dir="ltr"
+                  className="text-[var(--color-text-header)] select-text break-all min-w-0"
+                >
                   {physicalPath}
                 </span>
               </div>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">
+              <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold shrink-0">
                 File-Backed Workspace
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-4 gap-3">
               {[
                 {
                   folder: "Fonts" as const,
@@ -1702,43 +1958,51 @@ export default function WorkspacesView({
                       activeSubfolderTab === sf.folder ? "all" : sf.folder,
                     )
                   }
-                  className={`p-3 rounded-xl border transition cursor-pointer flex items-center justify-between gap-2.5 min-w-0 ${
+                  className={`p-3.5 rounded-xl border transition cursor-pointer flex flex-col justify-between gap-2 min-w-0 ${
                     activeSubfolderTab === sf.folder
                       ? "bg-[var(--color-action)]/15 border-[var(--color-action)]"
                       : "bg-[var(--color-back-main)] border-[var(--color-border)] hover:border-[var(--color-action)]/60"
                   }`}
                 >
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <FolderOpen className="w-3.5 h-3.5 text-[var(--color-action)] shrink-0" />
+                  <div className="flex items-center justify-between gap-2 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FolderOpen className="w-4 h-4 text-[var(--color-action)] shrink-0" />
                       <span
                         dir="ltr"
-                        className="text-xs font-mono font-bold text-[var(--color-text-header)] whitespace-nowrap truncate"
+                        className="text-xs font-mono font-bold text-[var(--color-text-header)] whitespace-nowrap"
                       >
                         {sf.title}
                       </span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-[var(--color-control)] text-[var(--color-text-muted)] whitespace-nowrap shrink-0">
-                        {sf.count}
-                      </span>
                     </div>
-                    <div className="text-[11px] text-[var(--color-text-muted)] truncate">
-                      {sf.subtitle}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenInExplorer(sf.folder);
+                      }}
+                      aria-label={
+                        isRtl
+                          ? `فتح مجلد ${sf.title} في الويندوز`
+                          : `Open ${sf.title} in Explorer`
+                      }
+                      className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-action)] text-[var(--color-text-muted)] hover:text-white transition cursor-pointer flex items-center justify-center shrink-0"
+                      title={
+                        isRtl
+                          ? `فتح مجلد ${sf.title} في الويندوز`
+                          : `Open ${sf.title} in Explorer`
+                      }
+                    >
+                      <FolderOpen className="w-3.5 h-3.5" />
+                    </button>
                   </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleOpenInExplorer(sf.folder);
-                    }}
-                    className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-action)] text-[var(--color-text-muted)] hover:text-white transition cursor-pointer flex items-center justify-center shrink-0"
-                    title={
-                      isRtl
-                        ? `فتح مجلد ${sf.title} في الويندوز`
-                        : `Open ${sf.title} in Explorer`
-                    }
-                  >
-                    <FolderOpen className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center justify-between gap-2 min-w-0">
+                    <span className="text-[11px] text-[var(--color-text-muted)] truncate">
+                      {sf.subtitle}
+                    </span>
+                    <span className="text-[10px] font-mono tabular-nums px-2 py-0.5 rounded-full bg-[var(--color-control)] text-[var(--color-text-muted)] whitespace-nowrap shrink-0">
+                      {sf.count}
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1749,7 +2013,7 @@ export default function WorkspacesView({
         {(activeSubfolderTab === "all" ||
           activeSubfolderTab === "Designs" ||
           activeSubfolderTab === "Fonts") && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
             {/* Designs/ Subfolder Discovered Files, Nested Folders ("Folder inside Folder"), & Design Uploader */}
             <div
               onDragOver={(e) => e.preventDefault()}
@@ -1868,7 +2132,7 @@ export default function WorkspacesView({
                       })}
                   </div>
 
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
                     <input
                       type="text"
                       value={newSubfolderName}
@@ -1878,13 +2142,13 @@ export default function WorkspacesView({
                           ? "اسم مجلد فرعي جديد..."
                           : "New subfolder name..."
                       }
-                      className="h-7 w-40 bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-lg px-2 text-[11px] text-[var(--color-text-header)] outline-none"
+                      className="h-7 flex-1 sm:flex-none sm:w-40 min-w-0 bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-lg px-2 text-[11px] text-[var(--color-text-header)] outline-none"
                     />
                     <button
                       type="button"
                       onClick={handleCreateNestedFolder}
                       disabled={creatingSubfolder || !newSubfolderName.trim()}
-                      className="h-7 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-bold flex items-center gap-1 text-[var(--color-text-header)] cursor-pointer disabled:opacity-40 whitespace-nowrap"
+                      className="h-7 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-bold flex items-center gap-1 text-[var(--color-text-header)] cursor-pointer disabled:opacity-40 whitespace-nowrap shrink-0"
                     >
                       <FolderPlus className="w-3 h-3 text-[var(--color-action)] shrink-0" />
                       <span>{isRtl ? "مجلد داخلي" : "Add Subfolder"}</span>
@@ -1912,21 +2176,39 @@ export default function WorkspacesView({
                 )}
               </div>
 
-              <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
-                {(subfolders.designs || [])
-                  .filter((d: any) => {
-                    if (!currentFolderPath) return true;
-                    const sub = String(d.subfolder || d.path || "")
-                      .replace(/\\/g, "/")
-                      .toLowerCase();
-                    return sub.includes(currentFolderPath.toLowerCase());
-                  })
-                  .map((design: any, idx: number) => (
+              <div className="space-y-2.5 max-h-80 overflow-y-auto pe-1">
+                {(() => {
+                  const visibleDesigns = (subfolders.designs || []).filter(
+                    (d: any) => {
+                      if (!currentFolderPath) return true;
+                      const sub = String(d.subfolder || d.path || "")
+                        .replace(/\\/g, "/")
+                        .toLowerCase();
+                      return sub.includes(currentFolderPath.toLowerCase());
+                    },
+                  );
+                  if (visibleDesigns.length === 0) {
+                    return (
+                      <div className="text-center py-6 px-4 text-xs text-[var(--color-text-dim)] border border-dashed border-[var(--color-border)] rounded-xl space-y-1.5">
+                        <p className="font-semibold text-[var(--color-text-muted)]">
+                          {isRtl
+                            ? "لا توجد ملفات تصميم في هذا المجلد بعد"
+                            : "No design files in this folder yet"}
+                        </p>
+                        <p className="text-[11px]">
+                          {isRtl
+                            ? "اسحب ملفات PSD / AI / PDF / PNG / SVG هنا أو اضغط على زر رفع تصميم."
+                            : "Drag PSD, AI, PDF, PNG, or SVG files here or click Upload Design."}
+                        </p>
+                      </div>
+                    );
+                  }
+                  return visibleDesigns.map((design: any, idx: number) => (
                     <div
                       key={`${design.path}-${idx}`}
-                      className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                      className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 min-w-0"
                     >
-                      <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
                         {design.previewUrl && (
                           <img
                             src={design.previewUrl}
@@ -1934,31 +2216,38 @@ export default function WorkspacesView({
                             className="w-10 h-10 rounded-lg object-cover border border-[var(--color-border)] shrink-0"
                           />
                         )}
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-action)]/15 text-[var(--color-action)]">
-                              {design.format}
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              dir="ltr"
+                              className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-action)]/15 text-[var(--color-action)] shrink-0"
+                            >
+                              {design.format || design.extension}
                             </span>
                             <span className="text-xs font-bold text-[var(--color-text-header)] truncate">
                               {design.name}
                             </span>
                           </div>
-                          <div className="text-[10px] font-mono text-[var(--color-text-dim)] truncate">
+                          <div
+                            dir="ltr"
+                            className="text-[10px] font-mono text-[var(--color-text-dim)] truncate"
+                          >
                             {design.relativePath || design.path}
                             {(design.usedFonts || []).length > 0
-                              ? ` • ${isRtl ? "الخطوط:" : "Used Fonts:"} ${design.usedFonts.join(", ")}`
+                              ? ` • ${design.usedFonts.join(", ")}`
                               : ""}
                           </div>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        {design.allActive ? (
+                        {design.allActive !== false ? (
                           <span className="h-7 px-2.5 inline-flex items-center rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold whitespace-nowrap shrink-0">
                             {isRtl ? "كافة الخطوط مفعلة ✓" : "Fonts Active ✓"}
                           </span>
                         ) : (
                           <button
+                            type="button"
                             onClick={handleActivateRam}
                             className="h-7 px-2.5 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-[10px] font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0"
                           >
@@ -1970,9 +2259,23 @@ export default function WorkspacesView({
                             </span>
                           </button>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteDesignFile(design)}
+                          aria-label={
+                            isRtl
+                              ? `حذف ${design.name}`
+                              : `Delete ${design.name}`
+                          }
+                          title={isRtl ? "حذف ملف التصميم" : "Delete design file"}
+                          className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-rose-500/15 text-[var(--color-text-dim)] hover:text-rose-400 flex items-center justify-center transition cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
-                  ))}
+                  ));
+                })()}
               </div>
             </div>
 
@@ -2040,72 +2343,95 @@ export default function WorkspacesView({
                 </div>
               )}
 
-              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                {(subfolders.fonts || []).map((f: any, idx: number) => (
-                  <div
-                    key={`${f.id || f.name}-${idx}`}
-                    className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] flex items-center justify-between gap-2"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-bold text-[var(--color-text-header)] truncate">
-                        {f.name}
-                      </div>
-                      <div className="text-[10px] font-mono text-[var(--color-text-dim)] truncate">
-                        {f.path} • {f.format || "TTF"}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
-                          f.isActive
-                            ? "bg-[var(--color-action)]/15 text-[var(--color-action)]"
-                            : "bg-[var(--color-control)] text-[var(--color-text-muted)]"
-                        }`}
-                      >
-                        {f.isActive
-                          ? isRtl
-                            ? "نشط بالرام"
-                            : "Active"
-                          : isRtl
-                            ? "جاهز"
-                            : "Ready"}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveFontFromWorkspace(idx)}
-                        className="h-6 w-6 rounded-md bg-[var(--color-control)] hover:bg-[var(--color-action)]/20 text-[var(--color-text-muted)] hover:text-[var(--color-action)] flex items-center justify-center transition cursor-pointer"
-                        title={
-                          isRtl
-                            ? "إزالة الخط من المشروع"
-                            : "Remove from workspace"
-                        }
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
+              <div className="space-y-2 max-h-60 overflow-y-auto pe-1">
+                {(subfolders.fonts || []).length === 0 ? (
+                  <div className="text-center py-6 px-4 text-xs text-[var(--color-text-dim)] border border-dashed border-[var(--color-border)] rounded-xl space-y-1">
+                    <p className="font-semibold text-[var(--color-text-muted)]">
+                      {isRtl
+                        ? "لم يتم ربط خطوط بالمشروع بعد"
+                        : "No project fonts linked yet"}
+                    </p>
+                    <p className="text-[11px]">
+                      {isRtl
+                        ? "اختر خطاً من القائمة أعلاه لإضافته ونسخه إلى مجلد Fonts/."
+                        : "Select a font above to add and sync it into Fonts/."}
+                    </p>
                   </div>
-                ))}
+                ) : (
+                  (subfolders.fonts || []).map((f: any, idx: number) => (
+                    <div
+                      key={`${f.id || f.name}-${idx}`}
+                      className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] flex items-center justify-between gap-2.5 min-w-0"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-[var(--color-text-header)] truncate">
+                          {f.name}
+                        </div>
+                        <div
+                          dir="ltr"
+                          className="text-[10px] font-mono text-[var(--color-text-dim)] truncate"
+                        >
+                          {f.path} • {f.format || "TTF"}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold whitespace-nowrap ${
+                            f.isActive
+                              ? "bg-[var(--color-action)]/15 text-[var(--color-action)]"
+                              : "bg-[var(--color-control)] text-[var(--color-text-muted)]"
+                          }`}
+                        >
+                          {f.isActive
+                            ? isRtl
+                              ? "نشط بالرام"
+                              : "Active"
+                            : isRtl
+                              ? "جاهز"
+                              : "Ready"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveFontFromWorkspace(idx)}
+                          aria-label={
+                            isRtl
+                              ? `إزالة ${f.name}`
+                              : `Remove ${f.name}`
+                          }
+                          className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-rose-500/15 text-[var(--color-text-muted)] hover:text-rose-400 flex items-center justify-center transition cursor-pointer"
+                          title={
+                            isRtl
+                              ? "إزالة الخط من المشروع"
+                              : "Remove from workspace"
+                          }
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
         )}
 
-        {/* Grid: 2 Columns (Left: Typography Pairing & Palette Editor, Right: Guidelines & Task Checklist) */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Grid: Typography Pairing & Palette Editor, Guidelines & Task Checklist */}
+        <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
           {/* Section 1: Typography Pairing + Built-In Workspace Color Palette Editor */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2">
-                <Type className="w-4 h-4 text-[var(--color-text-muted)]" />
-                <span>{isRtl ? "تناغم الخطوط" : "Typography Pairing"}</span>
+            <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
+                <Type className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+                <span className="truncate">{isRtl ? "تناغم الخطوط" : "Typography Pairing"}</span>
               </h3>
-              <div className="flex items-center gap-2 text-[11px] font-mono text-[var(--color-text-dim)]">
-                <span>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-[var(--color-text-dim)] min-w-0">
+                <span className="truncate max-w-[180px]">
                   H:{" "}
                   {getFontDisplayName(activeWorkspace.typography?.headingFont)}
                 </span>
                 <span>•</span>
-                <span>
+                <span className="truncate max-w-[180px]">
                   B: {getFontDisplayName(activeWorkspace.typography?.bodyFont)}
                 </span>
               </div>
@@ -2200,22 +2526,27 @@ export default function WorkspacesView({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                 {(activeWorkspace.palette || []).map(
                   (color: any, idx: number) => {
                     const ratio = getContrastRatio(color.hex, "#140D18");
                     const wcag = getWcagRating(ratio);
                     const isCopied = copiedHex === color.hex;
+                    const isEditing = editingSwatchIdx === idx;
 
                     return (
                       <div
                         key={idx}
                         onClick={() => handleCopyHex(color.hex)}
-                        className="group p-2.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border)] hover:border-[var(--color-action)] transition cursor-pointer flex flex-col justify-between gap-2 shadow-2xs relative"
+                        className={`p-3 rounded-xl bg-[var(--color-back-main)] border transition cursor-pointer flex flex-col justify-between gap-2.5 shadow-2xs relative min-w-0 ${
+                          isEditing
+                            ? "border-[var(--color-action)] ring-1 ring-[var(--color-action)]/40"
+                            : "border-[var(--color-border)] hover:border-[var(--color-action)]"
+                        }`}
                       >
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2.5 min-w-0">
                           <div
-                            className="w-7 h-7 rounded-lg shrink-0 border border-black/10 shadow-inner flex items-center justify-center text-[10px]"
+                            className="w-8 h-8 rounded-lg shrink-0 border border-black/15 shadow-inner flex items-center justify-center text-[10px]"
                             style={{ backgroundColor: color.hex }}
                           >
                             {isCopied && (
@@ -2223,35 +2554,54 @@ export default function WorkspacesView({
                             )}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="text-[11px] font-bold text-[var(--color-text-header)] truncate">
+                            <div className="text-xs font-bold text-[var(--color-text-header)] truncate">
                               {color.name}
                             </div>
-                            <div className="text-[10px] font-mono text-[var(--color-text-muted)] group-hover:text-[var(--color-action)] transition flex items-center gap-1">
+                            <div
+                              dir="ltr"
+                              className="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-1"
+                            >
                               <span>{color.hex}</span>
-                              <Copy className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition" />
+                              <Copy className="w-2.5 h-2.5 opacity-60" />
                             </div>
                           </div>
-                          {(activeWorkspace.palette || []).length > 1 && (
+                          <div className="flex items-center gap-1 shrink-0">
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleRemoveSwatchFromWorkspace(idx);
+                                startEditSwatch(idx, color);
                               }}
-                              className="h-5 w-5 rounded bg-[var(--color-control)] hover:bg-[var(--color-action)]/20 text-[var(--color-text-dim)] hover:text-[var(--color-action)] flex items-center justify-center opacity-0 group-hover:opacity-100 transition shrink-0 cursor-pointer"
-                              title={isRtl ? "حذف اللون" : "Remove Swatch"}
+                              aria-label={isRtl ? "تعديل اللون" : "Edit Swatch"}
+                              title={isRtl ? "تعديل اللون" : "Edit Swatch"}
+                              className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-action)]/20 text-[var(--color-text-muted)] hover:text-[var(--color-action)] flex items-center justify-center transition cursor-pointer"
                             >
-                              <Trash2 className="w-2.5 h-2.5" />
+                              <Pencil className="w-3 h-3" />
                             </button>
-                          )}
+                            {(activeWorkspace.palette || []).length > 1 && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveSwatchFromWorkspace(idx);
+                                }}
+                                aria-label={isRtl ? "حذف اللون" : "Remove Swatch"}
+                                title={isRtl ? "حذف اللون" : "Remove Swatch"}
+                                className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-rose-500/20 text-[var(--color-text-muted)] hover:text-rose-400 flex items-center justify-center transition cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
                         </div>
 
-                        <div className="flex items-center justify-between text-[9px] font-mono text-[var(--color-text-dim)] pt-1 border-t border-[var(--color-border-subtle)]">
-                          <span className="capitalize">
+                        <div className="flex items-center justify-between gap-2 text-[10px] font-mono tabular-nums text-[var(--color-text-dim)] pt-1.5 border-t border-[var(--color-border-subtle)]">
+                          <span className="capitalize truncate">
                             {color.role || "color"}
                           </span>
                           <span
-                            className={`px-1.5 py-0.5 rounded font-bold border ${
+                            dir="ltr"
+                            className={`px-1.5 py-0.5 rounded font-bold border whitespace-nowrap shrink-0 ${
                               wcag.isNormalPass
                                 ? "text-[#B7A1D9] bg-[#B7A1D9]/12 border-[#B7A1D9]/30"
                                 : "text-[var(--color-action)] bg-[var(--color-action)]/10 border-[var(--color-action)]/25"
@@ -2266,16 +2616,67 @@ export default function WorkspacesView({
                 )}
               </div>
 
+              {editingSwatchIdx !== null && (
+                <div className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-action)]/50 space-y-2.5 animate-in fade-in">
+                  <div className="text-[11px] font-bold text-[var(--color-text-header)] flex items-center justify-between">
+                    <span>
+                      {isRtl ? "تعديل بيانات اللون المحدد" : "Edit Selected Color Swatch"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEditingSwatchIdx(null)}
+                      className="text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] cursor-pointer text-[11px]"
+                    >
+                      {isRtl ? "إغلاق" : "Cancel"}
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="color"
+                      value={editSwatchHex}
+                      onChange={(e) => setEditSwatchHex(e.target.value.toUpperCase())}
+                      className="w-8 h-8 rounded-lg cursor-pointer border border-[var(--color-border)] shrink-0"
+                    />
+                    <input
+                      type="text"
+                      value={editSwatchName}
+                      onChange={(e) => setEditSwatchName(e.target.value)}
+                      placeholder={isRtl ? "اسم اللون..." : "Swatch name..."}
+                      className="flex-1 min-w-[120px] h-8 bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
+                    />
+                    <select
+                      value={editSwatchRole}
+                      onChange={(e) => setEditSwatchRole(e.target.value)}
+                      className="h-8 bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg px-2 text-xs text-[var(--color-text-header)] outline-none cursor-pointer"
+                    >
+                      <option value="primary">Primary</option>
+                      <option value="secondary">Secondary</option>
+                      <option value="accent">Accent</option>
+                      <option value="surface">Surface</option>
+                      <option value="background">Background</option>
+                      <option value="text">Text</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleSaveEditedSwatch}
+                      className="h-8 px-3 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-xs font-bold cursor-pointer shrink-0"
+                    >
+                      {isRtl ? "حفظ التعديل" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Add Swatch + Automatic Harmony Suggestions */}
               <div className="pt-2 border-t border-[var(--color-border-subtle)] space-y-2.5">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <input
                     type="color"
                     value={newSwatchHex}
                     onChange={(e) =>
                       setNewSwatchHex(e.target.value.toUpperCase())
                     }
-                    className="w-7 h-7 rounded-lg cursor-pointer border border-[var(--color-border)]"
+                    className="w-8 h-8 rounded-lg cursor-pointer border border-[var(--color-border)] shrink-0"
                   />
                   <input
                     type="text"
@@ -2284,17 +2685,18 @@ export default function WorkspacesView({
                     placeholder={
                       isRtl ? "اسم اللون الجديد..." : "New swatch name..."
                     }
-                    className="flex-1 bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-lg px-2.5 py-1 text-xs text-[var(--color-text-header)] outline-none"
+                    className="flex-1 min-w-[140px] h-8 bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
                   />
                   <button
+                    type="button"
                     onClick={() => handleAddSwatchToWorkspace(newSwatchHex)}
-                    className="px-3 py-1 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-xs font-bold cursor-pointer"
+                    className="h-8 px-3 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-xs font-bold cursor-pointer whitespace-nowrap shrink-0"
                   >
                     + {isRtl ? "إضافة لون" : "Add Color"}
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between text-[10px] text-[var(--color-text-muted)]">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[var(--color-text-muted)]">
                   <span className="flex items-center gap-1 font-semibold">
                     <Palette className="w-3 h-3 text-[var(--color-action)]" />
                     <span>
@@ -2335,34 +2737,48 @@ export default function WorkspacesView({
           </div>
 
           {/* Section 3: Guidelines/ & Project Checklist */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-[var(--color-text-muted)]" />
-                  <span>
-                    {isRtl
-                      ? "قائمة مهام المشروع ودليل الهوية (Guidelines/)"
-                      : "Project Checklist & Guidelines (Guidelines/)"}
+          <div className="space-y-4 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
+                  <CheckCircle2 className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+                  <span className="truncate">
+                    {isRtl ? (
+                      <>
+                        مهام المشروع ودليل الهوية (
+                        <bdi dir="ltr">Guidelines/</bdi>)
+                      </>
+                    ) : (
+                      "Project Checklist & Guidelines (Guidelines/)"
+                    )}
                   </span>
                 </h3>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--color-control)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
+                <span
+                  dir="ltr"
+                  className="text-[10px] font-mono tabular-nums px-2 py-0.5 rounded-full bg-[var(--color-control)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0"
+                >
                   {completedTasks}/{currentTasks.length} ({progressPercent}%)
                 </span>
               </div>
 
-              <div className="flex items-center gap-1 text-[10px] font-mono">
-                {["all", "todo", "in_progress", "done"].map((f) => (
+              <div className="flex flex-wrap items-center gap-1 text-[10px] font-mono shrink-0">
+                {[
+                  { id: "all", ar: "الكل", en: "All" },
+                  { id: "todo", ar: "قيد الانتظار", en: "Todo" },
+                  { id: "in_progress", ar: "جاري العمل", en: "In Progress" },
+                  { id: "done", ar: "مكتمل", en: "Done" },
+                ].map((f) => (
                   <button
-                    key={f}
-                    onClick={() => setTaskFilter(f)}
-                    className={`px-2 py-0.5 rounded capitalize transition cursor-pointer ${
-                      taskFilter === f
+                    key={f.id}
+                    type="button"
+                    onClick={() => setTaskFilter(f.id)}
+                    className={`px-2 py-1 rounded transition cursor-pointer whitespace-nowrap ${
+                      taskFilter === f.id
                         ? "bg-[var(--color-action)] text-white font-bold"
                         : "text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:bg-[var(--color-control)]"
                     }`}
                   >
-                    {f.replace("_", " ")}
+                    {isRtl ? f.ar : f.en}
                   </button>
                 ))}
               </div>
@@ -2438,7 +2854,7 @@ export default function WorkspacesView({
 
                       <div className="flex items-center gap-2 shrink-0">
                         <span
-                          className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded font-bold ${
+                          className={`text-[10px] uppercase px-2 py-0.5 rounded font-bold whitespace-nowrap ${
                             isDone
                               ? "bg-emerald-500/10 text-emerald-400"
                               : isInProgress
@@ -2446,11 +2862,19 @@ export default function WorkspacesView({
                                 : "bg-[var(--color-control)] text-[var(--color-text-dim)]"
                           }`}
                         >
-                          {task.status.replace("_", " ")}
+                          {isRtl
+                            ? isDone
+                              ? "مكتمل"
+                              : isInProgress
+                                ? "جاري العمل"
+                                : "قيد الانتظار"
+                            : task.status.replace("_", " ")}
                         </span>
                         <button
+                          type="button"
                           onClick={() => handleDeleteTask(task.id)}
-                          className="text-[var(--color-text-dim)] hover:text-rose-400 p-1 transition cursor-pointer"
+                          aria-label={isRtl ? "حذف المهمة" : "Delete task"}
+                          className="text-[var(--color-text-dim)] hover:text-rose-400 p-1.5 transition cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -2461,8 +2885,8 @@ export default function WorkspacesView({
               )}
             </div>
 
-            {/* Section 4: Notes & Guidelines/StyleGuide.html */}
-            <div className="pt-2 space-y-2">
+            {/* Section 4: Notes & Guidelines/styleguide.html */}
+            <div className="pt-2 space-y-2.5">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
                   <FileCode className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
@@ -2477,32 +2901,108 @@ export default function WorkspacesView({
                     )}
                   </span>
                 </h3>
-                <button
-                  onClick={() => handleOpenInExplorer("Guidelines")}
-                  className="text-[11px] text-[var(--color-action)] hover:underline font-semibold cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  {isRtl ? (
-                    <>
-                      فتح <bdi dir="ltr">Guidelines/</bdi>
-                    </>
-                  ) : (
-                    "Open Guidelines/"
-                  )}
-                </button>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isEditingNotes) {
+                        handleSaveNotesInline();
+                      } else {
+                        setNotesDraft(activeWorkspace.notes || "");
+                        setIsEditingNotes(true);
+                      }
+                    }}
+                    disabled={savingNotes}
+                    className="h-7 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text-header)] flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
+                  >
+                    <Pencil className="w-3 h-3 text-[var(--color-action)] shrink-0" />
+                    <span>
+                      {isEditingNotes
+                        ? savingNotes
+                          ? isRtl
+                            ? "جاري الحفظ..."
+                            : "Saving..."
+                          : isRtl
+                            ? "حفظ الملاحظات"
+                            : "Save Notes"
+                        : isRtl
+                          ? "تعديل الملاحظات"
+                          : "Edit Notes"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenInExplorer("Guidelines")}
+                    className="text-[11px] text-[var(--color-action)] hover:underline font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    {isRtl ? (
+                      <>
+                        فتح <bdi dir="ltr">Guidelines/</bdi>
+                      </>
+                    ) : (
+                      "Open Guidelines/"
+                    )}
+                  </button>
+                </div>
               </div>
-              <div className="p-3.5 rounded-xl bg-[var(--color-back-card)] border border-[var(--color-border)] text-xs text-[var(--color-text-main)] leading-relaxed font-mono">
-                {activeWorkspace.notes}
-              </div>
+              {isEditingNotes ? (
+                <div className="space-y-2">
+                  <textarea
+                    rows={4}
+                    value={notesDraft}
+                    onChange={(e) => setNotesDraft(e.target.value)}
+                    placeholder={
+                      isRtl
+                        ? "اكتب إرشادات الهوية البصرية واستخدام الخطوط والألوان..."
+                        : "Write brand guidelines, typography rules, and delivery notes..."
+                    }
+                    className="w-full p-3.5 rounded-xl bg-[var(--color-back-card)] border border-[var(--color-action)] text-xs text-[var(--color-text-header)] leading-relaxed outline-none resize-y"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingNotes(false);
+                        setNotesDraft(activeWorkspace.notes || "");
+                      }}
+                      className="px-3 py-1 rounded-lg bg-[var(--color-control)] text-[11px] text-[var(--color-text-muted)] cursor-pointer"
+                    >
+                      {isRtl ? "إلغاء" : "Cancel"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveNotesInline}
+                      disabled={savingNotes}
+                      className="px-3.5 py-1 rounded-lg bg-[var(--color-action)] text-white text-[11px] font-bold cursor-pointer"
+                    >
+                      {isRtl ? "حفظ في دليل الهوية" : "Save Guidelines"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3.5 rounded-xl bg-[var(--color-back-card)] border border-[var(--color-border)] text-xs text-[var(--color-text-main)] leading-relaxed break-words">
+                  {activeWorkspace.notes ||
+                    (isRtl
+                      ? "لا توجد ملاحظات مضافة بعد — اضغط تعديل الملاحظات للإضافة."
+                      : "No guidelines notes yet — click Edit Notes to add.")}
+                </div>
+              )}
             </div>
           </div>
+        </div>
         </div>
       </main>
 
       {/* Modal: Spacious Create or Edit Project Workspace */}
-      {isCreatingWorkspace && (
-        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4 sm:p-6">
-          <div className="w-full max-w-3xl max-h-[90vh] bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-back-side)] shrink-0">
+      {isCreatingWorkspace &&
+        (() => {
+          const modalNode = (
+            <div
+              className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6"
+              dir={isRtl ? "rtl" : "ltr"}
+            >
+              <div className="w-full max-w-[calc(100vw-1.5rem)] sm:max-w-3xl max-h-[88dvh] bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95">
+                <div className="px-4 sm:px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between gap-3 bg-[var(--color-back-side)] shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-[var(--color-action)]/15 border border-[var(--color-action)]/30 flex items-center justify-center text-[var(--color-action)]">
                   <Briefcase className="w-4 h-4" />
@@ -2842,7 +3342,11 @@ export default function WorkspacesView({
             </form>
           </div>
         </div>
-      )}
+          );
+          return typeof document !== "undefined"
+            ? createPortal(modalNode, document.body)
+            : modalNode;
+        })()}
     </div>
   );
 }

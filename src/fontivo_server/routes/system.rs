@@ -727,7 +727,11 @@ pub fn handle_updater(req: Request, cors_origin: Header, json_header: Header) {
 
 pub fn handle_updater_status(req: Request, cors_origin: Header, json_header: Header) {
     let mut status = AutoUpdater::get_status();
-    if status.last_checked.is_none() {
+    if status.last_checked.is_none()
+        || (status.error.is_some()
+            && status.status != "downloading"
+            && status.status != "ready_to_install")
+    {
         if let Ok(fresh) = AutoUpdater::check_for_updates() {
             status = fresh;
         }

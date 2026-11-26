@@ -887,7 +887,14 @@ export default function App({
                 </span>
                 {updateBanner.releaseNotes && (
                   <span className="text-[#D8CEDF] text-[11px] truncate hidden md:inline max-w-md">
-                    — {updateBanner.releaseNotes}
+                    — {updateBanner.releaseNotes
+                      .replace(/---\s*### Platform Install Channels[\s\S]*/i, "")
+                      .replace(/```[\s\S]*?```/g, " ")
+                      .replace(/`([^`]+)`/g, "$1")
+                      .replace(/#{1,6}\s*/g, "")
+                      .replace(/\*\*([^*]+)\*\*/g, "$1")
+                      .replace(/\s+/g, " ")
+                      .trim()}
                   </span>
                 )}
               </div>

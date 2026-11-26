@@ -565,6 +565,14 @@ impl ApiServer {
                                 json_header,
                             )
                         }
+                        ("POST", "/api/workspaces/save-palette") => {
+                            routes::workspaces::save_workspace_palette(
+                                req,
+                                &state,
+                                cors_origin,
+                                json_header,
+                            )
+                        }
                         ("POST", "/api/ase/inspect") => {
                             routes::workspaces::inspect_ase(req, &state, cors_origin, json_header)
                         }
@@ -586,6 +594,20 @@ impl ApiServer {
                                 req,
                                 &state,
                                 id,
+                                cors_origin,
+                                json_header,
+                            );
+                        }
+                        ("DELETE", p)
+                            if p.starts_with("/api/workspaces/")
+                                && p.ends_with("/design-file") =>
+                        {
+                            let id = &p["/api/workspaces/".len()..p.len() - "/design-file".len()];
+                            routes::workspaces::delete_workspace_design_file(
+                                req,
+                                &state,
+                                id,
+                                &query_params,
                                 cors_origin,
                                 json_header,
                             );

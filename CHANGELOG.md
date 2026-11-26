@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.2] - 2026-11-26
+
+### Fixed & Improved
+- **Zero-Mock Updater & Resilient CDN Mirror**: Removed hardcoded `v1.0.0`/`1.0.2`/`Today` strings across `LicensesView`, `SettingsView`, `UpdaterModal`, `AboutDeveloperModal`, and `HelpModal`; added fallback to `Fontivo-Site/api/manifest.json` when GitHub API rate-limits or drops TLS, stripped raw CLI trailers from release notes, rebuilt `UpdaterModal` via React Portal with formatted changelog items, and cleaned `App.tsx` ready banner.
+- **End-to-End Persistent Project Workspaces (`WorkspacesView`)**: Removed mock fallback fonts/PSDs and connected full real CRUD persistence across creating/editing/deleting workspaces (`DELETE /api/workspaces/:id`), adding/editing/deleting swatches (`POST /api/workspaces/save-palette` + `palette.ase`), linking/copying project fonts (`projectFonts` synced to `Fonts/` & activated in RAM), uploading/scanning/deleting design files (`DELETE /api/workspaces/:id/design-file`), task checklists, and inline brand guidelines editing.
+- **Responsive & RTL-Safe Workspace & Settings Layout**: Redesigned `WorkspacesView` subfolder cards, color swatch tiles, hero header, action toolbars, and `%LOCALAPPDATA%` `dir="ltr"` path displays for clean zero-overlap visual order across desktop and narrow viewports.
+
+---
+
 ## [1.1.1] - 2026-11-26
 
 ### Fixed & Improved

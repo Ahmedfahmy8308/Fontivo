@@ -29,7 +29,7 @@ import {
 } from "../../utils/cloudPackages";
 import uiPkg from "../../../package.json";
 
-const APP_VERSION = uiPkg.version || "1.0.2";
+const APP_VERSION = uiPkg.version;
 
 export interface SettingsViewProps {
   onRefreshStats?: () => void;
@@ -455,7 +455,8 @@ export default function SettingsView({
                   </span>
                 </div>
                 <div
-                  className="text-[var(--color-text-muted)] text-xs mt-0.5 font-mono truncate"
+                  dir="ltr"
+                  className="text-[var(--color-text-muted)] text-xs mt-0.5 font-mono truncate text-start"
                   title={storagePath}
                 >
                   {storagePath}
@@ -503,7 +504,8 @@ export default function SettingsView({
                   </span>
                 </div>
                 <div
-                  className="text-[var(--color-text-muted)] text-xs mt-0.5 font-mono truncate"
+                  dir="ltr"
+                  className="text-[var(--color-text-muted)] text-xs mt-0.5 font-mono truncate text-start"
                   title={downloadsDir}
                 >
                   {downloadsDir}
@@ -884,8 +886,8 @@ export default function SettingsView({
                                 ? `يتوفر إصدار أحدث v${updateStatus.latestVersion} (المثبت: v${updateStatus.currentVersion}).`
                                 : `Newer release v${updateStatus.latestVersion} is available (installed: v${updateStatus.currentVersion}).`
                               : isRtl
-                                ? `برنامج Fontivo محدث لأحدث إصدار رسمي (v${updateStatus.currentVersion || "1.0.2"}).`
-                                : `Fontivo is up to date on the latest official release (v${updateStatus.currentVersion || "1.0.2"}).`}
+                                ? `برنامج Fontivo محدث لأحدث إصدار رسمي (v${updateStatus.currentVersion || APP_VERSION}).`
+                                : `Fontivo is up to date on the latest official release (v${updateStatus.currentVersion || APP_VERSION}).`}
                     </span>
                   </div>
                   {updateStatus.status === "ready_to_install" && (
