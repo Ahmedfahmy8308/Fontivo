@@ -379,7 +379,7 @@ pub fn clean_dead_registry_fonts() -> usize {
 pub fn enumerate_windows_fonts() -> Vec<WindowsFontItem> {
     #[allow(unused_mut)]
     let mut results: Vec<WindowsFontItem> = Vec::new();
-    #[allow(unused_mut)]
+    #[allow(unused_variables, unused_mut)]
     let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     #[cfg(windows)]

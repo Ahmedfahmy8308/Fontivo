@@ -15,7 +15,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RUSTFLAGS: "-D warnings"
   CARGO_TERM_COLOR: always
 
 permissions:

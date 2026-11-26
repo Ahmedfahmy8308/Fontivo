@@ -308,9 +308,10 @@ impl FontLifecycleBackend for WindowsBackend {
 
     fn uninstall_permanent(
         &self,
-        font_name: &str,
-        file_name: Option<&str>,
+        #[allow(unused_variables)] font_name: &str,
+        #[allow(unused_variables)] file_name: Option<&str>,
     ) -> Result<bool, FontLifecycleError> {
+        #[allow(unused_mut)]
         let mut any_removed = false;
 
         #[cfg(windows)]

@@ -1,4 +1,6 @@
+#[cfg(windows)]
 use std::env;
+#[cfg(windows)]
 use std::fs;
 
 #[cfg(windows)]
@@ -41,6 +43,7 @@ pub fn is_running_as_admin() -> bool {
     }
 }
 
+#[cfg(windows)]
 fn quote_windows_arg(arg: &str) -> String {
     if !arg.is_empty() && !arg.contains([' ', '\t', '\n', '"']) {
         return arg.to_string();

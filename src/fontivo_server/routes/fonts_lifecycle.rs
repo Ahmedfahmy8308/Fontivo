@@ -2104,6 +2104,7 @@ pub fn handle_open_folder(
             let p = Path::new(&font.path);
             if p.is_file() {
                 if let Ok(canonical_path) = p.canonicalize() {
+                    #[allow(unused_variables)]
                     let path_str = canonical_path.to_string_lossy();
                     #[cfg(windows)]
                     {

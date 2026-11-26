@@ -102,6 +102,7 @@ fn round1(v: f64) -> f64 {
     (v * 10.0).round() / 10.0
 }
 
+#[cfg(windows)]
 fn is_system_process_name(name: &str) -> bool {
     let low = name.to_ascii_lowercase();
     matches!(
@@ -180,7 +181,9 @@ fn get_processor_name() -> String {
 
 /// Reads primary GPU adapter name and VRAM size rapidly via Win32 EnumDisplayDevicesW + Registry
 fn get_gpu_telemetry() -> GpuTelemetry {
+    #[allow(unused_mut)]
     let mut adapter_name = "DirectX 12 Graphics Adapter".to_string();
+    #[allow(unused_mut)]
     let mut vram_total_mb = 4096.0;
 
     #[cfg(windows)]
@@ -649,10 +652,16 @@ pub fn get_system_resources(active_ram_fonts: usize) -> SystemResourcesResponse 
 }
 
 /// Trims working sets of a single process (`pid`) or all accessible user processes (`trim_all`)
-pub fn trim_process_working_set(target_pid: Option<u32>, trim_all: bool) -> TrimProcessResult {
+pub fn trim_process_working_set(
+    #[allow(unused_variables)] target_pid: Option<u32>,
+    #[allow(unused_variables)] trim_all: bool,
+) -> TrimProcessResult {
     let (sys_before_mb, _, _) = get_system_ram_stats();
+    #[allow(unused_mut)]
     let mut trimmed_count = 0usize;
+    #[allow(unused_mut)]
     let mut total_before_mb = 0.0f64;
+    #[allow(unused_mut)]
     let mut total_after_mb = 0.0f64;
 
     #[cfg(windows)]

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+#[cfg(windows)]
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -211,7 +212,10 @@ impl LibraryStorageManager {
     }
 
     /// Checks if the volume holding the library has enough free disk space (in bytes)
-    pub fn check_available_space(required_bytes: u64) -> Result<u64, String> {
+    pub fn check_available_space(
+        #[allow(unused_variables)] required_bytes: u64,
+    ) -> Result<u64, String> {
+        #[allow(unused_variables)]
         let dir = Self::get_storage_dir();
 
         #[cfg(windows)]

@@ -100,7 +100,7 @@ impl FontLifecycleBackend for MacosBackend {
                 }
             })?;
 
-            if let Err(rename_err) = fs::rename(&tmp_dest, &dest) {
+            if let Err(_rename_err) = fs::rename(&tmp_dest, &dest) {
                 // Fallback: direct removal and symlink if rename across boundaries fails
                 let _ = fs::remove_file(&tmp_dest);
                 let _ = fs::remove_file(&dest);

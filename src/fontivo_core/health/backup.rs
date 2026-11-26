@@ -24,6 +24,7 @@ pub fn restore_default_windows_fonts() -> Result<(usize, String), String> {
     Ok((res.removed_count, legacy_file.to_string_lossy().to_string()))
 }
 
+#[cfg(windows)]
 fn current_unix_ts() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -31,6 +32,7 @@ fn current_unix_ts() -> u64 {
         .as_secs()
 }
 
+#[cfg(windows)]
 fn append_transaction_log(
     log: &mut Vec<TransactionLogEntry>,
     action: &str,
@@ -49,6 +51,7 @@ fn append_transaction_log(
     });
 }
 
+#[cfg(windows)]
 fn write_transaction_log_jsonl(path: &Path, entries: &[TransactionLogEntry]) -> Result<(), String> {
     let mut out = String::new();
     for entry in entries {
@@ -94,6 +97,7 @@ pub fn move_font_file_to_backup(src_path: &Path, dest_path: &Path) -> Result<boo
 
 /// Captures a full snapshot of HKCU and HKLM Fonts registry entries (exact name, type, and data).
 pub fn snapshot_fonts_registry() -> Vec<RegistrySnapshotEntry> {
+    #[allow(unused_mut)]
     let mut entries = Vec::new();
     #[cfg(windows)]
     {
@@ -800,6 +804,7 @@ pub fn build_undo_registry_entries(font_item: &serde_json::Value) -> Vec<Registr
 }
 
 pub fn undo_restore_backup(backup_id: &str) -> Result<usize, String> {
+    #[allow(unused_variables)]
     let safe_id = super::registry::validate_backup_id(backup_id)?;
     #[cfg(windows)]
     {

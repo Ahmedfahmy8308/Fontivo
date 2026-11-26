@@ -421,7 +421,7 @@ impl AutoUpdater {
     }
 
     /// Launch the downloaded installer and restart Fontivo cleanly
-    pub fn apply_update(silent: bool) -> Result<String, String> {
+    pub fn apply_update(#[allow(unused_variables)] silent: bool) -> Result<String, String> {
         let state = if let Some(mock) = MOCK_UPDATE.read().unwrap().clone() {
             mock
         } else {
