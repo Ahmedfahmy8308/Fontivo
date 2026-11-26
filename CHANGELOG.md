@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.2] - 2026-11-26
+
+### Fixed
+- **Windows 10/11 Inbox & Codepage System Fonts Classification**: Added missing TrustedInstaller inbox fonts (`msgothic.ttc`, `SimsunExtG.ttf`, `LeelaUIb.ttf`, `SansSerifCollection.ttf`, `CascadiaCode.ttf`, `CascadiaMono.ttf`) and regional `.FON` raster system fonts (`COUE1256.FON`, `COUF1256.FON`, `SERE1256.FON`, `SERF1256.FON`, etc.) to `is_protected_system_font` and `CORE_WINDOWS_FONT_FAMILIES` so they are protected under Windows Core Fonts instead of misclassified as external user fonts.
+- **Locked External & Duplicate Font Removal (`FontCache` + `MoveFileExW`)**: Stops Windows `FontCache` service and broadcasts `WM_FONTCHANGE` *before* moving non-system fonts during Windows font reset, and safely backs up + schedules `MOVEFILE_DELAY_UNTIL_REBOOT` deletion (removing stale Registry entries cleanly) for any third-party/duplicate fonts still locked in memory (`os error 32`), with accurate feedback counts in `WindowsFontsView`.
+
+---
+
 ## [1.0.1] - 2026-11-26
 
 ### Fixed
