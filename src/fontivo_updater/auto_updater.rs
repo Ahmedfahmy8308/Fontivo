@@ -89,7 +89,7 @@ pub type UpdateCheckResult = UpdateStatus;
 pub struct AutoUpdater;
 
 impl AutoUpdater {
-    pub const CURRENT_VERSION: &'static str = "1.0.0";
+    pub const CURRENT_VERSION: &'static str = "1.0.1";
     pub const DEFAULT_MANIFEST_URL: &'static str =
         "https://raw.githubusercontent.com/Ahmedfahmy8308/Fontivo/main/release-manifest.json";
 

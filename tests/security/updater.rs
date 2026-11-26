@@ -12,7 +12,7 @@ fn test_updater_check() {
     );
 
     let info = update_res.unwrap();
-    assert_eq!(info.current_version, "1.0.0");
+    assert_eq!(info.current_version, "1.0.1");
     assert!(!info.release_notes.is_empty());
     assert!(!info.download_url.is_empty());
     assert!(info.asset_size_bytes > 0);

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.1] - 2026-11-26
+
+### Fixed
+- **Cloud Font Packs Redirect Allowlist (`release-assets.githubusercontent.com`)**: Added GitHub's official release asset CDN hosts (`release-assets.githubusercontent.com`, `github-releases.githubusercontent.com`, `codeload.github.com`, `media.githubusercontent.com`) to `TRUSTED_DOWNLOAD_DOMAINS` in `security.rs` so `DownloadManager` cleanly follows `302 Redirect` responses from `Fontivo-Fonts v1.0.3` releases while preserving strict SSRF protection.
+- **Cloud Packs Batch Queue & Real-Time UI Sync**: Fixed `CloudPacksView` (`handleDownloadAll` reading `res.queued` instead of `res.queuedJobs`), normalized lowercase `camelCase` Rust `JobPhase` values across `CloudPacksView` and `OperationsCenter`, and aligned `/api/catalog/packages` responses with `libraryVersion` & `releaseTag`.
+
+### Improved
+- **Live Animated Pack Cards & Aggregate Queue Telemetry**: Added a real-time aggregate download bar (`Active / Queued / Completed`, speed, MB downloaded / total, and active pack + `v1.0.3` tag) plus per-card animated progress bars, speed/MB readouts, retry buttons on failure, and `dir="ltr"` isolation on numeric sizes in Arabic RTL mode.
+
+---
+
 ## [1.0.0] - 2026-11-23
 
 ### Highlights

@@ -86,7 +86,7 @@ impl AdobeListener {
                 }
 
                 if method == "GET" && (url == "/" || url.is_empty()) {
-                    let body = r#"{"status":"ok","app":"Fontivo","version":"1.0.0","fontBaseCompatible":true}"#;
+                    let body = r#"{"status":"ok","app":"Fontivo","version":"1.0.1","fontBaseCompatible":true}"#;
                     let mut res = Response::from_string(body);
                     res.add_header(cors_header);
                     res.add_header(json_header);
@@ -487,7 +487,7 @@ impl AdobeListener {
                         "result": {
                         "running": true,
                         "app": "Fontivo",
-                        "version": "1.0.0",
+                        "version": "1.0.1",
                         "activeFonts": count
                         }
                         });
