@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Community Discussions
+    url: https://github.com/Ahmedfahmy8308/Fontivo/discussions
+    about: Ask architectural questions, discuss typography workflows, or share creative ideas.
+  - name: 🛡️ Security Vulnerability Reporting
+    url: https://github.com/Ahmedfahmy8308/Fontivo/security/policy
+    about: Privately report security vulnerabilities according to our SECURITY.md policy.
+  - name: 📖 Technical Architecture & Documentation
+    url: https://github.com/Ahmedfahmy8308/Fontivo/tree/main/docs
+    about: Explore deep technical specifications, Win32 GDI32 virtualization, and Adobe bridge protocols.

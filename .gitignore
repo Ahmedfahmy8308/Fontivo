@@ -1,0 +1,66 @@
+# ==============================================================================
+# Fontivo-App — Git Ignore Specification
+# Standard open-source rules for Rust core, React UI, Inno Setup, and test suites
+# ==============================================================================
+
+# 1. Rust Build Artifacts & Core Binaries
+core/target/
+target/
+**/target/**
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.rs.bk
+
+# 2. Frontend Dependencies & Build Distributions
+ui/node_modules/
+node_modules/
+**/node_modules/**
+ui/dist/
+dist/
+**/dist/**
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 3. Release Binaries
+release/
+
+# 4. Logs, Dumps & Temp Files
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+scratch/
+**/scratch/**
+!**/scratch/.gitkeep
+test-results/
+coverage/
+
+# 5. OS-Specific Metadata
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# 6. Python Environments & Bytecode
+__pycache__/
+**/__pycache__/**
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# 7. IDE & Editor Workspaces
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.fleet/
+.vs/

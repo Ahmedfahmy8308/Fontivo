@@ -1,0 +1,306 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  /* ==========================================================================
+     Fontivo v2.0 Brand Identity Tokens ("Type. Design. Deliver.")
+     - Plum Ink: #291C2E (primary dark anchor/surface)
+     - Deep Plum Canvas: #140D18 / #1E1423 / #291C2E
+     - Coral: #F16B50 (primary accent / action)
+     - Lavender: #B7A1D9 (secondary accent)
+     - Amber: #F7B544 (highlight / warm accent)
+     - Lime: #C7D65A (success / active accent)
+     - Warm Paper: #F5EBDD / Paper White: #FFF9F2
+     - Warm Gray: #E8E1D6 / Slate: #5A5366
+     ========================================================================== */
+  --font-display: "Sora", "Inter", sans-serif;
+  --font-ui: "Inter", "Tajawal", sans-serif;
+  --font-arabic: "Tajawal", "Noto Sans Arabic", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --fontivo-plum: #291c2e;
+  --fontivo-coral: #f16b50;
+  --fontivo-coral-hover: #d9553b;
+  --fontivo-coral-tint: rgba(241, 107, 80, 0.14);
+  --fontivo-lavender: #b7a1d9;
+  --fontivo-lavender-tint: rgba(183, 161, 217, 0.14);
+  --fontivo-amber: #f7b544;
+  --fontivo-lime: #c7d65a;
+  --fontivo-paper: #f5ebdd;
+  --fontivo-paper-white: #fff9f2;
+  --fontivo-warm-gray: #e8e1d6;
+  --fontivo-slate: #5a5366;
+
+  --fontivo-font-family:
+    "Inter", "Tajawal", "Segoe UI Variable", "Segoe UI", system-ui,
+    -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  --fontivo-font-mono:
+    "JetBrains Mono", "Cascadia Mono", "Consolas", ui-monospace, monospace;
+
+  /* Fontivo Plum Ink Dark Mode (Single Source Mapping) */
+  --color-bg: #140d18;
+  --color-back-main: #140d18;
+  --color-back-side: #1e1423;
+  --color-back-header: #1e1423;
+  --color-back-card: var(--fontivo-plum);
+  --color-back-card-hover: #33233a;
+  --color-back-subtle: #19101e;
+  --color-back-input: #19101e;
+  --color-border: #3b2942;
+  --color-border-subtle: rgba(255, 249, 242, 0.08);
+  --color-text-header: var(--fontivo-paper-white);
+  --color-text-primary: var(--fontivo-paper-white);
+  --color-text-main: var(--fontivo-paper);
+  --color-text-muted: #b8aebe;
+  --color-text-dim: #7e7287;
+  --color-control: rgba(255, 249, 242, 0.06);
+  --color-control-hover: rgba(255, 249, 242, 0.11);
+  --color-green: var(--fontivo-lime);
+  --color-action: var(--fontivo-coral);
+  --color-action-hover: var(--fontivo-coral-hover);
+  --color-secondary: var(--fontivo-lavender);
+  --color-accent: var(--fontivo-amber);
+  --color-shadow: rgba(10, 5, 14, 0.55);
+  --border-radius: 10px;
+}
+
+html.light,
+body.light {
+  color-scheme: light;
+  /* Fontivo Warm Paper Light Mode */
+  --color-bg: #f5ebdd;
+  --color-back-main: #f5ebdd;
+  --color-back-side: #fff9f2;
+  --color-back-header: #fff9f2;
+  --color-back-card: #fff9f2;
+  --color-back-card-hover: #efe5d6;
+  --color-back-subtle: #ede2d2;
+  --color-back-input: #fff9f2;
+  --color-border: #e8e1d6;
+  --color-border-subtle: #ddd4c6;
+  --color-text-header: #291c2e;
+  --color-text-primary: #291c2e;
+  --color-text-main: #291c2e;
+  --color-text-muted: #5a5366;
+  --color-text-dim: #837a8f;
+  --color-control: rgba(41, 28, 46, 0.05);
+  --color-control-hover: rgba(41, 28, 46, 0.09);
+  --color-green: #6b8722;
+  --color-action: #f16b50;
+  --color-action-hover: #d9553b;
+  --color-secondary: #8a6fb8;
+  --color-accent: #d48d1c;
+  --color-shadow: rgba(41, 28, 46, 0.08);
+}
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: var(--fontivo-font-family);
+    background-color: var(--color-back-main);
+    color: var(--color-text-main);
+    overflow: hidden;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings:
+      "kern" 1,
+      "liga" 1,
+      "calt" 1;
+    -webkit-text-size-adjust: 100%;
+    transition:
+      background-color 0.2s ease,
+      color 0.2s ease;
+  }
+
+  h1,
+  h2,
+  h3,
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  /* Guarantee crisp native dropdown & option contrast in both Dark and Light themes */
+  select {
+    background-color: var(--color-back-input);
+    color: var(--color-text-header);
+    color-scheme: dark;
+  }
+
+  html.light select {
+    color-scheme: light;
+  }
+
+  select option,
+  select optgroup {
+    background-color: #291c2e;
+    color: #fff9f2;
+  }
+
+  html.light select option,
+  html.light select optgroup {
+    background-color: #fff9f2;
+    color: #291c2e;
+  }
+}
+
+/* High-DPI Typographic Crispness & Subpixel Smoothing */
+.high-dpi-text,
+.font-specimen-render,
+[dir="rtl"],
+[dir="ltr"] {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Slim scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-control-hover);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* Fontivo Slider (Architectural Vermilion Thumb) */
+.fontivo-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--color-border);
+  border-radius: 4px;
+  outline: none;
+  transition: background 0.15s ease;
+}
+
+.fontivo-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-action);
+  border: 2px solid var(--color-back-card);
+  cursor: pointer;
+  box-shadow: 0 1px 8px rgba(241, 107, 80, 0.45);
+  transition:
+    transform 0.1s ease,
+    background-color 0.15s ease;
+}
+
+.fontivo-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  background: var(--color-action-hover);
+}
+
+/* Fontivo Activation Circle (Status Dot) */
+.fontivo-activation-circle {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  background-color: transparent;
+}
+
+.fontivo-activation-circle:hover {
+  border-color: var(--color-text-muted);
+  transform: scale(1.1);
+}
+
+.fontivo-activation-circle.active {
+  border-color: var(--color-green);
+  background-color: var(--color-green);
+  box-shadow: 0 0 8px rgba(199, 214, 90, 0.45);
+}
+
+.fontivo-activation-circle .inner-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: transparent;
+  transition: background-color 0.18s ease;
+}
+
+.fontivo-activation-circle.active .inner-dot {
+  background-color: #ffffff;
+}
+
+/* Fontivo Flat Swiss Accent Utilities */
+.fontivo-gradient-text {
+  color: var(--color-action);
+}
+
+.fontivo-gradient-btn {
+  background-color: var(--color-action);
+  color: #ffffff;
+  transition:
+    background-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.fontivo-gradient-btn:hover {
+  background-color: var(--color-action-hover);
+  transform: translateY(-0.5px);
+}
+
+/* Card & Modal Helper Utility Classes */
+.theme-card {
+  background-color: var(--color-back-card);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-main);
+}
+
+.theme-card-subtle {
+  background-color: var(--color-back-subtle);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-main);
+}
+
+.theme-input {
+  background-color: var(--color-back-input);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-header);
+}
+
+/* Hide scrollbars while preserving horizontal scroll on filter strips */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Consistent single-line interactive pills & compact controls */
+.ui-pill {
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}

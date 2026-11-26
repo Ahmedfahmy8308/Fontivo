@@ -1,0 +1,100 @@
+[package]
+name = "Fontivo"
+version = "1.0.0"
+edition = "2021"
+authors = ["Fontivo Team"]
+description = "Next-Generation Ultra-Fast Open-Source Desktop Font Manager"
+exclude = [
+    "src/ui/**",
+    "assets/**",
+    "docs/**",
+    "release/**",
+    "installer/**",
+]
+
+[dependencies]
+tao = "0.37.2"
+wry = "0.57.2"
+tiny_http = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ttf-parser = "0.25"
+ureq = { version = "2.10", default-features = false, features = ["tls"] }
+notify = "6.1"
+include_dir = "0.7"
+rfd = "0.15"
+url = "2.5"
+sha2 = "0.10"
+hex = "0.4"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+
+# Windows Target (x86_64, aarch64 ARM64)
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Threading",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_LibraryLoader",
+    "Win32_Foundation",
+    "Win32_System_Registry",
+    "Win32_Storage_FileSystem",
+    "Win32_Security"
+] }
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
+
+# Unix Common (macOS & Linux across x86_64 and aarch64)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# macOS Target (x86_64 Intel & aarch64 Apple Silicon M1/M2/M3/M4)
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+
+[profile.release]
+# High-performance production release profile for Fontivo Engine:
+# Full fat LTO + single codegen unit folds all dependencies into a unified binary,
+# opt-level 3 maximizes vectorization and loop optimizations for sub-millisecond font injection,
+# panic = "abort" strips out landing pads and exception handling unwinding frames,
+# strip = true removes debug symbols and symbol tables to achieve minimal binary footprint.
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+debug = 0
+incremental = false
+
+# Development profile tuned for ultra-fast incremental compilation cycles
+[profile.dev]
+opt-level = 1
+codegen-units = 16
+debug = 1
+incremental = true
+
+# Test profile keeps tests fast to compile
+[profile.test]
+opt-level = 0
+
+[[test]]
+name = "test_engine"
+path = "tests/engine/main.rs"
+
+[[test]]
+name = "test_server"
+path = "tests/server/main.rs"
+
+[[test]]
+name = "test_scanner"
+path = "tests/scanner/main.rs"
+
+[[test]]
+name = "test_security"
+path = "tests/security/main.rs"
+
+

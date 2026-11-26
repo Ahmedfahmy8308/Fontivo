@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="137" height="24" role="img" aria-label="version: v1.0.0">
+  <defs>
+    <linearGradient id="b_badge_version" x2="0" y2="100%">
+      <stop offset="0" stop-color="#fff" stop-opacity=".12"/>
+      <stop offset="1" stop-opacity=".04"/>
+    </linearGradient>
+    <clipPath id="r_badge_version">
+      <rect width="137" height="24" rx="5" fill="#fff"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#r_badge_version)">
+    <rect width="71" height="24" fill="#1E222B"/>
+    <rect x="71" width="66" height="24" fill="#D44A32"/>
+    <rect width="137" height="24" fill="url(#b_badge_version)"/>
+  </g>
+  <g fill="#fff" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,sans-serif" text-rendering="geometricPrecision" font-size="11">
+    <text x="35.5" y="16" fill="#A6ABB5" font-weight="500">version</text>
+    <text x="104.0" y="16" fill="#FFFFFF" font-weight="700">v1.0.0</text>
+  </g>
+</svg>

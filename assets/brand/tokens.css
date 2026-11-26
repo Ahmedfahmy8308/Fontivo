@@ -1,0 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@500;600;700;800&family=Tajawal:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+:root {
+  --font-display: 'Sora', 'Inter', sans-serif; --font-ui: 'Inter', sans-serif;
+  --font-arabic: 'Tajawal', 'Noto Sans Arabic', sans-serif; --font-mono: 'JetBrains Mono', monospace;
+  --fontivo-plum: #291C2E; --fontivo-coral: #F16B50; --fontivo-lavender: #B7A1D9;
+  --fontivo-amber: #F7B544; --fontivo-lime: #C7D65A; --fontivo-paper: #F5EBDD;
+  --fontivo-paper-white: #FFF9F2; --fontivo-warm-gray: #E8E1D6; --fontivo-slate: #5A5366;
+}

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="208" height="24" role="img" aria-label="contrast: WCAG AAA (17:1)">
+  <defs>
+    <linearGradient id="b_badge_wcag" x2="0" y2="100%">
+      <stop offset="0" stop-color="#fff" stop-opacity=".12"/>
+      <stop offset="1" stop-opacity=".04"/>
+    </linearGradient>
+    <clipPath id="r_badge_wcag">
+      <rect width="208" height="24" rx="5" fill="#fff"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#r_badge_wcag)">
+    <rect width="78" height="24" fill="#1E222B"/>
+    <rect x="78" width="130" height="24" fill="#10B981"/>
+    <rect width="208" height="24" fill="url(#b_badge_wcag)"/>
+  </g>
+  <g fill="#fff" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,sans-serif" text-rendering="geometricPrecision" font-size="11">
+    <text x="39.0" y="16" fill="#A6ABB5" font-weight="500">contrast</text>
+    <text x="143.0" y="16" fill="#FFFFFF" font-weight="700">WCAG AAA (17:1)</text>
+  </g>
+</svg>

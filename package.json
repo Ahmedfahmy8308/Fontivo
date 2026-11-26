@@ -1,0 +1,26 @@
+{
+  "name": "Fontivo",
+  "version": "1.0.0",
+  "productName": "Fontivo",
+  "description": "Next-Generation Cross-Platform Font Management & Live Activation Engine",
+  "private": true,
+  "scripts": {
+    "build:ui": "npm --prefix ui run build",
+    "build:core": "cargo build --release --manifest-path core/Cargo.toml",
+    "build": "npm run build:ui && npm run build:core",
+    "test": "cargo test --manifest-path core/Cargo.toml",
+    "dev:ui": "npm --prefix ui run dev",
+    "dev:core": "cargo run --manifest-path core/Cargo.toml"
+  },
+  "keywords": [
+    "font-manager",
+    "fontbase-alternative",
+    "typography",
+    "arabic-fonts",
+    "cross-platform",
+    "rust",
+    "react19"
+  ],
+  "author": "Fontivo Open Source Team",
+  "license": "MIT"
+}

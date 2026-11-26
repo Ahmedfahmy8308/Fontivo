@@ -1,0 +1,121 @@
+name: "🐛 Bug Report"
+description: "Report an issue, malfunction, or unexpected behavior in Fontivo."
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue in **Fontivo**!
+        Before submitting, please make sure you are running the latest release or build from `main`, and check existing issues to avoid duplicates.
+
+  - type: input
+    id: summary
+    attributes:
+      label: "Issue Summary"
+      description: "A short, descriptive title or summary of the problem."
+      placeholder: "e.g., Font deactivation fails when Adobe Illustrator 2026 is active"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: "Affected Subsystem"
+      description: "Which part of Fontivo is experiencing this problem?"
+      options:
+        - "Native Core Engine (fontivo_core)"
+        - "Win32 GDI32 Virtualization (AddFontMemResourceEx / FR_PRIVATE)"
+        - "Adobe Creative Cloud Bridge (Port 27715 / CEP Socket)"
+        - "Local REST Daemon (Port 3920)"
+        - "React 19 Desktop UI (src/ui)"
+        - "Font Parser & Table Extractor (fontivo_parser)"
+        - "Filesystem Scanner & Watcher (fontivo_scanner / fontivo_watcher)"
+        - "Installer / Packaging / NSIS"
+        - "Other / Cross-cutting"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: "Operating System"
+      description: "Select your operating system and environment."
+      options:
+        - "Windows 11 (x86_64)"
+        - "Windows 11 (ARM64)"
+        - "Windows 10 (x86_64)"
+        - "macOS Sonoma / Sequoia (Apple Silicon)"
+        - "macOS Sonoma / Sequoia (Intel x86_64)"
+        - "Linux (x86_64 / Wayland / X11)"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: "Fontivo Version"
+      description: "Exact version of Fontivo (e.g., v1.0.0, or git commit SHA)."
+      placeholder: "v1.0.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: "Steps to Reproduce"
+      description: "Clear step-by-step instructions to reproduce the problem."
+      placeholder: |
+        1. Launch Fontivo desktop app.
+        2. Activate font 'Inter Variable'.
+        3. Open Adobe Photoshop 2026 and create a text layer.
+        4. Observe behavior...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: "Expected Behavior"
+      description: "What did you expect to happen?"
+      placeholder: "Font should activate instantly in memory without registry writes and become available in Adobe CC within < 10ms."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual_behavior
+    attributes:
+      label: "Actual Behavior"
+      description: "What actually happened?"
+      placeholder: "Font activation timed out or font was not immediately visible in Photoshop."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Logs & Terminal Diagnostics"
+      description: "Paste relevant output from `Fontivo.log`, daemon terminal logs, or browser DevTools console."
+      render: shell
+      placeholder: |
+        [INFO] Fontivo engine starting on 127.0.0.1:3920...
+        [ERROR] ...
+
+  - type: textarea
+    id: font_assets
+    attributes:
+      label: "Font / Asset Details (Optional)"
+      description: "Font format, family name, or sample files involved (.ttf, .otf, .woff2, .psd, etc.)."
+      placeholder: "Inter-VariableFont_opsz,wght.ttf (OpenType / CFF2)"
+
+  - type: checkboxes
+    id: invariants_check
+    attributes:
+      label: "Verification Checklist"
+      options:
+        - label: "I have confirmed that `C:\\Windows\\Fonts` was not corrupted or modified."
+          required: false
+        - label: "I have confirmed daemon is operating on loopback (`127.0.0.1`)."
+          required: false
+        - label: "I searched existing issues and verified this is not a duplicate."
+          required: true

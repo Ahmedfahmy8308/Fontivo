@@ -1,0 +1,11 @@
+# Pinned Rust toolchain for Fontivo contributors and CI/CD pipelines.
+#
+# Having this in the repo ensures that `cargo build`, `cargo test`, `cargo clippy`,
+# and `cargo fmt` run against a verified, deterministic compiler toolchain across all
+# developer workstations and automated GitHub Actions runners.
+#
+# Aligned with production MSRV and standard GitHub Actions environment.
+[toolchain]
+channel = "1.94.1"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-pc-windows-msvc"]

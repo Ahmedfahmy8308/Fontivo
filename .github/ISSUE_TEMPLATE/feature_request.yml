@@ -1,0 +1,84 @@
+name: "✨ Feature Request"
+description: "Suggest an idea, enhancement, or architectural proposal for Fontivo."
+title: "[Feature]: "
+labels: ["enhancement", "proposal"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping evolve **Fontivo**!
+        Fontivo is committed to remaining 100% Free & Open-Source, high-performance, and strictly local-first. Please describe how your proposal aligns with these values.
+
+  - type: input
+    id: title
+    attributes:
+      label: "Feature Title"
+      description: "A succinct title describing the proposed enhancement."
+      placeholder: "e.g., Support variable font axis slider modulation in React 19 UI"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Target Subsystem"
+      description: "Which area does this proposal primarily affect?"
+      options:
+        - "Core Typography & Activation Engine (fontivo_core)"
+        - "Adobe Creative Cloud Bridge & CEP Integration (Port 27715)"
+        - "Brand Identity, Swiss Tokens & Color Studio (.ASE generator)"
+        - "React 19 Desktop Interface (UI/UX / Styling)"
+        - "Font Analysis, Glyphs & OpenType Features (fontivo_parser)"
+        - "Background Scanner & Watcher (fontivo_scanner)"
+        - "CLI, Headless Daemon & REST API (Port 3920)"
+        - "Packaging, Installers & Multi-OS Support"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Problem Statement / User Need"
+      description: "What pain point or workflow limitation does this proposal solve?"
+      placeholder: "When working with multi-axis variable fonts in design workflows..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: "Proposed Solution & Design"
+      description: "Detailed description of the proposed feature, user interaction, and technical design."
+      placeholder: "Describe how this should work from an architecture and user experience standpoint..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Alternatives Considered"
+      description: "Any alternative approaches, libraries, or workarounds you have evaluated."
+      placeholder: "Considered using X, but decided against it because..."
+
+  - type: checkboxes
+    id: invariant_alignment
+    attributes:
+      label: "Fontivo Core Invariant Compliance"
+      description: "Every feature must adhere to Fontivo's core architectural tenets:"
+      options:
+        - label: "100% Free & Open-Source (permanent zero-paywall guarantee)."
+          required: true
+        - label: "Zero registry bloat: No persistent font writes to `C:\\Windows\\Fonts`."
+          required: true
+        - label: "Performance: Preserves ultra-light footprint (~38MB idle RAM)."
+          required: true
+        - label: "Privacy: 100% local-first with zero telemetry or network tracking."
+          required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: "Implementation Contribution"
+      options:
+        - label: "I am willing to submit a Pull Request to implement or test this feature."
+          required: false

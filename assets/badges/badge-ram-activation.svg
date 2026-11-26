@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="214" height="24" role="img" aria-label="RAM injection: 0ms latency">
+  <defs>
+    <linearGradient id="b_badge_ram_activation" x2="0" y2="100%">
+      <stop offset="0" stop-color="#fff" stop-opacity=".12"/>
+      <stop offset="1" stop-opacity=".04"/>
+    </linearGradient>
+    <clipPath id="r_badge_ram_activation">
+      <rect width="214" height="24" rx="5" fill="#fff"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#r_badge_ram_activation)">
+    <rect width="112" height="24" fill="#1E222B"/>
+    <rect x="112" width="102" height="24" fill="#10B981"/>
+    <rect width="214" height="24" fill="url(#b_badge_ram_activation)"/>
+  </g>
+  <g fill="#fff" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,sans-serif" text-rendering="geometricPrecision" font-size="11">
+    <text x="56.0" y="16" fill="#A6ABB5" font-weight="500">RAM injection</text>
+    <text x="163.0" y="16" fill="#FFFFFF" font-weight="700">0ms latency</text>
+  </g>
+</svg>

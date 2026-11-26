@@ -1,0 +1,235 @@
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTFLAGS: "-D warnings"
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  create-release:
+    name: Create GitHub Release Draft
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Verify release tag format
+        shell: bash
+        env:
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_REF_TYPE" != "tag" || "$RELEASE_TAG" != v[0-9]*.*.* ]]; then
+            echo "::error::Release workflow must be triggered by a valid version tag (e.g., v1.0.0)."
+            exit 1
+          fi
+          echo "Initiating release for tag: $RELEASE_TAG"
+
+      - name: Extract changelog notes
+        id: changelog
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes.md"
+          target_file=""
+          if [ -f "CHANGELOG.md" ]; then
+            target_file="CHANGELOG.md"
+          fi
+
+          if [ -n "$target_file" ]; then
+            awk -v heading="## [${RELEASE_TAG#v}]" '
+              index($0, heading) == 1 { found = 1; next }
+              found && /^## \[/ { exit }
+              found { print }
+            ' "$target_file" > "$notes"
+          else
+            echo "Release $RELEASE_TAG" > "$notes"
+          fi
+
+          if grep -q '[^[:space:]]' "$notes"; then
+            printf 'path=%s\n' "$notes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release Draft
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Fontivo ${{ github.ref_name }}"
+          body_path: ${{ steps.changelog.outputs.path }}
+          generate_release_notes: ${{ steps.changelog.outputs.path == '' }}
+          draft: true
+          fail_on_unmatched_files: false
+
+  build-windows:
+    name: Build Windows Binary, Installer & Distribution
+    needs: create-release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build Frontend UI
+        shell: pwsh
+        run: |
+          Push-Location src/ui
+          npm ci
+          npm run build
+          Pop-Location
+          if (-not (Test-Path "src/ui/dist/index.html")) {
+            throw "UI build failed: src/ui/dist/index.html not found"
+          }
+          Write-Host "[ok] UI build compiled successfully" -ForegroundColor Green
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo registry & target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-release-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-
+            cargo-release-v1-${{ runner.os }}-
+
+      - name: Build Native Rust Core Binary
+        shell: pwsh
+        env:
+          FONTIVO_RELEASE_BUILD: "1"
+        run: |
+          cargo build --release --locked --bin Fontivo
+          New-Item -ItemType Directory -Path "release" -Force
+          Copy-Item "target/release/Fontivo.exe" "release/Fontivo.exe" -Force
+          Write-Host "[ok] Native binary compiled to release/Fontivo.exe" -ForegroundColor Green
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress
+          }
+
+      - name: Compile Windows Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            $cmd = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+            if ($cmd) { $iscc = $cmd.Source }
+          }
+          Write-Host "Compiling Inno Setup installer using: $iscc"
+          & $iscc "installer/Setup_Fontivo.iss"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup compilation failed with exit code $LASTEXITCODE"
+          }
+          if (-not (Test-Path "release/Fontivo-v1.0-Setup.exe")) {
+            throw "Installer output Fontivo-v1.0-Setup.exe was not produced"
+          }
+          Write-Host "[ok] Inno Setup installer compiled successfully" -ForegroundColor Green
+
+      - name: Package Windows ZIP Distribution & Checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseDir = "release"
+          $distZipName = "Fontivo-windows-x86_64.zip"
+          $distZipPath = Join-Path $releaseDir $distZipName
+
+          # Prepare temporary staging directory for clean zip layout
+          $stagingDir = Join-Path $env:RUNNER_TEMP "fontivo-dist"
+          if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $stagingDir -Force
+
+          Copy-Item "release/Fontivo.exe" $stagingDir -Force
+          if (Test-Path "icon.ico") { Copy-Item "icon.ico" $stagingDir -Force }
+          if (Test-Path "README.md") { Copy-Item "README.md" $stagingDir -Force }
+          if (Test-Path "LICENSE") { Copy-Item "LICENSE" $stagingDir -Force }
+          if (Test-Path "src/ui/dist") {
+            Copy-Item "src/ui/dist" (Join-Path $stagingDir "dist") -Recurse -Force
+          }
+          if (Test-Path "core/data") {
+            Copy-Item "core/data" (Join-Path $stagingDir "data") -Recurse -Force
+          }
+
+          if (Test-Path $distZipPath) { Remove-Item $distZipPath -Force }
+          Compress-Archive -Path "$stagingDir\*" -DestinationPath $distZipPath -CompressionLevel Optimal
+          Write-Host "[ok] Packaged zip distribution: $distZipPath" -ForegroundColor Green
+
+          # Compute SHA-256 for all distribution assets
+          $filesToHash = @("Fontivo.exe", "Fontivo-v1.0-Setup.exe", $distZipName)
+          $checksumLines = @()
+          foreach ($file in $filesToHash) {
+            $filePath = Join-Path $releaseDir $file
+            if (Test-Path $filePath) {
+              $hash = (Get-FileHash -Path $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
+              $size = (Get-Item $filePath).Length
+              Write-Host "Asset: $file ($size bytes) -> $hash"
+              Set-Content -Path "$filePath.sha256" -Value "$hash  $file`n" -NoNewline
+              $checksumLines += "$hash  $file"
+            }
+          }
+
+          $checksumsFilePath = Join-Path $releaseDir "SHA256SUMS"
+          $checksumLines -join "`r`n" | Set-Content -Path $checksumsFilePath
+          Write-Host "[ok] Generated SHA256SUMS file at $checksumsFilePath" -ForegroundColor Green
+
+      - name: Upload Release Assets to GitHub Release Draft
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          files: |
+            release/Fontivo.exe
+            release/Fontivo.exe.sha256
+            release/Fontivo-v1.0-Setup.exe
+            release/Fontivo-v1.0-Setup.exe.sha256
+            release/Fontivo-windows-x86_64.zip
+            release/Fontivo-windows-x86_64.zip.sha256
+            release/SHA256SUMS
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-release:
+    name: Finalize and Publish Release
+    needs: build-windows
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Mark Release as Published
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          echo "Publishing release $RELEASE_TAG from draft status..."
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+          echo "Release $RELEASE_TAG published successfully."
