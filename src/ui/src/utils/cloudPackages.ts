@@ -81,7 +81,7 @@ export const VERIFIED_CLOUD_PACKAGES: CloudPackage[] = [
     uncompressedBytes: 92383140,
     uncompressedSize: formatCloudBytes(92383140),
     sha256: "8c932847ee9c1c62fd84e202d5c02786b7c9f02174bd8e5edc7b236f77b1c83e",
-    version: "1.0.5",
+    version: "1.0.3",
     fileName: "fontivo-essential-001.zip",
     description:
       "Complete Arabic collection (970 fonts across 582 families) featuring Naskh, Kufic, Thuluth, Ruqah, Diwani, and modern UI typefaces.",
@@ -103,7 +103,7 @@ export const VERIFIED_CLOUD_PACKAGES: CloudPackage[] = [
     uncompressedBytes: 155484442,
     uncompressedSize: formatCloudBytes(155484442),
     sha256: "99560337d75e007dfbf0e4825b31c77c6e0f388310995a077f1b52f1e0658676",
-    version: "1.0.5",
+    version: "1.0.3",
     fileName: "fontivo-essential-002.zip",
     description:
       "Curated Latin typography volume I (848 fonts across 253 families) with clean sans-serif, serif, and display families.",
@@ -125,7 +125,7 @@ export const VERIFIED_CLOUD_PACKAGES: CloudPackage[] = [
     uncompressedBytes: 148868189,
     uncompressedSize: formatCloudBytes(148868189),
     sha256: "7b7843495e3ca673a44cc313207aacd841714ce159ed4d31c35c9c2477152ae5",
-    version: "1.0.5",
+    version: "1.0.3",
     fileName: "fontivo-essential-003.zip",
     description:
       "Curated Latin typography volume II (842 fonts across 301 families) covering geometric sans-serifs and UI workhorses.",
@@ -147,7 +147,7 @@ export const VERIFIED_CLOUD_PACKAGES: CloudPackage[] = [
     uncompressedBytes: 192989044,
     uncompressedSize: formatCloudBytes(192989044),
     sha256: "aac04c88f50280190f81ae9b6a64d75498823a6ed69212073519d663b5eb0f09",
-    version: "1.0.5",
+    version: "1.0.3",
     fileName: "fontivo-essential-004.zip",
     description:
       "Extensive Latin studio pack III (771 fonts across 240 families) with editorial serifs and multi-weight branding systems.",
@@ -169,7 +169,7 @@ export const VERIFIED_CLOUD_PACKAGES: CloudPackage[] = [
     uncompressedBytes: 139621454,
     uncompressedSize: formatCloudBytes(139621454),
     sha256: "f7f3d0d560e0fb0b8e4e3a92dfa7d2de9247367362050fb6423a5214f4dadc17",
-    version: "1.0.5",
+    version: "1.0.3",
     fileName: "fontivo-essential-005.zip",
     description:
       "Curated Latin display, condensed poster, and modern geometric sans families (1,022 fonts across 328 families).",
@@ -235,7 +235,7 @@ export const VERIFIED_CLOUD_PACKAGES: CloudPackage[] = [
     uncompressedBytes: 149223010,
     uncompressedSize: formatCloudBytes(149223010),
     sha256: "5be18b9324dde6873327377036ed756c6314692a0eee8dfe6c269bfb5c7d094c",
-    version: "1.0.5",
+    version: "1.0.3",
     fileName: "fontivo-essential-008.zip",
     description:
       "Grotesques, slab serifs, monospace coding fonts, and interface families (972 fonts across 287 families).",
@@ -257,7 +257,7 @@ export const VERIFIED_CLOUD_PACKAGES: CloudPackage[] = [
     uncompressedBytes: 150361365,
     uncompressedSize: formatCloudBytes(150361365),
     sha256: "a5f2b8c0a60c424ad805865c8ed0d7ed3422e358fa36521f77aad787b77fc6e3",
-    version: "1.0.5",
+    version: "1.0.3",
     fileName: "fontivo-essential-009.zip",
     description:
       "Editorial, branding, and contemporary Latin collection (936 fonts across 370 families).",
@@ -279,7 +279,7 @@ export const VERIFIED_CLOUD_PACKAGES: CloudPackage[] = [
     uncompressedBytes: 112825887,
     uncompressedSize: formatCloudBytes(112825887),
     sha256: "368a3f5319e7a3f6d1dae1dec6e67b062b447ef4b50c1803c626c40f3f07dd1b",
-    version: "1.0.5",
+    version: "1.0.3",
     fileName: "fontivo-essential-010.zip",
     description:
       "Comprehensive Persian typography archive (1,253 fonts across 818 families) covering editorial, headline, and calligraphic styles.",
@@ -301,7 +301,7 @@ export const VERIFIED_CLOUD_PACKAGES: CloudPackage[] = [
     uncompressedBytes: 81359319,
     uncompressedSize: formatCloudBytes(81359319),
     sha256: "24cb1d09bb04311c2255b9f41d9041544c1f98ea6fbad0c6ccaf4ca14e1e4639",
-    version: "1.0.5",
+    version: "1.0.3",
     fileName: "fontivo-essential-011.zip",
     description:
       "Urdu Nastaliq, Naskh, and display collection I (405 fonts across 152 families).",
@@ -323,7 +323,7 @@ export const VERIFIED_CLOUD_PACKAGES: CloudPackage[] = [
     uncompressedBytes: 81464281,
     uncompressedSize: formatCloudBytes(81464281),
     sha256: "d5674cdc76b9eed060ef22def4680a19e21f299e3648cc18a4e660fe202b7549",
-    version: "1.0.5",
+    version: "1.0.3",
     fileName: "fontivo-essential-012.zip",
     description:
       "Urdu Nastaliq ligature and publication collection II (393 fonts across 144 families).",
@@ -367,7 +367,7 @@ export const VERIFIED_CLOUD_PACKAGES: CloudPackage[] = [
     uncompressedBytes: 81702741,
     uncompressedSize: formatCloudBytes(81702741),
     sha256: "15c3abb9bead00e121c554642b1806c7865d8496daf5eae6ff36ee58d3376869",
-    version: "1.0.5",
+    version: "1.0.3",
     fileName: "fontivo-essential-014.zip",
     description:
       "Urdu calligraphy and classic print typography collection IV (395 fonts across 160 families).",

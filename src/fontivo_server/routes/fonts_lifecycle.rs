@@ -1563,7 +1563,9 @@ pub fn is_pack_downloaded(pack: &FontPackItem) -> bool {
 }
 
 pub fn handle_catalog_packages(req: Request, cors_origin: Header, json_header: Header) {
-    let (manifest, _, _) = FontPackManifest::fetch_remote_or_default_cached();
+    let (manifest, is_remote, source) = FontPackManifest::fetch_remote_or_default_cached();
+    let library_version = manifest.library_version.clone();
+    let schema_version = manifest.schema_version;
     let packages: Vec<CatalogPackageItem> = manifest
         .packs
         .into_iter()
@@ -1585,10 +1587,20 @@ pub fn handle_catalog_packages(req: Request, cors_origin: Header, json_header: H
         })
         .collect();
 
-    respond_json_str(
+    respond_json(
         req,
         200,
-        serde_json::to_string(&packages).unwrap_or_default(),
+        serde_json::json!({
+            "success": true,
+            "isRemote": is_remote,
+            "source": source,
+            "schemaVersion": schema_version,
+            "libraryVersion": library_version,
+            "releaseTag": format!("v{}", library_version),
+            "version": library_version,
+            "packCount": packages.len(),
+            "packages": packages
+        }),
         cors_origin,
         json_header,
     );
@@ -1601,6 +1613,7 @@ pub fn handle_catalog_download_all(
     json_header: Header,
 ) {
     let (manifest, _, _) = FontPackManifest::fetch_remote_or_default_cached();
+    let library_version = manifest.library_version.clone();
     let download_mgr = {
         let st = state.read().unwrap();
         Arc::clone(&st.download_manager)
@@ -1619,6 +1632,9 @@ pub fn handle_catalog_download_all(
             Ok(job_id) => {
                 queued_jobs.push(serde_json::json!({
                     "packId": pack.id,
+                    "packName": pack.name,
+                    "version": library_version,
+                    "totalBytes": pack.compressed_size,
                     "jobId": job_id,
                     "status": "downloading"
                 }));
@@ -1626,6 +1642,9 @@ pub fn handle_catalog_download_all(
             Err(err) => {
                 queued_jobs.push(serde_json::json!({
                     "packId": pack.id,
+                    "packName": pack.name,
+                    "version": library_version,
+                    "totalBytes": pack.compressed_size,
                     "error": err,
                     "status": "failed"
                 }));
@@ -1635,6 +1654,7 @@ pub fn handle_catalog_download_all(
 
     let res_obj = serde_json::json!({
         "success": true,
+        "libraryVersion": library_version,
         "message": format!("Started download for {} packages ({} already downloaded)", queued_jobs.len(), already_downloaded.len()),
         "queued": queued_jobs,
         "alreadyDownloaded": already_downloaded

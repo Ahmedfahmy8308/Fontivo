@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
+import React from "react";
+import { renderToString } from "react-dom/server";
+import "./setup";
 import { VERIFIED_CLOUD_PACKAGES } from "../src/components/modals/GitHubPackModal";
+import CloudPacksView, {
+  normalizeJobPhase,
+  formatPhaseLabel,
+} from "../src/components/views/CloudPacksView";
 import {
   CLOUD_MANIFEST_VERSION,
   CLOUD_TOTAL_FONTS,
@@ -192,5 +199,31 @@ describe("Cloud Packages Hub & Real v1.0.3 Manifest Verification", () => {
 
     expect(checkFamilyLocal(localFamily)).toBe(true);
     expect(checkFamilyLocal(cloudFamily)).toBe(false);
+  });
+
+  it("normalizes Rust camelCase job phases and renders CloudPacksView with version & RTL dir=ltr sizes", () => {
+    expect(normalizeJobPhase("queued")).toBe("Queued");
+    expect(normalizeJobPhase("downloading")).toBe("Downloading");
+    expect(normalizeJobPhase("verifying")).toBe("Verifying");
+    expect(normalizeJobPhase("extracting")).toBe("Extracting");
+    expect(normalizeJobPhase("indexing")).toBe("Indexing");
+    expect(normalizeJobPhase("completed")).toBe("Completed");
+    expect(normalizeJobPhase("failed")).toBe("Failed");
+    expect(normalizeJobPhase("cancelled")).toBe("Cancelled");
+
+    expect(formatPhaseLabel("Downloading", true)).toContain("جاري التنزيل");
+    expect(formatPhaseLabel("Verifying", false)).toContain("SHA-256");
+
+    for (const pkg of VERIFIED_CLOUD_PACKAGES) {
+      expect(pkg.version).toBe(CLOUD_MANIFEST_VERSION);
+    }
+
+    const html = renderToString(
+      React.createElement(CloudPacksView, { isRtl: true }),
+    );
+    expect(html).toContain("#001 • v1.0.3");
+    expect(html).toContain("fontivo-essential-001.zip");
+    expect(html).toContain("dir=\"ltr\"");
+    expect(html).toContain("الحزمة الأساسية 001 — الخطوط العربية");
   });
 });

@@ -295,6 +295,10 @@ const TRUSTED_DOWNLOAD_DOMAINS: &[&str] = &[
     "raw.githubusercontent.com",
     "github.com",
     "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "github-releases.githubusercontent.com",
+    "codeload.github.com",
+    "media.githubusercontent.com",
     "cdn.jsdelivr.net",
 ];
 

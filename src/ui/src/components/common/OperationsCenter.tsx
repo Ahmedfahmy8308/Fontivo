@@ -104,17 +104,24 @@ export default function OperationsCenter({
       if (Array.isArray(list)) {
         list.forEach((op: any) => {
           if (!op || !op.id) return;
+          const normStatus = String(op.status || "").toLowerCase();
+          const normPhase = String(op.phase || "").toLowerCase();
           upsertLiveOperation({
             id: String(op.id),
             title: op.title || op.name || "System Operation",
             titleAr: op.titleAr || op.title || op.name || "عملية النظام",
             category: op.category || "system",
             status:
-              op.status === "completed" || op.phase === "Completed"
+              normStatus === "completed" || normPhase === "completed"
                 ? "completed"
-                : op.status === "failed" || op.phase === "Failed"
+                : normStatus === "failed" ||
+                    normStatus === "cancelled" ||
+                    normPhase === "failed" ||
+                    normPhase === "cancelled"
                   ? "failed"
-                  : "running",
+                  : normStatus === "queued" || normPhase === "queued"
+                    ? "queued"
+                    : "running",
             progressPercent: op.progressPercent ?? op.progress ?? 0,
             stepLabel: op.stepLabel || op.phase || op.message,
             stepLabelAr: op.stepLabelAr || op.stepLabel || op.phase,
@@ -137,28 +144,67 @@ export default function OperationsCenter({
         jobs.forEach((job: any) => {
           const id = job.jobId || job.packId || job.id;
           if (!id) return;
+          const normPhase = String(job.phase || "").toLowerCase();
+          const normStatus = String(job.status || "").toLowerCase();
+          const mappedStatus =
+            normPhase === "completed" || normStatus === "completed"
+              ? "completed"
+              : normPhase === "failed" ||
+                  normPhase === "cancelled" ||
+                  normStatus === "failed"
+                ? "failed"
+                : normPhase === "queued" || normStatus === "queued"
+                  ? "queued"
+                  : "running";
+
+          const stepAr =
+            normPhase === "queued"
+              ? "في قائمة الانتظار..."
+              : normPhase === "verifying"
+                ? "جاري التحقق من السلامة..."
+                : normPhase === "extracting"
+                  ? "جاري فك الضغط..."
+                  : normPhase === "indexing"
+                    ? "جاري الفهرسة..."
+                    : normPhase === "completed"
+                      ? "اكتمل التحميل"
+                      : normPhase === "failed"
+                        ? "فشل التحميل"
+                        : normPhase === "cancelled"
+                          ? "تم الإلغاء"
+                          : "جاري التحميل...";
+
+          const stepEn =
+            normPhase === "queued"
+              ? "Queued..."
+              : normPhase === "verifying"
+                ? "Verifying SHA-256..."
+                : normPhase === "extracting"
+                  ? "Extracting fonts..."
+                  : normPhase === "indexing"
+                    ? "Indexing library..."
+                    : normPhase === "completed"
+                      ? "Completed"
+                      : normPhase === "failed"
+                        ? "Download failed"
+                        : normPhase === "cancelled"
+                          ? "Cancelled"
+                          : "Downloading...";
+
           upsertLiveOperation({
             id: `dl-${id}`,
             title:
               job.title || job.packName || `Font Pack (${job.packId || id})`,
-            titleAr: job.titleAr || `تحميل حزمة خطوط (${job.packId || id})`,
+            titleAr:
+              job.titleAr ||
+              (job.packName
+                ? `${job.packName} (${job.packId || id})`
+                : `تحميل حزمة خطوط (${job.packId || id})`),
             category: "download",
-            status:
-              job.phase === "Completed" || job.status === "completed"
-                ? "completed"
-                : job.phase === "Failed" || job.status === "failed"
-                  ? "failed"
-                  : "running",
+            status: mappedStatus,
             progressPercent: job.progressPercent ?? job.progress ?? 0,
-            stepLabel: job.phase || "Downloading",
-            stepLabelAr:
-              job.phase === "Extracting"
-                ? "جاري فك الضغط..."
-                : job.phase === "Indexing"
-                  ? "جاري الفهرسة..."
-                  : job.phase === "Completed"
-                    ? "اكتمل التحميل"
-                    : "جاري التحميل...",
+            stepLabel: stepEn,
+            stepLabelAr: stepAr,
             bytesDone: job.bytesDownloaded,
             bytesTotal: job.totalBytes,
             itemsDone: job.indexedCount || job.extractedCount,
@@ -378,22 +424,22 @@ export default function OperationsCenter({
                 </div>
 
                 {/* Progress Bar */}
-                <div className="w-full h-1.5 bg-[var(--color-control)] rounded-full overflow-hidden">
+                <div className="w-full h-1.5 bg-[var(--color-control)] rounded-full overflow-hidden fontivo-progress-track">
                   <div
                     className={`h-full transition-all duration-300 ${
                       op.status === "failed"
                         ? "bg-rose-500"
                         : op.status === "completed"
                           ? "bg-[var(--color-green)]"
-                          : "bg-[var(--color-action)]"
+                          : "bg-[var(--color-action)] fontivo-progress-fill"
                     }`}
                     style={{ width: `${op.progressPercent}%` }}
                   />
                 </div>
 
                 {/* Meta Row: Step Status, MB / Total MB, Items / Total Items, Speed */}
-                <div className="flex items-center justify-between text-[10px] font-mono text-[var(--color-text-muted)]">
-                  <span className="truncate max-w-[160px]">
+                <div className="flex items-center justify-between text-[10px] font-mono text-[var(--color-text-muted)] gap-2">
+                  <span className="truncate max-w-[165px]" title={op.error || step || ""}>
                     {op.error
                       ? op.error
                       : step ||
@@ -405,7 +451,7 @@ export default function OperationsCenter({
                             ? "جاري المعالجة..."
                             : "Processing...")}
                   </span>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0" dir="ltr">
                     {hasBytes && (
                       <span>
                         {formatTransferMb(op.bytesDone)} /{" "}

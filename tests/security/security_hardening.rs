@@ -192,6 +192,10 @@ fn test_ssrf_allow_trusted_domains() {
         "https://raw.githubusercontent.com/google/fonts/main/ofl/cairo/Cairo-Regular.ttf",
         "https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Regular.ttf",
         "https://objects.githubusercontent.com/github-production-release-asset-2e65be/fontivo-essential-001.zip",
+        "https://release-assets.githubusercontent.com/github-production-release-asset/12345/fontivo-essential-001.zip",
+        "https://github-releases.githubusercontent.com/12345/fontivo-essential-001.zip",
+        "https://codeload.github.com/Ahmedfahmy8308/Fontivo-Fonts/zip/refs/heads/main",
+        "https://media.githubusercontent.com/media/Ahmedfahmy8308/Fontivo-Fonts/main/fontivo-essential-001.zip",
     ];
 
     for url_str in trusted {

@@ -62,6 +62,33 @@ describe("OperationsCenter & Live Progress Bus Tests", () => {
     expect(html).toContain("Live Operations &amp; Downloads");
     expect(html).toContain("Deep RAM &amp; Cache Purge");
     expect(html).toContain("75%");
+    expect(html).toContain("fontivo-progress-track");
+  });
+
+  it("renders RTL byte transfer stats cleanly with dir=ltr isolation", () => {
+    upsertLiveOperation({
+      id: "dl-pack-001",
+      title: "Essential Pack 001 (v1.0.3)",
+      titleAr: "الحزمة الأساسية 001 (v1.0.3)",
+      category: "download",
+      status: "running",
+      progressPercent: 50,
+      bytesDone: 20 * 1024 * 1024,
+      bytesTotal: 40 * 1024 * 1024,
+      speedBps: 4.5 * 1024 * 1024,
+    });
+
+    const html = renderToString(
+      React.createElement(OperationsCenter, {
+        isOpen: true,
+        isRtl: true,
+      }),
+    );
+
+    expect(html).toContain('dir="ltr"');
+    expect(html).toContain("20.0 MB");
+    expect(html).toContain("40.0 MB");
+    expect(html).toContain("4.5 MB/s");
   });
 
   it("clears completed operations while preserving running operations", () => {

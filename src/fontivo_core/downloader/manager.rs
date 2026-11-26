@@ -184,10 +184,14 @@ impl DownloadManager {
             let jobs = self.jobs.read().unwrap();
             if let Some(existing) = jobs.get(&job_id) {
                 let p = existing.read().unwrap();
-                if p.phase == JobPhase::Downloading
-                    || p.phase == JobPhase::Extracting
-                    || p.phase == JobPhase::Indexing
-                {
+                if matches!(
+                    p.phase,
+                    JobPhase::Queued
+                        | JobPhase::Downloading
+                        | JobPhase::Verifying
+                        | JobPhase::Extracting
+                        | JobPhase::Indexing
+                ) {
                     return Ok(job_id);
                 }
             }
