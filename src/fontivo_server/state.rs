@@ -89,10 +89,92 @@ pub fn classify_font_source(path: &str, sub_category: Option<&str>) -> String {
     }
 }
 
-fn normalize_font_path_key(path: &str) -> String {
+pub fn normalize_font_path_key(path: &str) -> String {
     let s = path.replace('/', "\\");
     let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
     stripped.trim().to_ascii_lowercase()
+}
+
+/// Strips Windows `\\?\` extended-length prefix when safe for OS launchers and display.
+pub fn strip_windows_verbatim_prefix(path: &Path) -> PathBuf {
+    let raw = path.to_string_lossy();
+    if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+        if !stripped.starts_with("UNC\\") && stripped.len() < 260 {
+            return PathBuf::from(stripped);
+        }
+    }
+    path.to_path_buf()
+}
+
+/// Resolves the canonical normalized source tag (`system`, `local`, `cloud`, `google`) for a FontRecord.
+pub fn resolve_font_source(f: &FontRecord) -> String {
+    if f.source.trim().is_empty() {
+        classify_font_source(&f.path, f.sub_category.as_deref())
+    } else {
+        f.source.trim().to_ascii_lowercase()
+    }
+}
+
+/// Returns true when a font is a physically managed non-system offline font
+/// (`local`, `cloud`, or downloaded `google` font whose path is not remote `cloud://` / `http(s)://`).
+pub fn is_offline_non_system_font(f: &FontRecord) -> bool {
+    let bucket = classify_font_bucket(f);
+    bucket != "system" && bucket != "remote"
+}
+
+/// Classifies a font into a storage/UI bucket:
+/// `system` | `remote` | `imported` | `cloud` | `google` | `custom`.
+pub fn classify_font_bucket(f: &FontRecord) -> &'static str {
+    let src = resolve_font_source(f);
+    let path_trim = f.path.trim();
+    let path_low = path_trim.replace('/', "\\").to_ascii_lowercase();
+
+    if src == "system"
+        || path_low.contains("\\windows\\fonts\\")
+        || path_low.ends_with("\\windows\\fonts")
+        || path_low.contains("\\microsoft\\windows\\fonts\\")
+        || path_low.ends_with("\\microsoft\\windows\\fonts")
+    {
+        return "system";
+    }
+
+    if path_low.is_empty()
+        || path_low.starts_with("cloud://")
+        || path_low.starts_with("http://")
+        || path_low.starts_with("https://")
+        || (src == "google" && !f.is_local)
+    {
+        return "remote";
+    }
+
+    let sub_low = f.sub_category.as_deref().unwrap_or("").to_ascii_lowercase();
+
+    if path_low.contains("\\fonts\\imported\\")
+        || path_low.ends_with("\\fonts\\imported")
+        || sub_low.starts_with("imported")
+    {
+        return "imported";
+    }
+
+    if src == "cloud"
+        || path_low.contains("\\fonts\\packs\\")
+        || path_low.ends_with("\\fonts\\packs")
+        || path_low.contains("\\extracted\\")
+        || sub_low.contains("cloud pack")
+    {
+        return "cloud";
+    }
+
+    if src == "google"
+        || path_low.contains("\\fonts\\google\\")
+        || path_low.ends_with("\\fonts\\google")
+        || path_low.contains("\\googlefonts\\")
+        || path_low.contains("\\google_fonts\\")
+    {
+        return "google";
+    }
+
+    "custom"
 }
 
 pub fn compute_bytes_sha256(bytes: &[u8]) -> String {
@@ -1060,19 +1142,28 @@ impl AppState {
                         || path_low.contains("\\googlefonts\\")
                         || path_low.contains("\\google_fonts\\")
                     {
-                        "Google Fonts"
+                        "Google Fonts".to_string()
                     } else if path_low.contains("\\fonts\\packs\\")
                         || path_low.contains("\\extracted\\")
                     {
-                        "Fontivo Cloud Pack"
+                        "Fontivo Cloud Pack".to_string()
+                    } else if let Some(imp_idx) = path_low.find("\\fonts\\imported\\") {
+                        let norm_orig = path_str.replace('/', "\\");
+                        let after = &norm_orig[imp_idx + "\\fonts\\imported\\".len()..];
+                        let folder_seg = after
+                            .split('\\')
+                            .next()
+                            .filter(|s| !s.trim().is_empty())
+                            .unwrap_or("Imported");
+                        format!("Imported · {}", folder_seg)
                     } else if path_low.contains("\\fonts\\custom\\")
                         || path_low.contains("\\customfonts\\")
                     {
-                        "Custom Fonts"
+                        "Custom Fonts".to_string()
                     } else {
-                        "Local Library"
+                        "Local Library".to_string()
                     };
-                    let source = classify_font_source(&path_str, Some(sub_cat));
+                    let source = classify_font_source(&path_str, Some(&sub_cat));
 
                     loaded_fonts.push(FontRecord {
                         id: next_id,
@@ -1083,7 +1174,7 @@ impl AppState {
                         } else {
                             "02 - English Fonts".to_string()
                         },
-                        sub_category: Some(sub_cat.to_string()),
+                        sub_category: Some(sub_cat),
                         family,
                         format: ext,
                         size,
@@ -1464,6 +1555,373 @@ impl AppState {
         self.save_user_library_index();
 
         Ok(removed_list)
+    }
+
+    /// Safely deletes a Fontivo-managed font folder (`Fonts/Custom`, `Fonts/Imported/<Folder>`,
+    /// `Fonts/Packs/<Pack>`, `Fonts/Google`) from RAM activation, state, collections, index, and disk.
+    /// Rejects system directories, `Fonts/` root itself, and top-level `Imported`/`Packs` containers.
+    pub fn delete_library_folder(
+        &mut self,
+        folder_path: &str,
+    ) -> Result<(String, Vec<FontRecord>), (u16, String)> {
+        let raw = folder_path.trim();
+        if raw.is_empty() || raw.contains("..") || raw.contains('\0') {
+            return Err((
+                400,
+                "Invalid folderPath: empty or contains forbidden traversal characters".to_string(),
+            ));
+        }
+
+        let low_raw = raw.replace('/', "\\").to_ascii_lowercase();
+        if low_raw.contains("\\windows\\fonts")
+            || low_raw.contains("\\microsoft\\windows\\fonts")
+            || low_raw.starts_with("c:\\windows")
+            || low_raw.starts_with("c:\\program files")
+            || low_raw.starts_with("/etc")
+            || low_raw.starts_with("/bin")
+            || low_raw.starts_with("/usr")
+            || low_raw.starts_with("/var")
+            || low_raw.starts_with("/system")
+            || low_raw.starts_with("/library")
+        {
+            return Err((
+                400,
+                "Security violation: deleting OS or system font directories is strictly forbidden"
+                    .to_string(),
+            ));
+        }
+
+        let managed_fonts_dir = self.data_dir.join("Fonts");
+        let storage_fonts_dir = LibraryStorageManager::get_storage_dir();
+        let data_extracted_dir = self.data_dir.join("Extracted");
+        let app_extracted_dir = crate::engine::lifecycle::get_app_data_dir().join("Extracted");
+        let candidate = if Path::new(raw).is_absolute() {
+            PathBuf::from(raw)
+        } else {
+            if raw.contains(':') {
+                return Err((
+                    400,
+                    "Security violation: invalid drive prefix in relative folderPath".to_string(),
+                ));
+            }
+            let norm = raw.replace('\\', "/");
+            let trimmed = norm.trim_matches('/');
+            let low_trimmed = trimmed.to_ascii_lowercase();
+            let is_extracted_rel =
+                low_trimmed == "extracted" || low_trimmed.starts_with("extracted/");
+            if is_extracted_rel {
+                let rel_under_extracted = trimmed
+                    .get("extracted".len()..)
+                    .unwrap_or("")
+                    .trim_start_matches('/');
+                if rel_under_extracted.is_empty() {
+                    return Err((
+                        400,
+                        "Security violation: cannot delete container 'Extracted'; specify a specific pack subfolder"
+                            .to_string(),
+                    ));
+                }
+                let mut p = data_extracted_dir.clone();
+                let mut alt_p = app_extracted_dir.clone();
+                for seg in rel_under_extracted.split('/').filter(|s| !s.is_empty()) {
+                    if seg == "." || seg == ".." {
+                        return Err((400, "Invalid path segment in folderPath".to_string()));
+                    }
+                    p = p.join(seg);
+                    alt_p = alt_p.join(seg);
+                }
+                if !p.exists() && alt_p.exists() {
+                    alt_p
+                } else {
+                    p
+                }
+            } else {
+                let rel_under_fonts = if low_trimmed == "fonts" {
+                    ""
+                } else if low_trimmed.starts_with("fonts/") {
+                    &trimmed[6..]
+                } else {
+                    trimmed
+                };
+                if rel_under_fonts.is_empty() {
+                    return Err((
+                        400,
+                        "Security violation: cannot delete Fontivo Fonts root directory"
+                            .to_string(),
+                    ));
+                }
+                let mut p = managed_fonts_dir.clone();
+                let mut alt_p = storage_fonts_dir.clone();
+                for seg in rel_under_fonts.split('/').filter(|s| !s.is_empty()) {
+                    if seg == "." || seg == ".." {
+                        return Err((400, "Invalid path segment in folderPath".to_string()));
+                    }
+                    p = p.join(seg);
+                    alt_p = alt_p.join(seg);
+                }
+                if !p.exists() && alt_p.exists() {
+                    alt_p
+                } else {
+                    p
+                }
+            }
+        };
+
+        let validate_rel_segments = |segs: &[String], is_extracted_root: bool| -> Result<(), (u16, String)> {
+            if segs.is_empty() {
+                return Err((
+                    400,
+                    if is_extracted_root {
+                        "Security violation: cannot delete container 'Extracted'; specify a specific pack subfolder"
+                            .to_string()
+                    } else {
+                        "Security violation: cannot delete Fontivo Fonts root directory".to_string()
+                    },
+                ));
+            }
+            if is_extracted_root {
+                return Ok(());
+            }
+            let first = segs[0].to_ascii_lowercase();
+            match first.as_str() {
+                "custom" | "google" => Ok(()),
+                "imported" | "packs" => {
+                    if segs.len() < 2 {
+                        Err((
+                            400,
+                            format!(
+                                "Security violation: cannot delete container '{}'; specify a specific subfolder",
+                                segs[0]
+                            ),
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                }
+                _ => Err((
+                    400,
+                    "Security violation: folderPath must reside under Fonts/Custom, Fonts/Imported/<Folder>, Fonts/Packs/<Pack>, or Fonts/Google"
+                        .to_string(),
+                )),
+            }
+        };
+
+        let mut allowed_roots: Vec<(PathBuf, bool)> = vec![(managed_fonts_dir.clone(), false)];
+        let push_root_if_unique = |roots: &mut Vec<(PathBuf, bool)>, p: PathBuf, is_ext: bool| {
+            let pk = normalize_font_path_key(&p.to_string_lossy());
+            if !roots
+                .iter()
+                .any(|(existing, _)| normalize_font_path_key(&existing.to_string_lossy()) == pk)
+            {
+                roots.push((p, is_ext));
+            }
+        };
+        push_root_if_unique(&mut allowed_roots, storage_fonts_dir.clone(), false);
+        push_root_if_unique(&mut allowed_roots, data_extracted_dir.clone(), true);
+        push_root_if_unique(&mut allowed_roots, app_extracted_dir.clone(), true);
+
+        let mut match_keys: Vec<String> = Vec::new();
+        let raw_norm_key = normalize_font_path_key(&candidate.to_string_lossy())
+            .trim_end_matches('\\')
+            .to_string();
+        if !raw_norm_key.is_empty() {
+            match_keys.push(raw_norm_key.clone());
+        }
+
+        let mut canon_target_to_delete: Option<PathBuf> = None;
+        let clean_display_path: String;
+
+        if candidate.exists() {
+            if !candidate.is_dir() {
+                return Err((400, "Target folderPath is not a directory".to_string()));
+            }
+            let canon_target = candidate.canonicalize().map_err(|e| {
+                (
+                    400,
+                    format!("Failed to resolve target folderPath: {}", e),
+                )
+            })?;
+
+            let mut matched_root = false;
+            for (root, is_ext) in &allowed_roots {
+                if let Ok(canon_root) = root.canonicalize() {
+                    if canon_target.starts_with(&canon_root) {
+                        let rel = canon_target.strip_prefix(&canon_root).map_err(|_| {
+                            (400, "Failed to validate relative folder path".to_string())
+                        })?;
+                        let segs: Vec<String> = rel
+                            .components()
+                            .filter_map(|c| match c {
+                                std::path::Component::Normal(s) => {
+                                    Some(s.to_string_lossy().to_string())
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        validate_rel_segments(&segs, *is_ext)?;
+                        matched_root = true;
+                        break;
+                    }
+                }
+            }
+
+            if !matched_root {
+                return Err((
+                    400,
+                    "Security violation: folderPath is outside Fontivo managed Fonts directories"
+                        .to_string(),
+                ));
+            }
+
+            let canon_key = normalize_font_path_key(&canon_target.to_string_lossy())
+                .trim_end_matches('\\')
+                .to_string();
+            if !canon_key.is_empty() && !match_keys.contains(&canon_key) {
+                match_keys.push(canon_key);
+            }
+            clean_display_path = strip_windows_verbatim_prefix(&canon_target)
+                .to_string_lossy()
+                .to_string();
+            canon_target_to_delete = Some(canon_target);
+        } else {
+            // Even when absent on disk, enforce strict managed-root containment before any state purge
+            let mut matched_root = false;
+            for (root, is_ext) in &allowed_roots {
+                let root_key = normalize_font_path_key(&root.to_string_lossy())
+                    .trim_end_matches('\\')
+                    .to_string();
+                let root_prefix = format!("{}\\", root_key);
+                if raw_norm_key == root_key {
+                    return Err((
+                        400,
+                        if *is_ext {
+                            "Security violation: cannot delete container 'Extracted'; specify a specific pack subfolder"
+                                .to_string()
+                        } else {
+                            "Security violation: cannot delete Fontivo Fonts root directory"
+                                .to_string()
+                        },
+                    ));
+                }
+                if let Some(rel_part) = raw_norm_key.strip_prefix(&root_prefix) {
+                    let segs: Vec<String> = rel_part
+                        .split('\\')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect();
+                    validate_rel_segments(&segs, *is_ext)?;
+                    matched_root = true;
+                    break;
+                }
+            }
+            if !matched_root {
+                return Err((
+                    400,
+                    "Security violation: folderPath is outside Fontivo managed Fonts directories"
+                        .to_string(),
+                ));
+            }
+            clean_display_path = strip_windows_verbatim_prefix(&candidate)
+                .to_string_lossy()
+                .to_string();
+        }
+
+        let matches_target = |f: &FontRecord| -> bool {
+            if classify_font_bucket(f) == "system" {
+                return false;
+            }
+            let fk = normalize_font_path_key(&f.path);
+            if match_keys
+                .iter()
+                .any(|k| fk == *k || fk.starts_with(&format!("{}\\", k)))
+            {
+                return true;
+            }
+            if let Ok(canon_f) = Path::new(&f.path).canonicalize() {
+                let cfk = normalize_font_path_key(&canon_f.to_string_lossy());
+                return match_keys
+                    .iter()
+                    .any(|k| cfk == *k || cfk.starts_with(&format!("{}\\", k)));
+            }
+            false
+        };
+
+        let matched_ids: HashSet<usize> = self
+            .fonts
+            .iter()
+            .filter(|f| matches_target(f))
+            .map(|f| f.id)
+            .collect();
+        if canon_target_to_delete.is_none() && matched_ids.is_empty() {
+            return Err((404, "Font folder not found".to_string()));
+        }
+
+        // 1. Deactivate matching fonts in RAM first so OS releases open file handles before rmdir
+        let mut active_changed = false;
+        for f in &self.fonts {
+            if matched_ids.contains(&f.id) && (self.active_font_ids.contains(&f.id) || f.is_active)
+            {
+                let _ = self.activator.deactivate_ram(&f.path);
+                let usable = AppState::resolve_usable_font_path(&f.path);
+                if usable != Path::new(&f.path) {
+                    let _ = self.activator.deactivate_ram(&usable.to_string_lossy());
+                }
+            }
+        }
+
+        // 2. Delete directory cleanly from disk
+        if let Some(canon_dir) = canon_target_to_delete {
+            fs::remove_dir_all(&canon_dir).map_err(|e| {
+                (
+                    500,
+                    format!("Failed to delete font folder from disk: {}", e),
+                )
+            })?;
+        }
+
+        // 3. Remove matching FontRecord entries and update state/favorites/collections/index
+        let mut removed_list = Vec::new();
+        let mut i = 0;
+        while i < self.fonts.len() {
+            if matched_ids.contains(&self.fonts[i].id) {
+                removed_list.push(self.fonts.remove(i));
+            } else {
+                i += 1;
+            }
+        }
+
+        let mut fav_changed = false;
+        let removed_ids: HashSet<usize> = removed_list.iter().map(|f| f.id).collect();
+        for f in &removed_list {
+            if self.active_font_ids.remove(&f.id) || f.is_active {
+                active_changed = true;
+            }
+            if self.favorite_font_ids.remove(&f.id) {
+                fav_changed = true;
+            }
+        }
+
+        let mut col_changed = false;
+        for ids in self.collections.values_mut() {
+            let before = ids.len();
+            ids.retain(|fid| !removed_ids.contains(fid));
+            if ids.len() != before {
+                col_changed = true;
+            }
+        }
+
+        if active_changed {
+            self.save_active_fonts();
+        }
+        if fav_changed {
+            self.save_favorites();
+        }
+        if col_changed {
+            self.save_collections();
+        }
+        self.save_user_library_index();
+
+        Ok((clean_display_path, removed_list))
     }
 
     /// Detects whether a candidate font already exists in the library (Local, Google, Cloud Pack, or System)

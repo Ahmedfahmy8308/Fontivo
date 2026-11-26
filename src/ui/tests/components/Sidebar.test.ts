@@ -124,8 +124,34 @@ describe("Sidebar Component & Navigation Tests", () => {
     expect(htmlAr).toContain("tabular-nums");
     expect(htmlAr).toContain("776");
     expect(htmlAr).toContain("700");
-    expect(htmlAr).toContain("52");
+    expect(htmlAr).toContain("76");
     expect(htmlAr).toContain("24");
     expect(htmlAr).not.toContain("11,207");
+  });
+
+  it("uses explicit localAllCount when provided by backend stats and falls back to localCount + cloudCount + googleCount", () => {
+    const htmlWithOverride = renderToString(
+      React.createElement(Sidebar, {
+        activeTab: "library",
+        setActiveTab: () => {},
+        currentFilter: { type: "custom", value: null },
+        setFilter: () => {},
+        stats: {
+          total: 500,
+          systemCount: 400,
+          localCount: 30,
+          cloudCount: 20,
+          googleCount: 50,
+          localAllCount: 95,
+        },
+        t: translations.en,
+        isRtl: false,
+      }),
+    );
+
+    expect(htmlWithOverride).toContain("Local &amp; Custom");
+    expect(htmlWithOverride).toContain("95");
+    expect(htmlWithOverride).toContain("Downloaded Google");
+    expect(htmlWithOverride).toContain("50");
   });
 });

@@ -6,3 +6,4 @@ mod brand_kits_serialization;
 mod catalog;
 mod collections;
 mod health;
+mod workspaces_and_local_fonts;

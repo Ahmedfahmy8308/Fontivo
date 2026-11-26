@@ -54,11 +54,20 @@ impl ApiServer {
 
                 let query_params: HashMap<String, String> = query_str
                     .split('&')
+                    .filter(|kv| !kv.is_empty())
                     .filter_map(|kv| {
-                        let mut parts = kv.split('=');
-                        let k = parts.next()?.to_string();
-                        let v = parts.next().unwrap_or("").to_string();
-                        Some((k, routes::common::urlencoding_decode(&v)))
+                        let (k, v) = match kv.split_once('=') {
+                            Some((k, v)) => (k, v),
+                            None => (kv, ""),
+                        };
+                        if k.is_empty() {
+                            None
+                        } else {
+                            Some((
+                                routes::common::urlencoding_decode(k),
+                                routes::common::urlencoding_decode(v),
+                            ))
+                        }
                     })
                     .collect();
 
@@ -121,6 +130,14 @@ impl ApiServer {
                         // Library Stats & Font Queries
                         ("GET", "/api/stats") => {
                             routes::fonts::handle_stats(req, &state, cors_origin, json_header)
+                        }
+                        ("GET", "/api/fonts/custom-buckets") => {
+                            routes::fonts::handle_custom_buckets(
+                                req,
+                                &state,
+                                cors_origin,
+                                json_header,
+                            )
                         }
                         ("GET", "/api/fonts") => routes::fonts::handle_fonts(
                             req,
@@ -453,6 +470,14 @@ impl ApiServer {
                                 json_header,
                             )
                         }
+                        ("POST", "/api/fonts/delete-folder") => {
+                            routes::fonts::handle_delete_font_folder(
+                                req,
+                                &state,
+                                cors_origin,
+                                json_header,
+                            )
+                        }
 
                         // Smart & Custom Collections
                         ("GET", "/api/collections") => routes::collections::get_collections(
@@ -612,6 +637,19 @@ impl ApiServer {
                                 json_header,
                             );
                         }
+                        ("DELETE", p)
+                            if p.starts_with("/api/workspaces/") && p.ends_with("/folders") =>
+                        {
+                            let id = &p["/api/workspaces/".len()..p.len() - "/folders".len()];
+                            routes::workspaces::delete_workspace_folder(
+                                req,
+                                &state,
+                                id,
+                                &query_params,
+                                cors_origin,
+                                json_header,
+                            );
+                        }
                         ("DELETE", p) if p.starts_with("/api/workspaces/") => {
                             let id = &p["/api/workspaces/".len()..];
                             routes::workspaces::delete_workspace(
@@ -627,6 +665,18 @@ impl ApiServer {
                         {
                             let id = &p["/api/workspaces/".len()..p.len() - "/folders".len()];
                             routes::workspaces::create_workspace_folder(
+                                req,
+                                &state,
+                                id,
+                                cors_origin,
+                                json_header,
+                            );
+                        }
+                        ("POST", p)
+                            if p.starts_with("/api/workspaces/") && p.ends_with("/open-file") =>
+                        {
+                            let id = &p["/api/workspaces/".len()..p.len() - "/open-file".len()];
+                            routes::workspaces::open_workspace_file(
                                 req,
                                 &state,
                                 id,

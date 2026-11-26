@@ -178,16 +178,15 @@ pub fn handle_activate_batch(
         let mut st = state.write().unwrap();
         let mut target_ids: Vec<usize> = Vec::new();
         if let Some(folder) = data.folder {
-            let norm_folder = folder
-                .replace('/', "\\")
+            let norm_folder = crate::server::state::normalize_font_path_key(&folder)
                 .trim_end_matches('\\')
-                .to_lowercase();
+                .to_string();
             let prefix = format!("{}\\", norm_folder);
             for f in st.fonts.iter().filter(|f| {
-                if f.source.eq_ignore_ascii_case("system") {
+                if crate::server::state::classify_font_bucket(f) == "system" {
                     return false;
                 }
-                let fp = f.path.replace('/', "\\").to_lowercase();
+                let fp = crate::server::state::normalize_font_path_key(&f.path);
                 fp == norm_folder || fp.starts_with(&prefix)
             }) {
                 if !target_ids.contains(&f.id) {
@@ -278,18 +277,17 @@ pub fn handle_deactivate_batch(
     if let Ok(data) = serde_json::from_str::<BatchReq>(&body) {
         let mut st = state.write().unwrap();
         let target_ids: Vec<usize> = if let Some(folder) = data.folder {
-            let norm_folder = folder
-                .replace('/', "\\")
+            let norm_folder = crate::server::state::normalize_font_path_key(&folder)
                 .trim_end_matches('\\')
-                .to_lowercase();
+                .to_string();
             let prefix = format!("{}\\", norm_folder);
             st.fonts
                 .iter()
                 .filter(|f| {
-                    if f.source.eq_ignore_ascii_case("system") {
+                    if crate::server::state::classify_font_bucket(f) == "system" {
                         return false;
                     }
-                    let fp = f.path.replace('/', "\\").to_lowercase();
+                    let fp = crate::server::state::normalize_font_path_key(&f.path);
                     fp == norm_folder || fp.starts_with(&prefix)
                 })
                 .map(|f| f.id)
@@ -2745,6 +2743,69 @@ pub fn handle_delete_family(
         cors_origin,
         json_header,
     );
+}
+
+/// POST /api/fonts/delete-folder: safely deletes a managed Fontivo subfolder
+/// (`Fonts/Custom`, `Fonts/Imported/<FolderName>`, `Fonts/Packs/<Pack>`, `Fonts/Google`),
+/// deactivating its fonts in RAM, clearing collections, removing disk files, and persisting index.
+pub fn handle_delete_font_folder(
+    mut req: Request,
+    state: &Arc<RwLock<AppState>>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let body = read_body(&mut req);
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct DeleteFolderReq {
+        #[serde(alias = "path", alias = "relativePath")]
+        folder_path: String,
+    }
+
+    let data = match serde_json::from_str::<DeleteFolderReq>(&body) {
+        Ok(d) => d,
+        Err(_) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": "Invalid delete folder payload; expected { folderPath }" }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let mut st = state.write().unwrap();
+    match st.delete_library_folder(&data.folder_path) {
+        Ok((clean_path, removed_list)) => {
+            let removed_ids: Vec<usize> = removed_list.iter().map(|f| f.id).collect();
+            let removed_count = removed_list.len();
+            respond_json(
+                req,
+                200,
+                serde_json::json!({
+                    "success": true,
+                    "folderPath": clean_path,
+                    "removedCount": removed_count,
+                    "deletedCount": removed_count,
+                    "removedIds": removed_ids,
+                    "message": format!("Deleted folder '{}' and removed {} font(s)", clean_path, removed_count)
+                }),
+                cors_origin,
+                json_header,
+            );
+        }
+        Err((status, err)) => {
+            respond_json(
+                req,
+                status,
+                serde_json::json!({ "success": false, "error": err }),
+                cors_origin,
+                json_header,
+            );
+        }
+    }
 }
 
 pub fn handle_refresh_manifest(req: Request, cors_origin: Header, json_header: Header) {

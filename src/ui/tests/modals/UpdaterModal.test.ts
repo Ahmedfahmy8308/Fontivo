@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
+import React from "react";
+import { renderToString } from "react-dom/server";
 import "../setup";
+import UpdaterModal from "../../src/components/modals/UpdaterModal";
 
 describe("AutoUpdater & Notification Banner Tests", () => {
   it("formats the ready-to-install banner notification message in English and Arabic", () => {
@@ -107,5 +110,100 @@ describe("AutoUpdater & Notification Banner Tests", () => {
     );
     expect(res.success).toBe(true);
     expect(res.status).toBe("installing");
+  });
+
+  it("renders Arabic ready_to_install status banner in two balanced sections with single-line action buttons", () => {
+    const html = renderToString(
+      React.createElement(UpdaterModal, {
+        isOpen: true,
+        onClose: () => {},
+        isRtl: true,
+        initialAppUpdateInfo: {
+          currentVersion: "1.1.2",
+          latestVersion: "1.1.3",
+          hasUpdate: true,
+          status: "ready_to_install",
+          lastChecked: "الآن",
+        },
+      }),
+    );
+
+    expect(html).toContain('data-testid="updater-app-status-card"');
+    expect(html).toContain('data-testid="updater-status-pill"');
+    expect(html).toContain('data-testid="updater-status-subtitle"');
+    expect(html).toContain('data-testid="updater-action-toolbar"');
+    expect(html).toContain("تحديث جديد جاهز (v1.1.3)");
+    expect(html).toContain("ترقية");
+    expect(html).toContain("الإصدار المثبت:");
+    expect(html).toContain("v1.1.2");
+    expect(html).toContain("آخر فحص:");
+    expect(html).toContain("الآن");
+    expect(html).toContain("إعادة التشغيل والتحديث الآن");
+    expect(html).toContain("فحص التحديثات الآن");
+    expect(html).toContain("inline-flex items-center justify-center gap-2 h-10 px-4");
+    expect(html).toContain("font-sans font-bold whitespace-nowrap");
+  });
+
+  it("renders stable, offline, downloading, and Fonts Library tab states cleanly in EN and AR", () => {
+    const stableEn = renderToString(
+      React.createElement(UpdaterModal, {
+        isOpen: true,
+        onClose: () => {},
+        isRtl: false,
+        initialAppUpdateInfo: {
+          currentVersion: "1.1.2",
+          latestVersion: "1.1.2",
+          hasUpdate: false,
+          status: "idle",
+          lastChecked: null,
+        },
+      }),
+    );
+    expect(stableEn).toContain("Fontivo is Up to Date");
+    expect(stableEn).toContain("Stable");
+    expect(stableEn).toContain("Check for Updates");
+
+    const errorAr = renderToString(
+      React.createElement(UpdaterModal, {
+        isOpen: true,
+        onClose: () => {},
+        isRtl: true,
+        initialAppUpdateInfo: {
+          error: "Network timeout",
+          hasUpdate: false,
+          status: "idle",
+        },
+      }),
+    );
+    expect(errorAr).toContain("غير متصل");
+    expect(errorAr).toContain("تعذر التحقق من التحديثات");
+
+    const downloadingAr = renderToString(
+      React.createElement(UpdaterModal, {
+        isOpen: true,
+        onClose: () => {},
+        isRtl: true,
+        initialAppUpdateInfo: {
+          hasUpdate: true,
+          status: "downloading",
+          downloadProgress: 64,
+        },
+      }),
+    );
+    expect(downloadingAr).toContain("64%");
+    expect(downloadingAr).toContain("fontivo-progress-fill");
+
+    const fontsTabAr = renderToString(
+      React.createElement(UpdaterModal, {
+        isOpen: true,
+        onClose: () => {},
+        isRtl: true,
+        initialTab: "fonts",
+      }),
+    );
+    expect(fontsTabAr).toContain('data-testid="updater-fonts-status-card"');
+    expect(fontsTabAr).toContain("مزامنة الكتالوج الآن");
+    expect(fontsTabAr).toContain("مكتبة Google Fonts");
+    expect(fontsTabAr).toContain("حزم التوسعة (Cloud Packs)");
   });
 });

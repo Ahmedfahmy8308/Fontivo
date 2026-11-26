@@ -175,19 +175,66 @@ fn default_color_role() -> String {
     "custom".to_string()
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCustomFont {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default, alias = "role")]
+    pub label: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default, alias = "font_id")]
+    pub font_id: Option<usize>,
+    #[serde(default)]
+    pub family: Option<String>,
+    #[serde(default)]
+    pub style: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceTask {
     pub id: String,
     pub text: String,
     #[serde(default = "default_task_status")]
     pub status: String, // "todo", "in_progress", "done"
-    #[serde(default = "current_timestamp", alias = "createdAt")]
+    #[serde(
+        default = "current_timestamp",
+        alias = "createdAt",
+        deserialize_with = "de_timestamp_or_now"
+    )]
     pub created_at: u64,
+    #[serde(default, alias = "due_date")]
+    pub due_date: Option<String>,
+    #[serde(default)]
+    pub priority: Option<String>, // "high", "medium", "low"
+    #[serde(default)]
+    pub category: Option<String>, // milestone phase
 }
 
 fn default_task_status() -> String {
     "todo".to_string()
+}
+
+/// Permissive timestamp deserializer accepting numeric epoch seconds or date/ISO strings.
+fn de_timestamp_or_now<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let val = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match val {
+        Some(serde_json::Value::Number(n)) => n
+            .as_u64()
+            .or_else(|| n.as_f64().map(|f| f.max(0.0) as u64))
+            .unwrap_or_else(current_timestamp),
+        Some(serde_json::Value::String(s)) => {
+            s.trim().parse::<u64>().unwrap_or_else(|_| current_timestamp())
+        }
+        _ => current_timestamp(),
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -208,6 +255,8 @@ pub struct Workspace {
     #[serde(default)]
     pub target_audience: Option<String>,
     #[serde(default)]
+    pub deadline: Option<String>,
+    #[serde(default)]
     pub logo_data_url: Option<String>,
     #[serde(default)]
     pub logo_path: Option<String>,
@@ -217,16 +266,24 @@ pub struct Workspace {
     pub folders: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
-    #[serde(default = "current_timestamp", alias = "updatedAt")]
+    #[serde(
+        default = "current_timestamp",
+        alias = "updatedAt",
+        deserialize_with = "de_timestamp_or_now"
+    )]
     pub updated_at: u64,
     #[serde(default)]
     pub typography: WorkspaceTypography,
     #[serde(default, alias = "projectFonts")]
     pub project_fonts: Vec<TypographyFont>,
+    #[serde(default, alias = "custom_fonts")]
+    pub custom_fonts: Vec<WorkspaceCustomFont>,
     #[serde(default, alias = "colors")]
     pub palette: Vec<WorkspaceColor>,
     #[serde(default)]
     pub tasks: Vec<WorkspaceTask>,
+    #[serde(default, alias = "pinned_assets")]
+    pub pinned_assets: Vec<String>,
     #[serde(default)]
     pub notes: String,
     #[serde(default)]
@@ -701,6 +758,9 @@ pub fn workspace_to_yaml(ws: &Workspace) -> String {
     if let Some(ref desc) = ws.description {
         yaml.push_str(&format!("description: \"{}\"\n", desc.replace('"', "\\\"")));
     }
+    if let Some(ref deadline) = ws.deadline {
+        yaml.push_str(&format!("deadline: \"{}\"\n", deadline.replace('"', "\\\"")));
+    }
     yaml.push_str(&format!("updatedAt: {}\n", ws.updated_at));
 
     yaml.push_str("typography:\n");
@@ -732,6 +792,31 @@ pub fn workspace_to_yaml(ws: &Workspace) -> String {
     print_font(&mut yaml, "accentFont", &ws.typography.accent_font);
     print_font(&mut yaml, "codeFont", &ws.typography.code_font);
 
+    if !ws.custom_fonts.is_empty() {
+        yaml.push_str("customFonts:\n");
+        for cf in &ws.custom_fonts {
+            yaml.push_str(&format!("  - label: \"{}\"\n", cf.label.replace('"', "\\\"")));
+            if let Some(ref name) = cf.name {
+                yaml.push_str(&format!("    name: \"{}\"\n", name.replace('"', "\\\"")));
+            }
+            if let Some(ref fam) = cf.family {
+                yaml.push_str(&format!("    family: \"{}\"\n", fam.replace('"', "\\\"")));
+            }
+            if let Some(ref sty) = cf.style {
+                yaml.push_str(&format!("    style: \"{}\"\n", sty.replace('"', "\\\"")));
+            }
+            if let Some(id) = cf.font_id {
+                yaml.push_str(&format!("    fontId: {}\n", id));
+            }
+            if let Some(ref p) = cf.path {
+                yaml.push_str(&format!(
+                    "    path: \"{}\"\n",
+                    p.replace('\\', "/").replace('"', "\\\"")
+                ));
+            }
+        }
+    }
+
     yaml.push_str("palette:\n");
     for c in &ws.palette {
         yaml.push_str(&format!("  - name: \"{}\"\n", c.name.replace('"', "\\\"")));
@@ -745,6 +830,22 @@ pub fn workspace_to_yaml(ws: &Workspace) -> String {
         yaml.push_str(&format!("    text: \"{}\"\n", t.text.replace('"', "\\\"")));
         yaml.push_str(&format!("    status: \"{}\"\n", t.status));
         yaml.push_str(&format!("    createdAt: {}\n", t.created_at));
+        if let Some(ref dd) = t.due_date {
+            yaml.push_str(&format!("    dueDate: \"{}\"\n", dd.replace('"', "\\\"")));
+        }
+        if let Some(ref pr) = t.priority {
+            yaml.push_str(&format!("    priority: \"{}\"\n", pr.replace('"', "\\\"")));
+        }
+        if let Some(ref cat) = t.category {
+            yaml.push_str(&format!("    category: \"{}\"\n", cat.replace('"', "\\\"")));
+        }
+    }
+
+    if !ws.pinned_assets.is_empty() {
+        yaml.push_str("pinnedAssets:\n");
+        for pa in &ws.pinned_assets {
+            yaml.push_str(&format!("  - \"{}\"\n", pa.replace('"', "\\\"")));
+        }
     }
 
     let escaped_notes = ws
@@ -763,16 +864,12 @@ fn get_workspaces_dir(data_dir: &Path) -> PathBuf {
     dir
 }
 
-/// Resolves the physical project directory on disk (`%LOCALAPPDATA%\Fontivo\Workspaces\<safe_id>\`)
-/// and ensures all 4 physical subfolders (`Fonts/`, `Designs/`, `Palettes/`, `Guidelines/`) exist.
-pub fn ensure_workspace_physical_dir(
+fn resolve_workspace_root_path(
     ws_id: &str,
     custom_folder: Option<&str>,
 ) -> Result<PathBuf, String> {
     let safe_id = validate_workspace_id(ws_id)?;
-    let project_root = if let Some(custom) =
-        custom_folder.map(|s| s.trim()).filter(|s| !s.is_empty())
-    {
+    if let Some(custom) = custom_folder.map(|s| s.trim()).filter(|s| !s.is_empty()) {
         if custom.contains("..") || custom.contains('\0') {
             return Err("Security violation: path traversal in workspace folderPath".to_string());
         }
@@ -786,12 +883,35 @@ pub fn ensure_workspace_physical_dir(
                     .to_string(),
             );
         }
-        PathBuf::from(custom)
+        Ok(PathBuf::from(custom))
     } else {
-        crate::engine::lifecycle::get_app_data_dir()
+        Ok(crate::engine::lifecycle::get_app_data_dir()
             .join("Workspaces")
-            .join(safe_id)
-    };
+            .join(safe_id))
+    }
+}
+
+fn resolve_existing_workspace_root(
+    data_dir: &Path,
+    safe_id: &str,
+) -> Result<(Option<Workspace>, PathBuf), (u16, String)> {
+    let ws_dir = get_workspaces_dir(data_dir);
+    let ws_opt = load_workspace_from_disk(&ws_dir, safe_id);
+    let custom_root = ws_opt.as_ref().and_then(|w| w.folder_path.as_deref());
+    let root = resolve_workspace_root_path(safe_id, custom_root).map_err(|e| (400, e))?;
+    if !root.is_dir() {
+        return Err((404, "Workspace folder not found".to_string()));
+    }
+    Ok((ws_opt, root))
+}
+
+/// Resolves the physical project directory on disk (`%LOCALAPPDATA%\Fontivo\Workspaces\<safe_id>\`)
+/// and ensures all 4 physical subfolders (`Fonts/`, `Designs/`, `Palettes/`, `Guidelines/`) exist.
+pub fn ensure_workspace_physical_dir(
+    ws_id: &str,
+    custom_folder: Option<&str>,
+) -> Result<PathBuf, String> {
+    let project_root = resolve_workspace_root_path(ws_id, custom_folder)?;
 
     fs::create_dir_all(project_root.join("Fonts"))
         .map_err(|e| format!("Failed to create Fonts subfolder: {}", e))?;
@@ -805,19 +925,95 @@ pub fn ensure_workspace_physical_dir(
     Ok(project_root)
 }
 
-/// Synchronizes all physical workspace files (`Fonts/`, `Palettes/palette.{ase,css,json}`, `Guidelines/styleguide.html`)
-pub fn sync_workspace_physical_files(
-    ws: &Workspace,
-    fonts_snapshot: &[crate::server::state::FontRecord],
-    custom_folder: Option<&str>,
-) -> Result<PathBuf, String> {
-    let project_dir = ensure_workspace_physical_dir(&ws.id, custom_folder)?;
-    let fonts_dir = project_dir.join("Fonts");
-    let palettes_dir = project_dir.join("Palettes");
-    let guidelines_dir = project_dir.join("Guidelines");
+/// Resolves a `TypographyFont` slot against an `AppState` font snapshot by ID, path, or family/name.
+fn find_matching_font_in_snapshot<'a>(
+    f_item: &TypographyFont,
+    fonts_snapshot: &'a [crate::server::state::FontRecord],
+) -> Option<&'a crate::server::state::FontRecord> {
+    if let Some(fid) = f_item.font_id {
+        if let Some(f) = fonts_snapshot.iter().find(|f| f.id == fid) {
+            return Some(f);
+        }
+    }
+    if let Some(ref p) = f_item.path {
+        if let Some(f) = fonts_snapshot
+            .iter()
+            .find(|f| f.path.eq_ignore_ascii_case(p))
+        {
+            return Some(f);
+        }
+    }
+    let query = f_item
+        .family
+        .as_deref()
+        .or(f_item.name.as_deref())
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if query.is_empty() {
+        return None;
+    }
+    fonts_snapshot
+        .iter()
+        .find(|f| {
+            f.family
+                .as_deref()
+                .map(|fam| fam.eq_ignore_ascii_case(&query))
+                .unwrap_or(false)
+                || f.display_name
+                    .as_deref()
+                    .map(|d| d.eq_ignore_ascii_case(&query))
+                    .unwrap_or(false)
+                || f.name.eq_ignore_ascii_case(&query)
+        })
+        .or_else(|| {
+            fonts_snapshot.iter().find(|f| {
+                f.family
+                    .as_deref()
+                    .map(|fam| fam.to_ascii_lowercase().contains(&query))
+                    .unwrap_or(false)
+                    || f.name.to_ascii_lowercase().contains(&query)
+                    || f.post_script_name
+                        .as_deref()
+                        .map(|ps| ps.to_ascii_lowercase().contains(&query))
+                        .unwrap_or(false)
+            })
+        })
+}
 
-    // 1. Copy workspace typography & project fonts into Fonts/
-    let mut all_font_slots: Vec<&TypographyFont> = [
+fn copy_font_slots_to_dir(
+    slots: &[TypographyFont],
+    fonts_snapshot: &[crate::server::state::FontRecord],
+    fonts_dir: &Path,
+) {
+    for f_item in slots {
+        if let Some(font) = find_matching_font_in_snapshot(f_item, fonts_snapshot) {
+            let src = AppState::resolve_usable_font_path(&font.path);
+            if src.is_file() {
+                let name_path = Path::new(&font.name);
+                let dest_name = if name_path.extension().is_some() {
+                    name_path.file_name().or_else(|| src.file_name())
+                } else {
+                    src.file_name().or_else(|| name_path.file_name())
+                }
+                .unwrap_or_default();
+                if !dest_name.is_empty() {
+                    let _ = fs::copy(&src, fonts_dir.join(dest_name));
+                }
+            }
+        } else if let Some(ref p_str) = f_item.path {
+            let src = AppState::resolve_usable_font_path(p_str);
+            if src.is_file() {
+                if let Some(fname) = src.file_name() {
+                    let _ = fs::copy(&src, fonts_dir.join(fname));
+                }
+            }
+        }
+    }
+}
+
+fn collect_all_workspace_font_slots(ws: &Workspace) -> Vec<TypographyFont> {
+    let mut all_slots: Vec<TypographyFont> = [
         &ws.typography.heading_font,
         &ws.typography.body_font,
         &ws.typography.accent_font,
@@ -825,75 +1021,20 @@ pub fn sync_workspace_physical_files(
     ]
     .into_iter()
     .flatten()
+    .cloned()
     .collect();
-    for pf in &ws.project_fonts {
-        all_font_slots.push(pf);
-    }
+    all_slots.extend(ws.project_fonts.iter().cloned());
+    all_slots.extend(ws.custom_fonts.iter().map(|cf| TypographyFont {
+        name: cf.name.clone(),
+        font_id: cf.font_id,
+        path: cf.path.clone(),
+        family: cf.family.clone(),
+        style: cf.style.clone(),
+    }));
+    all_slots
+}
 
-    for f_item in all_font_slots {
-        let mut resolved_font = None;
-        if let Some(fid) = f_item.font_id {
-            resolved_font = fonts_snapshot.iter().find(|f| f.id == fid);
-        }
-        if resolved_font.is_none() {
-            if let Some(ref p) = f_item.path {
-                resolved_font = fonts_snapshot.iter().find(|f| f.path == *p);
-            }
-        }
-        if resolved_font.is_none() {
-            if let Some(ref name) = f_item.name {
-                let clean = name.to_lowercase();
-                resolved_font = fonts_snapshot.iter().find(|f| {
-                    f.name.to_lowercase().contains(&clean)
-                        || f.family
-                            .as_deref()
-                            .unwrap_or("")
-                            .to_lowercase()
-                            .contains(&clean)
-                });
-            }
-        }
-
-        if let Some(font) = resolved_font {
-            let src = AppState::resolve_usable_font_path(&font.path);
-            if src.is_file() {
-                let dest_name = Path::new(&font.name)
-                    .file_name()
-                    .or_else(|| src.file_name())
-                    .unwrap_or_default();
-                let _ = fs::copy(&src, fonts_dir.join(dest_name));
-            }
-        } else if let Some(ref p_str) = f_item.path {
-            let src = Path::new(p_str);
-            if src.is_file() {
-                if let Some(fname) = src.file_name() {
-                    let _ = fs::copy(src, fonts_dir.join(fname));
-                }
-            }
-        }
-    }
-
-    // 2. Write Palettes/palette.json
-    let palette_json = serde_json::json!({
-        "id": ws.id,
-        "name": ws.name,
-        "client": ws.client,
-        "business": ws.business,
-        "updatedAt": ws.updated_at,
-        "palette": ws.palette,
-        "typography": {
-            "heading": ws.typography.heading_font,
-            "body": ws.typography.body_font,
-            "accent": ws.typography.accent_font,
-            "code": ws.typography.code_font,
-        }
-    });
-    let _ = fs::write(
-        palettes_dir.join("palette.json"),
-        serde_json::to_string_pretty(&palette_json).unwrap_or_default(),
-    );
-
-    // 3. Write Palettes/palette.css
+fn build_workspace_palette_css(ws: &Workspace) -> String {
     let mut css = String::from("/* Generated by Fontivo Brand & Workspace Engine */\n:root {\n");
     if let Some(h) = ws
         .typography
@@ -939,6 +1080,27 @@ pub fn sync_workspace_physical_files(
             sanitize_css_font_name(c)
         ));
     }
+    for (idx, cf) in ws.custom_fonts.iter().enumerate() {
+        if let Some(fname) = cf.family.as_deref().or(cf.name.as_deref()) {
+            let role_slug: String = cf
+                .label
+                .to_lowercase()
+                .chars()
+                .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+                .collect();
+            let clean_slug = role_slug.trim_matches('-');
+            let var_name = if clean_slug.is_empty() {
+                format!("custom-{}", idx + 1)
+            } else {
+                format!("custom-{}", clean_slug)
+            };
+            css.push_str(&format!(
+                "  --font-{}: '{}', sans-serif;\n",
+                var_name,
+                sanitize_css_font_name(fname)
+            ));
+        }
+    }
     for c in &ws.palette {
         let clean_role: String = c
             .name
@@ -953,6 +1115,48 @@ pub fn sync_workspace_physical_files(
         ));
     }
     css.push_str("}\n");
+    css
+}
+
+/// Synchronizes all physical workspace files (`Fonts/`, `Palettes/palette.{ase,css,json}`, `Guidelines/styleguide.html`)
+pub fn sync_workspace_physical_files(
+    ws: &Workspace,
+    fonts_snapshot: &[crate::server::state::FontRecord],
+    custom_folder: Option<&str>,
+) -> Result<PathBuf, String> {
+    let project_dir = ensure_workspace_physical_dir(&ws.id, custom_folder)?;
+    let fonts_dir = project_dir.join("Fonts");
+    let palettes_dir = project_dir.join("Palettes");
+    let guidelines_dir = project_dir.join("Guidelines");
+
+    // 1. Copy workspace typography, project fonts, and custom font roles into Fonts/
+    let all_font_slots = collect_all_workspace_font_slots(ws);
+    copy_font_slots_to_dir(&all_font_slots, fonts_snapshot, &fonts_dir);
+
+    // 2. Write Palettes/palette.json
+    let palette_json = serde_json::json!({
+        "id": ws.id,
+        "name": ws.name,
+        "client": ws.client,
+        "business": ws.business,
+        "deadline": ws.deadline,
+        "updatedAt": ws.updated_at,
+        "palette": ws.palette,
+        "typography": {
+            "heading": ws.typography.heading_font,
+            "body": ws.typography.body_font,
+            "accent": ws.typography.accent_font,
+            "code": ws.typography.code_font,
+            "customFonts": ws.custom_fonts,
+        }
+    });
+    let _ = fs::write(
+        palettes_dir.join("palette.json"),
+        serde_json::to_string_pretty(&palette_json).unwrap_or_default(),
+    );
+
+    // 3. Write Palettes/palette.css
+    let css = build_workspace_palette_css(ws);
     let _ = fs::write(palettes_dir.join("palette.css"), css);
 
     // 4. Write Palettes/palette.ase
@@ -1033,24 +1237,9 @@ fn load_workspace_from_disk(dir: &Path, id: &str) -> Option<Workspace> {
             return Some(Workspace {
                 id: safe_id.to_string(),
                 name,
-                client: None,
-                business: None,
-                category: None,
-                campaign_name: None,
-                brand_tagline: None,
-                target_audience: None,
-                logo_data_url: None,
-                logo_path: None,
-                folder_path: None,
-                folders: Vec::new(),
-                description: None,
-                updated_at: current_timestamp(),
-                typography: WorkspaceTypography::default(),
-                project_fonts: Vec::new(),
-                palette: Vec::new(),
-                tasks: Vec::new(),
                 notes,
                 success: Some(true),
+                ..Default::default()
             });
         }
     }
@@ -1093,6 +1282,7 @@ fn get_default_workspace() -> Workspace {
         campaign_name: None,
         brand_tagline: None,
         target_audience: None,
+        deadline: None,
         logo_data_url: None,
         logo_path: None,
         folder_path: None,
@@ -1135,6 +1325,7 @@ fn get_default_workspace() -> Workspace {
             }),
         },
         project_fonts: Vec::new(),
+        custom_fonts: Vec::new(),
         palette: vec![
             WorkspaceColor { name: "Deep Violet".to_string(), hex: "#5200EA".to_string(), role: "primary".to_string() },
             WorkspaceColor { name: "Electric Indigo".to_string(), hex: "#7C3AED".to_string(), role: "secondary".to_string() },
@@ -1148,20 +1339,24 @@ fn get_default_workspace() -> Workspace {
                 text: "Finalize brand typography hierarchy and font pairings".to_string(),
                 status: "done".to_string(),
                 created_at: current_timestamp() - 86400,
+                ..Default::default()
             },
             WorkspaceTask {
                 id: "task-2".to_string(),
                 text: "Extract and verify WCAG 2.1 AAA color contrast ratios".to_string(),
                 status: "in_progress".to_string(),
                 created_at: current_timestamp() - 3600,
+                ..Default::default()
             },
             WorkspaceTask {
                 id: "task-3".to_string(),
                 text: "Export Adobe Swatch Exchange (.ASE) and CSS tokens bundle".to_string(),
                 status: "todo".to_string(),
                 created_at: current_timestamp(),
+                ..Default::default()
             },
         ],
+        pinned_assets: Vec::new(),
         notes: "Design principles: Clean Swiss-style typography, 60-30-10 color balance, and accessible contrast on dark backgrounds.".to_string(),
         success: Some(true),
     }
@@ -1238,13 +1433,64 @@ pub fn generate_standalone_styleguide_html(ws: &Workspace) -> String {
             "in_progress" => r#"<span class="task-badge badge-progress">In Progress</span>"#,
             _ => r#"<span class="task-badge badge-todo">To Do</span>"#,
         };
+        let mut meta_badges = String::new();
+        if let Some(ref prio) = t.priority {
+            if !prio.trim().is_empty() {
+                meta_badges.push_str(&format!(
+                    r#"<span class="task-badge badge-todo">{}</span>"#,
+                    escape_html(prio)
+                ));
+            }
+        }
+        if let Some(ref cat) = t.category {
+            if !cat.trim().is_empty() {
+                meta_badges.push_str(&format!(
+                    r#"<span class="task-badge badge-todo">{}</span>"#,
+                    escape_html(cat)
+                ));
+            }
+        }
+        if let Some(ref due) = t.due_date {
+            if !due.trim().is_empty() {
+                meta_badges.push_str(&format!(
+                    r#"<span class="task-badge badge-todo">Due: {}</span>"#,
+                    escape_html(due)
+                ));
+            }
+        }
         tasks_html.push_str(&format!(
             r#"<li class="task-item">
                 <span class="task-text">{text}</span>
-                {status}
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">{meta_badges}{status}</div>
             </li>"#,
             text = escape_html(&t.text),
+            meta_badges = meta_badges,
             status = status_badge
+        ));
+    }
+
+    let mut custom_fonts_html = String::new();
+    for cf in &ws.custom_fonts {
+        let role_label = if cf.label.trim().is_empty() {
+            "Custom Font Role"
+        } else {
+            cf.label.trim()
+        };
+        let font_label = cf
+            .family
+            .as_deref()
+            .or(cf.name.as_deref())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("Unspecified");
+        custom_fonts_html.push_str(&format!(
+            r#"<div class="type-card">
+                    <div class="type-role">{role}</div>
+                    <div class="type-name">{fname}</div>
+                    <div class="type-preview-h">The Quick Brown Fox Jumps Over The Lazy Dog</div>
+                    <div class="type-preview-h" dir="rtl" style="font-family: inherit;">أبجد هوز حطي كلمن سعفص قرشت</div>
+                </div>"#,
+            role = escape_html(role_label),
+            fname = escape_html(font_label),
         ));
     }
 
@@ -1496,6 +1742,7 @@ pub fn generate_standalone_styleguide_html(ws: &Workspace) -> String {
             <div class="header-meta">
                 {client_html}
                 {business_html}
+                {deadline_html}
                 <span>Generated by Fontivo Brand & Workspace Engine</span>
             </div>
         </header>
@@ -1526,6 +1773,7 @@ pub fn generate_standalone_styleguide_html(ws: &Workspace) -> String {
                     <div class="type-name">{code_name}</div>
                     <div class="type-preview-code">const brand = {{ name: "{name_code}", engine: "Fontivo" }};</div>
                 </div>
+                {custom_fonts_html}
             </div>
         </section>
 
@@ -1566,10 +1814,17 @@ pub fn generate_standalone_styleguide_html(ws: &Workspace) -> String {
             .as_ref()
             .map(|b| format!("<span>Industry: <strong>{}</strong></span>", escape_html(b)))
             .unwrap_or_default(),
+        deadline_html = ws
+            .deadline
+            .as_ref()
+            .filter(|d| !d.trim().is_empty())
+            .map(|d| format!("<span>Deadline: <strong>{}</strong></span>", escape_html(d)))
+            .unwrap_or_default(),
         heading_name = heading_name,
         body_name = body_name,
         accent_name = accent_name,
         code_name = code_name,
+        custom_fonts_html = custom_fonts_html,
         swatches_html = swatches_html,
         tasks_section = if ws.tasks.is_empty() {
             String::new()
@@ -1672,50 +1927,7 @@ fn resolve_single_typography_slot(
     fonts_snapshot: &[crate::server::state::FontRecord],
 ) {
     let Some(item) = slot.as_mut() else { return };
-    let mut found = item
-        .font_id
-        .and_then(|fid| fonts_snapshot.iter().find(|f| f.id == fid));
-    if found.is_none() {
-        if let Some(ref p) = item.path {
-            found = fonts_snapshot
-                .iter()
-                .find(|f| f.path.eq_ignore_ascii_case(p));
-        }
-    }
-    if found.is_none() {
-        let query = item
-            .family
-            .as_deref()
-            .or(item.name.as_deref())
-            .unwrap_or("")
-            .trim()
-            .to_ascii_lowercase();
-        if !query.is_empty() {
-            found = fonts_snapshot
-                .iter()
-                .find(|f| {
-                    f.family
-                        .as_deref()
-                        .map(|fam| fam.eq_ignore_ascii_case(&query))
-                        .unwrap_or(false)
-                        || f.display_name
-                            .as_deref()
-                            .map(|d| d.eq_ignore_ascii_case(&query))
-                            .unwrap_or(false)
-                        || f.name.eq_ignore_ascii_case(&query)
-                })
-                .or_else(|| {
-                    fonts_snapshot.iter().find(|f| {
-                        f.family
-                            .as_deref()
-                            .map(|fam| fam.to_ascii_lowercase().contains(&query))
-                            .unwrap_or(false)
-                            || f.name.to_ascii_lowercase().contains(&query)
-                    })
-                });
-        }
-    }
-    if let Some(font) = found {
+    if let Some(font) = find_matching_font_in_snapshot(item, fonts_snapshot) {
         item.font_id = Some(font.id);
         item.family = font.family.clone().or_else(|| Some(font.name.clone()));
         item.name = font
@@ -1727,10 +1939,48 @@ fn resolve_single_typography_slot(
     }
 }
 
+fn resolve_workspace_fonts_against_snapshot(
+    ws: &mut Workspace,
+    fonts_snapshot: &[crate::server::state::FontRecord],
+) {
+    resolve_single_typography_slot(&mut ws.typography.heading_font, fonts_snapshot);
+    resolve_single_typography_slot(&mut ws.typography.body_font, fonts_snapshot);
+    resolve_single_typography_slot(&mut ws.typography.accent_font, fonts_snapshot);
+    resolve_single_typography_slot(&mut ws.typography.code_font, fonts_snapshot);
+    for pf in &mut ws.project_fonts {
+        let mut slot = Some(pf.clone());
+        resolve_single_typography_slot(&mut slot, fonts_snapshot);
+        if let Some(resolved) = slot {
+            *pf = resolved;
+        }
+    }
+    for cf in &mut ws.custom_fonts {
+        let mut slot = Some(TypographyFont {
+            name: cf.name.clone(),
+            font_id: cf.font_id,
+            path: cf.path.clone(),
+            family: cf.family.clone(),
+            style: cf.style.clone(),
+        });
+        resolve_single_typography_slot(&mut slot, fonts_snapshot);
+        if let Some(resolved) = slot {
+            cf.font_id = resolved.font_id;
+            cf.family = resolved.family;
+            cf.name = resolved.name;
+            cf.style = resolved.style;
+            cf.path = resolved.path;
+        }
+    }
+}
+
 /// Validates a relative subfolder path inside a workspace (`Designs/Campaigns/Social`),
 /// preventing traversal, drive prefixes, nulls, and excessive depth.
 pub fn validate_relative_subfolder(raw: &str) -> Result<String, String> {
-    let normalized = raw.trim().replace('\\', "/");
+    let trimmed_raw = raw.trim();
+    if trimmed_raw.starts_with("//") || trimmed_raw.starts_with("\\\\") {
+        return Err("Security violation: UNC network paths are forbidden".to_string());
+    }
+    let normalized = trimmed_raw.replace('\\', "/");
     let clean = normalized.trim_matches('/');
     if clean.is_empty() {
         return Ok(String::new());
@@ -1752,17 +2002,142 @@ pub fn validate_relative_subfolder(raw: &str) -> Result<String, String> {
         if *seg == "." || *seg == ".." || seg.len() > 80 {
             return Err("Invalid subfolder name".to_string());
         }
-        if !seg
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.'))
-        {
+        let stem_upper = seg
+            .split('.')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_uppercase();
+        if matches!(
+            stem_upper.as_str(),
+            "CON"
+                | "PRN"
+                | "AUX"
+                | "NUL"
+                | "COM1"
+                | "COM2"
+                | "COM3"
+                | "COM4"
+                | "COM5"
+                | "COM6"
+                | "COM7"
+                | "COM8"
+                | "COM9"
+                | "LPT1"
+                | "LPT2"
+                | "LPT3"
+                | "LPT4"
+                | "LPT5"
+                | "LPT6"
+                | "LPT7"
+                | "LPT8"
+                | "LPT9"
+        ) {
+            return Err("Security violation: reserved OS device name in workspace path".to_string());
+        }
+        if !seg.chars().all(|c| {
+            c.is_alphanumeric()
+                || matches!(
+                    c,
+                    ' ' | '-' | '_' | '.' | '&' | '(' | ')' | '+' | ',' | '@' | '#' | '!' | '\'' | '[' | ']' | '~' | '='
+                )
+        }) {
             return Err(
-                "Subfolder names may only contain letters, numbers, spaces, '-', '_', and '.'"
+                "Subfolder and asset path segments contain disallowed characters"
                     .to_string(),
             );
         }
     }
     Ok(segments.join("/"))
+}
+
+fn persist_workspace_payload(
+    req: Request,
+    state: &Arc<RwLock<AppState>>,
+    body: &str,
+    default_id_override: Option<&str>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let mut ws = match serde_json::from_str::<Workspace>(body) {
+        Ok(w) => w,
+        Err(_) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": "Invalid workspace JSON payload" }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    if ws.id.trim().is_empty() {
+        ws.id = match default_id_override {
+            Some(id) => id.to_string(),
+            None => format!("ws-{}", current_timestamp()),
+        };
+    } else {
+        match validate_workspace_id(&ws.id) {
+            Ok(valid) => ws.id = valid.to_string(),
+            Err(err) => {
+                respond_json(
+                    req,
+                    400,
+                    serde_json::json!({ "success": false, "error": err }),
+                    cors_origin,
+                    json_header,
+                );
+                return;
+            }
+        }
+    }
+
+    if ws.updated_at == 0 {
+        ws.updated_at = current_timestamp();
+    }
+    ws.success = Some(true);
+
+    let (data_dir, fonts_snapshot) = {
+        let st = state.read().unwrap();
+        (st.data_dir.clone(), st.fonts.clone())
+    };
+
+    resolve_workspace_fonts_against_snapshot(&mut ws, &fonts_snapshot);
+
+    // Ensure valid physical path and nested custom folders exist on disk
+    if let Ok(phys) = ensure_workspace_physical_dir(&ws.id, ws.folder_path.as_deref()) {
+        ws.folder_path = Some(phys.to_string_lossy().to_string());
+        for rel in &ws.folders {
+            if let Ok(safe_rel) = validate_relative_subfolder(rel) {
+                if !safe_rel.is_empty() {
+                    let _ = fs::create_dir_all(phys.join(safe_rel));
+                }
+            }
+        }
+    }
+
+    let dir = get_workspaces_dir(&data_dir);
+    if let Err(e) = save_workspace_to_disk(&dir, &ws) {
+        respond_json(
+            req,
+            500,
+            serde_json::json!({ "success": false, "error": e }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+    let _ = sync_workspace_physical_files(&ws, &fonts_snapshot, ws.folder_path.as_deref());
+
+    respond_json_str(
+        req,
+        200,
+        serde_json::to_string(&ws).unwrap_or_default(),
+        cors_origin,
+        json_header,
+    );
 }
 
 /// POST /api/workspaces: save or update a workspace
@@ -1773,88 +2148,7 @@ pub fn save_workspace(
     json_header: Header,
 ) {
     let body = read_body(&mut req);
-    if let Ok(mut ws) = serde_json::from_str::<Workspace>(&body) {
-        if ws.id.trim().is_empty() {
-            ws.id = format!("ws-{}", current_timestamp());
-        } else {
-            match validate_workspace_id(&ws.id) {
-                Ok(valid) => ws.id = valid.to_string(),
-                Err(err) => {
-                    respond_json(
-                        req,
-                        400,
-                        serde_json::json!({ "success": false, "error": err }),
-                        cors_origin,
-                        json_header,
-                    );
-                    return;
-                }
-            }
-        }
-        if ws.updated_at == 0 {
-            ws.updated_at = current_timestamp();
-        }
-        ws.success = Some(true);
-
-        let (data_dir, fonts_snapshot) = {
-            let st = state.read().unwrap();
-            (st.data_dir.clone(), st.fonts.clone())
-        };
-
-        resolve_single_typography_slot(&mut ws.typography.heading_font, &fonts_snapshot);
-        resolve_single_typography_slot(&mut ws.typography.body_font, &fonts_snapshot);
-        resolve_single_typography_slot(&mut ws.typography.accent_font, &fonts_snapshot);
-        resolve_single_typography_slot(&mut ws.typography.code_font, &fonts_snapshot);
-        for pf in &mut ws.project_fonts {
-            let mut slot = Some(pf.clone());
-            resolve_single_typography_slot(&mut slot, &fonts_snapshot);
-            if let Some(resolved) = slot {
-                *pf = resolved;
-            }
-        }
-
-        // Ensure valid physical path and nested custom folders exist on disk
-        if let Ok(phys) = ensure_workspace_physical_dir(&ws.id, ws.folder_path.as_deref()) {
-            ws.folder_path = Some(phys.to_string_lossy().to_string());
-            for rel in &ws.folders {
-                if let Ok(safe_rel) = validate_relative_subfolder(rel) {
-                    if !safe_rel.is_empty() {
-                        let _ = fs::create_dir_all(phys.join(safe_rel));
-                    }
-                }
-            }
-        }
-
-        let dir = get_workspaces_dir(&data_dir);
-        if let Err(e) = save_workspace_to_disk(&dir, &ws) {
-            respond_json(
-                req,
-                500,
-                serde_json::json!({ "success": false, "error": e }),
-                cors_origin,
-                json_header,
-            );
-            return;
-        }
-        let _ = sync_workspace_physical_files(&ws, &fonts_snapshot, ws.folder_path.as_deref());
-
-        respond_json_str(
-            req,
-            200,
-            serde_json::to_string(&ws).unwrap_or_default(),
-            cors_origin,
-            json_header,
-        );
-        return;
-    }
-
-    respond_json(
-        req,
-        400,
-        serde_json::json!({ "success": false, "error": "Invalid workspace JSON payload" }),
-        cors_origin,
-        json_header,
-    );
+    persist_workspace_payload(req, state, &body, None, cors_origin, json_header);
 }
 
 /// POST /api/workspaces/:id: save or update a workspace using URL identifier
@@ -1880,84 +2174,11 @@ pub fn save_workspace_with_id(
     };
 
     let body = read_body(&mut req);
-    if let Ok(mut ws) = serde_json::from_str::<Workspace>(&body) {
-        if ws.id.trim().is_empty() {
-            ws.id = safe_url_id.to_string();
-        } else {
-            match validate_workspace_id(&ws.id) {
-                Ok(valid) => ws.id = valid.to_string(),
-                Err(err) => {
-                    respond_json(
-                        req,
-                        400,
-                        serde_json::json!({ "success": false, "error": err }),
-                        cors_origin,
-                        json_header,
-                    );
-                    return;
-                }
-            }
-        }
-        if ws.updated_at == 0 {
-            ws.updated_at = current_timestamp();
-        }
-        ws.success = Some(true);
-
-        let (data_dir, fonts_snapshot) = {
-            let st = state.read().unwrap();
-            (st.data_dir.clone(), st.fonts.clone())
-        };
-
-        resolve_single_typography_slot(&mut ws.typography.heading_font, &fonts_snapshot);
-        resolve_single_typography_slot(&mut ws.typography.body_font, &fonts_snapshot);
-        resolve_single_typography_slot(&mut ws.typography.accent_font, &fonts_snapshot);
-        resolve_single_typography_slot(&mut ws.typography.code_font, &fonts_snapshot);
-        for pf in &mut ws.project_fonts {
-            let mut slot = Some(pf.clone());
-            resolve_single_typography_slot(&mut slot, &fonts_snapshot);
-            if let Some(resolved) = slot {
-                *pf = resolved;
-            }
-        }
-
-        if let Ok(phys) = ensure_workspace_physical_dir(&ws.id, ws.folder_path.as_deref()) {
-            ws.folder_path = Some(phys.to_string_lossy().to_string());
-            for rel in &ws.folders {
-                if let Ok(safe_rel) = validate_relative_subfolder(rel) {
-                    if !safe_rel.is_empty() {
-                        let _ = fs::create_dir_all(phys.join(safe_rel));
-                    }
-                }
-            }
-        }
-
-        let dir = get_workspaces_dir(&data_dir);
-        if let Err(e) = save_workspace_to_disk(&dir, &ws) {
-            respond_json(
-                req,
-                500,
-                serde_json::json!({ "success": false, "error": e }),
-                cors_origin,
-                json_header,
-            );
-            return;
-        }
-        let _ = sync_workspace_physical_files(&ws, &fonts_snapshot, ws.folder_path.as_deref());
-
-        respond_json_str(
-            req,
-            200,
-            serde_json::to_string(&ws).unwrap_or_default(),
-            cors_origin,
-            json_header,
-        );
-        return;
-    }
-
-    respond_json(
+    persist_workspace_payload(
         req,
-        400,
-        serde_json::json!({ "success": false, "error": "Invalid workspace JSON payload" }),
+        state,
+        &body,
+        Some(safe_url_id),
         cors_origin,
         json_header,
     );
@@ -2071,63 +2292,44 @@ pub fn activate_workspace_ram(
     let mut activated_ids = Vec::new();
     let mut activated_names = Vec::new();
 
-    let mut all_slots: Vec<TypographyFont> = vec![
-        ws.typography.heading_font,
-        ws.typography.body_font,
-        ws.typography.accent_font,
-        ws.typography.code_font,
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    all_slots.extend(ws.project_fonts.clone());
+    let all_slots = collect_all_workspace_font_slots(&ws);
 
     for font_opt in all_slots {
-        let target_font = if let Some(fid) = font_opt.font_id {
-            st.fonts.iter().find(|f| f.id == fid).cloned()
-        } else if let Some(ref path_str) = font_opt.path {
-            st.fonts.iter().find(|f| f.path == *path_str).cloned()
-        } else if let Some(ref name_str) = font_opt.name {
-            let clean = name_str.to_lowercase();
-            st.fonts
-                .iter()
-                .find(|f| {
-                    f.name.to_lowercase().contains(&clean)
-                        || f.family
-                            .as_deref()
-                            .unwrap_or("")
-                            .to_lowercase()
-                            .contains(&clean)
-                        || f.post_script_name
-                            .as_deref()
-                            .unwrap_or("")
-                            .to_lowercase()
-                            .contains(&clean)
-                })
-                .cloned()
-        } else {
-            None
-        };
+        let target_font = find_matching_font_in_snapshot(&font_opt, &st.fonts).cloned();
 
         if let Some(font) = target_font {
             let usable = AppState::resolve_usable_font_path(&font.path);
             if usable.exists() {
                 let _ = st.activator.activate_ram(&usable.to_string_lossy());
                 st.active_font_ids.insert(font.id);
-                activated_ids.push(font.id);
-                activated_names.push(font.family.unwrap_or(font.name));
+                if !activated_ids.contains(&font.id) {
+                    activated_ids.push(font.id);
+                }
+                let display_nm = font.family.unwrap_or(font.name);
+                if !activated_names
+                    .iter()
+                    .any(|n: &String| n.eq_ignore_ascii_case(&display_nm))
+                {
+                    activated_names.push(display_nm);
+                }
             }
         } else if let Some(ref path_str) = font_opt.path {
             let usable = AppState::resolve_usable_font_path(path_str);
             if usable.exists() {
                 let _ = st.activator.activate_ram(&usable.to_string_lossy());
-                activated_names.push(font_opt.name.unwrap_or_else(|| {
+                let display_nm = font_opt.name.unwrap_or_else(|| {
                     usable
                         .file_stem()
                         .unwrap_or_default()
                         .to_string_lossy()
                         .to_string()
-                }));
+                });
+                if !activated_names
+                    .iter()
+                    .any(|n: &String| n.eq_ignore_ascii_case(&display_nm))
+                {
+                    activated_names.push(display_nm);
+                }
             }
         }
     }
@@ -2253,41 +2455,9 @@ pub fn export_workspace_bundle(
         return;
     }
 
-    // 1. Copy workspace typography fonts if present on disk
-    let typography_slots = [
-        &ws.typography.heading_font,
-        &ws.typography.body_font,
-        &ws.typography.accent_font,
-        &ws.typography.code_font,
-    ];
-
-    for f_item in typography_slots.into_iter().flatten() {
-        let mut resolved_path: Option<PathBuf> = None;
-        if let Some(fid) = f_item.font_id {
-            if let Some(font) = fonts_snapshot.iter().find(|f| f.id == fid) {
-                resolved_path = Some(PathBuf::from(&font.path));
-            }
-        } else if let Some(ref p) = f_item.path {
-            resolved_path = Some(PathBuf::from(p));
-        } else if let Some(ref name) = f_item.name {
-            let clean = name.to_lowercase();
-            if let Some(font) = fonts_snapshot
-                .iter()
-                .find(|f| f.name.to_lowercase().contains(&clean))
-            {
-                resolved_path = Some(PathBuf::from(&font.path));
-            }
-        }
-
-        if let Some(src) = resolved_path {
-            let usable = AppState::resolve_usable_font_path(&src.to_string_lossy());
-            if usable.is_file() {
-                if let Some(fname) = src.file_name().or_else(|| usable.file_name()) {
-                    let _ = fs::copy(&usable, fonts_dir.join(fname));
-                }
-            }
-        }
-    }
+    // 1. Copy workspace typography, project, and custom role fonts if present on disk
+    let all_slots = collect_all_workspace_font_slots(&ws);
+    copy_font_slots_to_dir(&all_slots, &fonts_snapshot, &fonts_dir);
 
     // 2. Generate tokens.json
     let tokens_path = project_dir.join("tokens.json");
@@ -2296,6 +2466,7 @@ pub fn export_workspace_bundle(
         "name": ws.name,
         "client": ws.client,
         "business": ws.business,
+        "deadline": ws.deadline,
         "description": ws.description,
         "exportedAt": current_timestamp(),
         "typography": {
@@ -2303,9 +2474,11 @@ pub fn export_workspace_bundle(
             "body": ws.typography.body_font,
             "accent": ws.typography.accent_font,
             "code": ws.typography.code_font,
+            "customFonts": ws.custom_fonts,
         },
         "palette": ws.palette,
         "tasks": ws.tasks,
+        "pinnedAssets": ws.pinned_assets,
         "notes": ws.notes,
     });
     let _ = fs::write(
@@ -2315,65 +2488,7 @@ pub fn export_workspace_bundle(
 
     // 3. Generate palette.css (sanitized against CSS injection)
     let palette_css_path = project_dir.join("palette.css");
-    let mut css = String::from("/* Generated by Fontivo Brand & Workspace Engine */\n:root {\n");
-    if let Some(h) = ws
-        .typography
-        .heading_font
-        .as_ref()
-        .and_then(|f| f.name.as_ref())
-    {
-        css.push_str(&format!(
-            "  --font-heading: '{}', sans-serif;\n",
-            sanitize_css_font_name(h)
-        ));
-    }
-    if let Some(b) = ws
-        .typography
-        .body_font
-        .as_ref()
-        .and_then(|f| f.name.as_ref())
-    {
-        css.push_str(&format!(
-            "  --font-body: '{}', sans-serif;\n",
-            sanitize_css_font_name(b)
-        ));
-    }
-    if let Some(a) = ws
-        .typography
-        .accent_font
-        .as_ref()
-        .and_then(|f| f.name.as_ref())
-    {
-        css.push_str(&format!(
-            "  --font-accent: '{}', serif;\n",
-            sanitize_css_font_name(a)
-        ));
-    }
-    if let Some(c) = ws
-        .typography
-        .code_font
-        .as_ref()
-        .and_then(|f| f.name.as_ref())
-    {
-        css.push_str(&format!(
-            "  --font-code: '{}', monospace;\n",
-            sanitize_css_font_name(c)
-        ));
-    }
-    for c in &ws.palette {
-        let clean_role: String = c
-            .name
-            .to_lowercase()
-            .chars()
-            .map(|ch| if ch.is_alphanumeric() { ch } else { '-' })
-            .collect();
-        css.push_str(&format!(
-            "  --color-{}: {};\n",
-            clean_role,
-            sanitize_hex_color(&c.hex)
-        ));
-    }
-    css.push_str("}\n");
+    let css = build_workspace_palette_css(&ws);
     let _ = fs::write(&palette_css_path, css);
 
     // 4. Generate Adobe Swatch Exchange (.ase) binary
@@ -3584,14 +3699,12 @@ pub fn delete_workspace_design_file(
         let st = state.read().unwrap();
         st.data_dir.clone()
     };
-    let ws_dir = get_workspaces_dir(&data_dir);
-    let custom_root = load_workspace_from_disk(&ws_dir, safe_id).and_then(|w| w.folder_path);
-    let root = match ensure_workspace_physical_dir(safe_id, custom_root.as_deref()) {
-        Ok(d) => d,
-        Err(e) => {
+    let (_, root) = match resolve_existing_workspace_root(&data_dir, safe_id) {
+        Ok(r) => r,
+        Err((status, e)) => {
             respond_json(
                 req,
-                404,
+                status,
                 serde_json::json!({ "success": false, "error": e }),
                 cors_origin,
                 json_header,
@@ -3674,10 +3787,8 @@ pub fn serve_workspace_asset(
         let st = state.read().unwrap();
         st.data_dir.clone()
     };
-    let ws_dir = get_workspaces_dir(&data_dir);
-    let custom_root = load_workspace_from_disk(&ws_dir, safe_id).and_then(|w| w.folder_path);
-    let root = match ensure_workspace_physical_dir(safe_id, custom_root.as_deref()) {
-        Ok(d) => d,
+    let (_, root) = match resolve_existing_workspace_root(&data_dir, safe_id) {
+        Ok(r) => r,
         Err(_) => {
             let mut res = tiny_http::Response::from_string("Workspace not found")
                 .with_status_code(tiny_http::StatusCode(404));
@@ -3729,4 +3840,333 @@ pub fn serve_workspace_asset(
         super::common::add_security_headers(&mut res);
         let _ = req.respond(res);
     }
+}
+
+/// Validates and resolves a relative file path inside a workspace root directory.
+pub fn resolve_workspace_file_path<'a>(
+    data_dir: &Path,
+    id: &'a str,
+    rel_raw: &str,
+) -> Result<(&'a str, String, PathBuf), (u16, String)> {
+    let safe_id = validate_workspace_id(id).map_err(|e| (400, e))?;
+    let clean_rel = validate_relative_subfolder(rel_raw).map_err(|e| (400, e))?;
+    if clean_rel.is_empty() {
+        return Err((400, "File path cannot be empty".to_string()));
+    }
+
+    let (_, root) = resolve_existing_workspace_root(data_dir, safe_id)?;
+
+    let mut target = root.clone();
+    for seg in clean_rel.split('/') {
+        target = target.join(seg);
+    }
+
+    if !target.exists() {
+        return Err((404, "Workspace file not found".to_string()));
+    }
+
+    let canon_root = root
+        .canonicalize()
+        .map_err(|e| (500, format!("Failed to resolve workspace root: {}", e)))?;
+    let canon_target = target
+        .canonicalize()
+        .map_err(|e| (404, format!("Failed to resolve workspace file: {}", e)))?;
+
+    if !canon_target.starts_with(&canon_root) {
+        return Err((
+            403,
+            "Security violation: file path escapes workspace root".to_string(),
+        ));
+    }
+    if !canon_target.is_file() {
+        return Err((400, "Target path is not a file".to_string()));
+    }
+
+    let clean_path = crate::server::state::strip_windows_verbatim_prefix(&canon_target);
+    Ok((safe_id, clean_rel, clean_path))
+}
+
+/// POST /api/workspaces/:id/open-file: validates workspace file path and launches OS default viewer
+pub fn open_workspace_file(
+    mut req: Request,
+    state: &Arc<RwLock<AppState>>,
+    id: &str,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let body = read_body(&mut req);
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct OpenFileReq {
+        #[serde(alias = "relativePath")]
+        path: String,
+    }
+
+    let parsed = match serde_json::from_str::<OpenFileReq>(&body) {
+        Ok(p) => p,
+        Err(e) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": format!("Invalid JSON payload: {}", e) }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let data_dir = {
+        let st = state.read().unwrap();
+        st.data_dir.clone()
+    };
+
+    let (safe_id, clean_rel, launch_path) =
+        match resolve_workspace_file_path(&data_dir, id, &parsed.path) {
+            Ok(resolved) => resolved,
+            Err((status, err)) => {
+                respond_json(
+                    req,
+                    status,
+                    serde_json::json!({ "success": false, "error": err }),
+                    cors_origin,
+                    json_header,
+                );
+                return;
+            }
+        };
+
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("explorer")
+            .arg(&launch_path)
+            .spawn();
+    }
+    #[cfg(not(windows))]
+    {
+        #[cfg(target_os = "macos")]
+        let opener = "open";
+        #[cfg(not(target_os = "macos"))]
+        let opener = "xdg-open";
+        let _ = std::process::Command::new(opener)
+            .arg(&launch_path)
+            .spawn();
+    }
+
+    respond_json(
+        req,
+        200,
+        serde_json::json!({
+            "success": true,
+            "id": safe_id,
+            "relativePath": clean_rel,
+            "filePath": launch_path.to_string_lossy().to_string()
+        }),
+        cors_origin,
+        json_header,
+    );
+}
+
+/// DELETE /api/workspaces/:id/folders?path=...: deletes a nested workspace subfolder (depth >= 2)
+/// while strictly protecting the 4 base folders (`Fonts`, `Designs`, `Palettes`, `Guidelines`).
+pub fn delete_workspace_folder(
+    req: Request,
+    state: &Arc<RwLock<AppState>>,
+    id: &str,
+    query_params: &std::collections::HashMap<String, String>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let safe_id = match validate_workspace_id(id) {
+        Ok(v) => v,
+        Err(err) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": err }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let rel_raw = query_params
+        .get("path")
+        .or_else(|| query_params.get("subfolder"))
+        .map(|s| s.as_str())
+        .unwrap_or("");
+    let clean_rel = match validate_relative_subfolder(rel_raw) {
+        Ok(r) if !r.is_empty() => r,
+        Ok(_) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": "Folder path cannot be empty" }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+        Err(err) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": err }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let segments: Vec<&str> = clean_rel.split('/').collect();
+    let is_allowed_base = segments
+        .first()
+        .map(|s| {
+            matches!(
+                s.to_ascii_lowercase().as_str(),
+                "fonts" | "designs" | "palettes" | "guidelines"
+            )
+        })
+        .unwrap_or(false);
+    if segments.len() < 2 || !is_allowed_base {
+        respond_json(
+            req,
+            400,
+            serde_json::json!({
+                "success": false,
+                "error": "Cannot delete protected base workspace folders (Fonts, Designs, Palettes, Guidelines); subfolder depth must be >= 2"
+            }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let data_dir = {
+        let st = state.read().unwrap();
+        st.data_dir.clone()
+    };
+    let ws_dir = get_workspaces_dir(&data_dir);
+    let (mut ws_opt, root) = match resolve_existing_workspace_root(&data_dir, safe_id) {
+        Ok(r) => r,
+        Err((status, e)) => {
+            respond_json(
+                req,
+                status,
+                serde_json::json!({ "success": false, "error": e }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let mut target = root.clone();
+    for seg in &segments {
+        target = target.join(seg);
+    }
+
+    if !target.exists() {
+        respond_json(
+            req,
+            404,
+            serde_json::json!({ "success": false, "error": "Workspace subfolder not found" }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let (canon_root, canon_target) = match (root.canonicalize(), target.canonicalize()) {
+        (Ok(cr), Ok(ct)) => (cr, ct),
+        _ => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": "Failed to resolve folder path" }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let is_protected_base = ["Fonts", "Designs", "Palettes", "Guidelines"]
+        .iter()
+        .any(|base| {
+            root.join(base)
+                .canonicalize()
+                .map(|cb| cb == canon_target)
+                .unwrap_or(false)
+        });
+
+    if !canon_target.starts_with(&canon_root)
+        || canon_target == canon_root
+        || is_protected_base
+        || !canon_target.is_dir()
+    {
+        respond_json(
+            req,
+            400,
+            serde_json::json!({
+                "success": false,
+                "error": "Security violation: cannot delete workspace root or protected base folders"
+            }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    if let Err(e) = fs::remove_dir_all(&canon_target) {
+        respond_json(
+            req,
+            500,
+            serde_json::json!({ "success": false, "error": format!("Failed to delete folder: {}", e) }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let clean_low = clean_rel.to_ascii_lowercase();
+    let child_prefix = format!("{}/", clean_low);
+    let updated_folders = if let Some(ref mut ws) = ws_opt {
+        ws.folders.retain(|f| {
+            let fn_norm = f
+                .trim()
+                .replace('\\', "/")
+                .trim_matches('/')
+                .to_ascii_lowercase();
+            fn_norm != clean_low && !fn_norm.starts_with(&child_prefix)
+        });
+        ws.pinned_assets.retain(|p| {
+            let pn_norm = p
+                .trim()
+                .replace('\\', "/")
+                .trim_matches('/')
+                .to_ascii_lowercase();
+            pn_norm != clean_low && !pn_norm.starts_with(&child_prefix)
+        });
+        ws.updated_at = current_timestamp();
+        let _ = save_workspace_to_disk(&ws_dir, ws);
+        ws.folders.clone()
+    } else {
+        Vec::new()
+    };
+
+    respond_json(
+        req,
+        200,
+        serde_json::json!({
+            "success": true,
+            "id": safe_id,
+            "removedPath": clean_rel,
+            "folders": updated_folders
+        }),
+        cors_origin,
+        json_header,
+    );
 }

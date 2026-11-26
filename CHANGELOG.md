@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.3] - 2026-11-26
+
+### Added & Improved
+- **Ergonomic Workspace Brand Builder (`WorkspacesView`)**: Upgraded Create & Edit Workspace modals with RTL-safe grid layout (`pe-9` & `!appearance-none` select styling), brand logo upload/preview, project target `deadline`, dynamic custom font roles (`customFonts` synced into `Fonts/` and activated in RAM via `activate_workspace_ram`), library font picker with `/api/fonts` fallback fetch, and an inline dynamic color palette builder in both Create and Edit modes.
+- **Redesigned Brand Palette, Tasks & Asset Studio**: Rebuilt Color Swatch Cards (`grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3 gap-3`) so swatch names, `dir="ltr"` hex codes, and WCAG badges never clip behind action buttons; added task `dueDate` countdowns, `priority`, and `category` with `font-sans` Arabic filter pills and `dir="auto"` text alignment; added 7 one-click brand folder templates, `pinnedAssets` bookmarking, Image Lightbox preview, `Guidelines/styleguide.html` viewer button, `POST /api/workspaces/:id/open-file`, and `DELETE /api/workspaces/:id/folders?path=...` (protecting root folders and traversal).
+- **Segmented `Local & Custom` Library & Safe Folder Deletion**: Added `source=local_all`, `bucket` (`custom`, `imported`, `cloud`, `google`), and `folderPath` filtering across `/api/fonts`, `/api/families`, `/api/fonts/custom-buckets`, and `/api/stats` (`localAllCount`/`customBuckets`), paired with segmented sub-category filter tabs, clickable grouped folder chips, and sandboxed `POST /api/fonts/delete-folder` cleanup with inline confirmation.
+- **Balanced `UpdaterModal` Status & Action Toolbar**: Restructured the App & Fonts status banners into two balanced sections with aligned header pills, `leading-normal` single-line metadata, high-contrast progress/toast styling, and `whitespace-nowrap` single-line `h-10 px-4` action buttons across English and Arabic RTL.
+
+---
+
 ## [1.1.2] - 2026-11-26
 
 ### Fixed & Improved

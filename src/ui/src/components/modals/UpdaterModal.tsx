@@ -94,33 +94,50 @@ function formatCheckTime(iso: string | null | undefined, isRtl: boolean): string
   });
 }
 
+export interface AppUpdateInfoState {
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  status: string;
+  downloadProgress: number;
+  installerPath?: string;
+  error?: string | null;
+  lastChecked: string | null;
+  releaseNotes: string;
+}
+
 export interface UpdaterModalProps {
   isOpen: boolean;
   onClose: () => void;
   t?: Record<string, string>;
   isRtl?: boolean;
+  initialTab?: "app" | "fonts";
+  initialAppUpdateInfo?: Partial<AppUpdateInfoState>;
 }
 
 export default function UpdaterModal({
   isOpen,
   onClose,
   isRtl = false,
+  initialTab = "app",
+  initialAppUpdateInfo,
 }: UpdaterModalProps) {
-  const [activeTab, setActiveTab] = useState<"app" | "fonts">("app");
+  const [activeTab, setActiveTab] = useState<"app" | "fonts">(initialTab);
 
   // App Update State (zero mock defaults)
   const [checkingApp, setCheckingApp] = useState(false);
   const [isApplyingAppUpdate, setIsApplyingAppUpdate] = useState(false);
-  const [appUpdateInfo, setAppUpdateInfo] = useState({
+  const [appUpdateInfo, setAppUpdateInfo] = useState<AppUpdateInfoState>({
     currentVersion: APP_VERSION,
     latestVersion: APP_VERSION,
     hasUpdate: false,
     status: "idle",
     downloadProgress: 0,
-    installerPath: undefined as string | undefined,
-    error: undefined as string | undefined | null,
-    lastChecked: null as string | null,
+    installerPath: undefined,
+    error: undefined,
+    lastChecked: null,
     releaseNotes: "",
+    ...initialAppUpdateInfo,
   });
   const [appStatusMessage, setAppStatusMessage] = useState<string | null>(null);
 
@@ -368,6 +385,12 @@ export default function UpdaterModal({
         .filter(Boolean)
     : [];
 
+  const isReadyToInstall = appUpdateInfo.status === "ready_to_install";
+  const clampedDownloadProgress = Math.max(
+    0,
+    Math.min(100, Number(appUpdateInfo.downloadProgress || 0)),
+  );
+
   const modalContent = (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-xs select-none animate-in fade-in duration-150"
@@ -375,28 +398,28 @@ export default function UpdaterModal({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-[calc(100vw-1.5rem)] sm:max-w-2xl max-h-[88dvh] bg-[var(--color-back-card)] rounded-2xl sm:rounded-3xl border border-[var(--color-border)] shadow-2xl overflow-hidden flex flex-col text-[var(--color-text-main)] animate-in zoom-in-95 duration-150"
+        className="relative w-full max-w-[calc(100vw-1.5rem)] sm:max-w-2xl max-h-[88dvh] bg-[var(--color-back-card)] rounded-2xl sm:rounded-3xl border border-[var(--color-border)] shadow-2xl overflow-hidden flex flex-col text-[var(--color-text-main)] animate-in zoom-in-95 duration-150 font-sans"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-[var(--color-border)] flex items-center justify-between gap-3 bg-[var(--color-back-header)] shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-3.5 min-w-0">
             <div className="w-10 h-10 rounded-2xl bg-[var(--color-action)]/15 border border-[var(--color-action)]/30 flex items-center justify-center text-[var(--color-action)] shadow-sm shrink-0">
               <ArrowUpCircle className="w-5 h-5" />
             </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm sm:text-base font-bold text-[var(--color-text-header)] tracking-tight truncate">
+            <div className="min-w-0 space-y-0.5">
+              <div className="flex flex-wrap items-center gap-2 leading-normal">
+                <h2 className="text-sm sm:text-base font-sans font-bold text-[var(--color-text-header)] tracking-tight leading-normal">
                   {isRtl ? "مركز التحديثات الشامل" : "Fontivo Updates Center"}
                 </h2>
                 <span
                   dir="ltr"
-                  className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--color-control)] border border-[var(--color-border)] text-[var(--color-text-muted)] font-bold shrink-0"
+                  className="inline-flex items-center text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-[var(--color-control)] border border-[var(--color-border)] text-[var(--color-text-muted)] font-bold shrink-0"
                 >
-                  v{appUpdateInfo.currentVersion}
+                  {`v${appUpdateInfo.currentVersion}`}
                 </span>
               </div>
-              <p className="text-[11px] sm:text-xs text-[var(--color-text-muted)] mt-0.5 truncate">
+              <p className="text-[11px] sm:text-xs font-sans text-[var(--color-text-muted)] leading-normal">
                 {isRtl
                   ? "إدارة وتحديث إصدار التطبيق ومكتبات الخطوط السحابية"
                   : "Manage updates for the application and cloud font catalogs"}
@@ -405,8 +428,9 @@ export default function UpdaterModal({
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:bg-[var(--color-control)] transition cursor-pointer shrink-0"
+            className="w-9 h-9 rounded-xl inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:bg-[var(--color-control)] transition cursor-pointer shrink-0"
             title={isRtl ? "إغلاق" : "Close"}
+            aria-label={isRtl ? "إغلاق" : "Close"}
           >
             <X className="w-5 h-5" />
           </button>
@@ -416,7 +440,7 @@ export default function UpdaterModal({
         <div className="px-4 sm:px-5 pt-2.5 border-b border-[var(--color-border)] bg-[var(--color-back-subtle)] flex items-center gap-2 overflow-x-auto shrink-0">
           <button
             onClick={() => setActiveTab("app")}
-            className={`px-3.5 py-2 text-xs font-bold transition border-b-2 cursor-pointer flex items-center gap-2 -mb-px whitespace-nowrap shrink-0 ${
+            className={`h-10 px-3.5 text-xs font-sans font-bold transition border-b-2 cursor-pointer inline-flex items-center gap-2 -mb-px whitespace-nowrap shrink-0 ${
               activeTab === "app"
                 ? "border-[var(--color-action)] text-[var(--color-action)]"
                 : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-header)]"
@@ -429,7 +453,7 @@ export default function UpdaterModal({
           </button>
           <button
             onClick={() => setActiveTab("fonts")}
-            className={`px-3.5 py-2 text-xs font-bold transition border-b-2 cursor-pointer flex items-center gap-2 -mb-px whitespace-nowrap shrink-0 ${
+            className={`h-10 px-3.5 text-xs font-sans font-bold transition border-b-2 cursor-pointer inline-flex items-center gap-2 -mb-px whitespace-nowrap shrink-0 ${
               activeTab === "fonts"
                 ? "border-[var(--color-action)] text-[var(--color-action)]"
                 : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-header)]"
@@ -447,11 +471,15 @@ export default function UpdaterModal({
           {activeTab === "app" ? (
             /* TAB 1: APPLICATION UPDATES */
             <div className="space-y-4">
-              {/* App Status Card */}
-              <div className="p-4 sm:p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] flex flex-col gap-4 shadow-xs">
-                <div className="flex items-start gap-3 min-w-0">
+              {/* App Status Card — 2 Clean Balanced Sections */}
+              <div
+                data-testid="updater-app-status-card"
+                className="p-4 sm:p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] flex flex-col gap-4 shadow-xs"
+              >
+                {/* Section 1: Header row (Icon Box + Title + Status Pill + 1-line Subtitle) */}
+                <div className="flex items-start sm:items-center gap-3.5 min-w-0">
                   <div
-                    className={`w-10 h-10 rounded-2xl border flex items-center justify-center shrink-0 ${
+                    className={`w-11 h-11 rounded-2xl border flex items-center justify-center shrink-0 ${
                       appUpdateInfo.error
                         ? "bg-amber-500/15 border-amber-500/30 text-amber-400"
                         : appUpdateInfo.hasUpdate
@@ -467,10 +495,10 @@ export default function UpdaterModal({
                       <CheckCircle2 className="w-5 h-5" />
                     )}
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <h4 className="text-sm font-bold text-[var(--color-text-header)] flex flex-wrap items-center gap-2">
-                      <span>
-                        {appUpdateInfo.status === "ready_to_install"
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2 leading-normal">
+                      <h4 className="text-sm sm:text-[15px] font-sans font-bold text-[var(--color-text-header)] leading-normal">
+                        {isReadyToInstall
                           ? isRtl
                             ? `تحديث جديد جاهز (v${appUpdateInfo.latestVersion})`
                             : `Update v${appUpdateInfo.latestVersion} Ready`
@@ -485,14 +513,15 @@ export default function UpdaterModal({
                               : isRtl
                                 ? "تطبيق Fontivo محدث بالكامل"
                                 : "Fontivo is Up to Date"}
-                      </span>
+                      </h4>
                       <span
-                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 ${
+                        data-testid="updater-status-pill"
+                        className={`inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-[11px] font-sans font-bold whitespace-nowrap shrink-0 border ${
                           appUpdateInfo.error
-                            ? "bg-amber-500/15 text-amber-400"
+                            ? "bg-amber-500/15 border-amber-500/30 text-amber-400"
                             : appUpdateInfo.hasUpdate
-                              ? "bg-[var(--color-action)]/15 text-[var(--color-action)]"
-                              : "bg-[var(--color-green)]/15 text-[var(--color-green)]"
+                              ? "bg-[var(--color-action)]/15 border-[var(--color-action)]/30 text-[var(--color-action)]"
+                              : "bg-[var(--color-green)]/15 border-[var(--color-green)]/30 text-[var(--color-green)]"
                         }`}
                       >
                         {appUpdateInfo.error
@@ -507,33 +536,47 @@ export default function UpdaterModal({
                               ? "مستقر"
                               : "Stable"}
                       </span>
-                    </h4>
-                    <p className="text-[11px] text-[var(--color-text-muted)] mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                      <span>
-                        {isRtl ? "الإصدار المثبت:" : "Installed:"}{" "}
-                        <strong dir="ltr" className="font-mono text-[var(--color-text-header)]">
-                          v{appUpdateInfo.currentVersion}
+                    </div>
+                    <p
+                      data-testid="updater-status-subtitle"
+                      className="text-xs font-sans text-[var(--color-text-muted)] leading-normal flex flex-wrap items-center gap-x-2.5 gap-y-1"
+                    >
+                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                        <span>{isRtl ? "الإصدار المثبت:" : "Installed:"}</span>
+                        <strong
+                          dir="ltr"
+                          className="font-mono font-bold text-[var(--color-text-header)]"
+                        >
+                          {`v${appUpdateInfo.currentVersion}`}
                         </strong>
                       </span>
-                      <span>•</span>
-                      <span>
-                        {isRtl ? "آخر فحص:" : "Last check:"}{" "}
-                        {formatCheckTime(appUpdateInfo.lastChecked, isRtl)}
+                      <span aria-hidden="true" className="opacity-50">
+                        •
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                        <span>{isRtl ? "آخر فحص:" : "Last check:"}</span>
+                        <span className="font-medium text-[var(--color-text-main)]">
+                          {formatCheckTime(appUpdateInfo.lastChecked, isRtl)}
+                        </span>
                       </span>
                     </p>
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5 pt-1 border-t border-[var(--color-border-subtle)]">
-                  {appUpdateInfo.status === "ready_to_install" && (
+                {/* Section 2: Action Toolbar Cleanly Separated */}
+                <div
+                  data-testid="updater-action-toolbar"
+                  className="pt-3.5 border-t border-[var(--color-border-subtle)] flex flex-wrap items-center gap-2.5"
+                >
+                  {isReadyToInstall && (
                     <button
                       onClick={handleApplyAppUpdate}
                       disabled={isApplyingAppUpdate}
-                      className="h-9 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap shrink-0 shadow-md shadow-emerald-600/20"
+                      className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-sans font-bold whitespace-nowrap shrink-0 transition cursor-pointer disabled:opacity-60 shadow-md shadow-emerald-600/20"
                       data-testid="modal-apply-btn"
                     >
                       <RefreshCw
-                        className={`w-3.5 h-3.5 shrink-0 ${isApplyingAppUpdate ? "animate-spin" : ""}`}
+                        className={`w-4 h-4 shrink-0 ${isApplyingAppUpdate ? "animate-spin" : ""}`}
                       />
                       <span>
                         {isApplyingAppUpdate
@@ -549,10 +592,15 @@ export default function UpdaterModal({
                   <button
                     onClick={handleCheckAppUpdate}
                     disabled={checkingApp}
-                    className="h-9 px-4 rounded-xl bg-[var(--color-action)] hover:opacity-90 text-white text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0 shadow-md shadow-[var(--color-action)]/20"
+                    data-testid="modal-check-btn"
+                    className={`inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl text-xs font-sans font-bold whitespace-nowrap shrink-0 transition cursor-pointer disabled:opacity-50 ${
+                      isReadyToInstall
+                        ? "bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-header)] border border-[var(--color-border)]"
+                        : "bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white shadow-md shadow-[var(--color-action)]/20"
+                    }`}
                   >
                     <RefreshCw
-                      className={`w-3.5 h-3.5 shrink-0 ${checkingApp ? "animate-spin" : ""}`}
+                      className={`w-4 h-4 shrink-0 ${checkingApp ? "animate-spin" : ""}`}
                     />
                     <span>
                       {checkingApp
@@ -568,19 +616,21 @@ export default function UpdaterModal({
               </div>
 
               {appUpdateInfo.status === "downloading" && (
-                <div className="p-3.5 rounded-xl bg-sky-500/10 border border-sky-500/20 text-sky-400 text-xs space-y-1.5 animate-in fade-in">
-                  <div className="flex justify-between items-center text-[11px] font-bold">
+                <div className="p-4 rounded-2xl bg-sky-500/10 border border-sky-500/25 text-sky-400 text-xs space-y-2 animate-in fade-in">
+                  <div className="flex justify-between items-center gap-2 text-xs font-sans font-bold leading-normal">
                     <span>
                       {isRtl
                         ? "جاري تنزيل التحديث في الخلفية..."
                         : "Downloading update in background..."}
                     </span>
-                    <span>{appUpdateInfo.downloadProgress}%</span>
+                    <span dir="ltr" className="font-mono tabular-nums shrink-0">
+                      {clampedDownloadProgress}%
+                    </span>
                   </div>
-                  <div className="w-full h-1.5 rounded-full bg-sky-950 overflow-hidden">
+                  <div className="w-full h-2 rounded-full bg-sky-500/20 overflow-hidden fontivo-progress-track">
                     <div
-                      className="h-full bg-sky-400 transition-all duration-300"
-                      style={{ width: `${appUpdateInfo.downloadProgress}%` }}
+                      className="h-full bg-sky-400 rounded-full transition-all duration-300 fontivo-progress-fill"
+                      style={{ width: `${clampedDownloadProgress}%` }}
                     />
                   </div>
                 </div>
@@ -588,25 +638,27 @@ export default function UpdaterModal({
 
               {appStatusMessage && (
                 <div
-                  className={`p-3.5 rounded-xl border text-xs flex items-center gap-2 animate-in fade-in ${
+                  className={`p-3.5 rounded-2xl border text-xs font-sans flex items-start gap-2.5 leading-relaxed animate-in fade-in ${
                     appUpdateInfo.error
-                      ? "bg-amber-500/10 border-amber-500/20 text-amber-300"
-                      : "bg-[var(--color-green)]/10 border-[var(--color-green)]/20 text-[var(--color-green)]"
+                      ? "bg-amber-500/12 border-amber-500/30 text-amber-400"
+                      : "bg-[var(--color-green)]/12 border-[var(--color-green)]/30 text-[var(--color-green)]"
                   }`}
                 >
                   {appUpdateInfo.error ? (
-                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                   ) : (
-                    <PackageCheck className="w-4 h-4 shrink-0" />
+                    <PackageCheck className="w-4 h-4 shrink-0 mt-0.5" />
                   )}
-                  <span className="min-w-0 break-words">{appStatusMessage}</span>
+                  <span className="min-w-0 flex-1 break-words">
+                    {appStatusMessage}
+                  </span>
                 </div>
               )}
 
               {/* Release Notes */}
               <div className="space-y-2">
-                <h4 className="text-xs font-bold text-[var(--color-text-header)] flex items-center gap-1.5">
-                  <Info className="w-3.5 h-3.5 text-[var(--color-action)] shrink-0" />
+                <h4 className="text-xs font-sans font-bold text-[var(--color-text-header)] flex items-center gap-2 leading-normal">
+                  <Info className="w-4 h-4 text-[var(--color-action)] shrink-0" />
                   <span>
                     {isRtl
                       ? "ملاحظات الإصدار الحالي (Changelog):"
@@ -615,7 +667,7 @@ export default function UpdaterModal({
                 </h4>
                 <div
                   dir="auto"
-                  className="p-4 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] text-[11px] sm:text-xs text-[var(--color-text-muted)] leading-relaxed space-y-2 break-words"
+                  className="p-4 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] text-xs font-sans text-[var(--color-text-muted)] leading-relaxed space-y-2 break-words"
                 >
                   {parsedNoteLines.length > 0 ? (
                     parsedNoteLines.map((line, idx) => {
@@ -623,7 +675,7 @@ export default function UpdaterModal({
                         return (
                           <div
                             key={idx}
-                            className="font-bold text-[var(--color-text-header)] pt-1.5 first:pt-0 text-xs"
+                            className="font-bold text-[var(--color-text-header)] pt-1.5 first:pt-0 text-xs leading-normal"
                           >
                             {renderInlineMarkdown(line.replace(/^#{1,4}\s+/, ""))}
                           </div>
@@ -635,20 +687,20 @@ export default function UpdaterModal({
                             <span className="text-[var(--color-action)] font-bold shrink-0">
                               •
                             </span>
-                            <span className="min-w-0 flex-1 break-words">
+                            <span className="min-w-0 flex-1 break-words leading-relaxed">
                               {renderInlineMarkdown(line.replace(/^[-*•]\s+/, ""))}
                             </span>
                           </div>
                         );
                       }
                       return (
-                        <p key={idx} className="break-words">
+                        <p key={idx} className="break-words leading-relaxed">
                           {renderInlineMarkdown(line)}
                         </p>
                       );
                     })
                   ) : (
-                    <p>
+                    <p className="leading-relaxed">
                       {isRtl
                         ? "اضغط على فحص التحديثات الآن لجلب أحدث ملاحظات الإصدار من GitHub."
                         : "Click Check for Updates to fetch the latest release notes."}
@@ -660,42 +712,59 @@ export default function UpdaterModal({
           ) : (
             /* TAB 2: FONTS CATALOG & CLOUD UPDATES */
             <div className="space-y-4">
-              {/* Fonts Catalog Card */}
-              <div className="p-4 sm:p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] flex flex-col gap-4 shadow-xs">
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-2xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-sky-400 shrink-0">
+              {/* Fonts Catalog Card — Matching 2-Section Layout */}
+              <div
+                data-testid="updater-fonts-status-card"
+                className="p-4 sm:p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] flex flex-col gap-4 shadow-xs"
+              >
+                <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+                  <div className="w-11 h-11 rounded-2xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-sky-400 shrink-0">
                     <Globe className="w-5 h-5" />
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <h4 className="text-sm font-bold text-[var(--color-text-header)] flex flex-wrap items-center gap-2">
-                      <span>
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2 leading-normal">
+                      <h4 className="text-sm sm:text-[15px] font-sans font-bold text-[var(--color-text-header)] leading-normal">
                         {isRtl
                           ? "كتالوج Google Fonts والحزم السحابية"
                           : "Cloud & Google Fonts Catalog"}
-                      </span>
-                      <span className="px-2 py-0.5 rounded-md bg-sky-500/15 text-sky-400 text-[10px] font-bold shrink-0">
+                      </h4>
+                      <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full bg-sky-500/15 border border-sky-500/30 text-sky-400 text-[11px] font-sans font-bold whitespace-nowrap shrink-0">
                         {fontsCatalogInfo.catalogStatus}
                       </span>
-                    </h4>
-                    <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
-                      {isRtl
-                        ? `إجمالي الخطوط: ${fontsCatalogInfo.totalGoogleFonts} خطاً (${fontsCatalogInfo.totalFamilies} عائلة)`
-                        : `Total Fonts: ${fontsCatalogInfo.totalGoogleFonts} fonts (${fontsCatalogInfo.totalFamilies} families)`}
-                      {fontsCatalogInfo.lastSynced
-                        ? ` • ${isRtl ? "آخر مزامنة:" : "Last sync:"} ${formatCheckTime(fontsCatalogInfo.lastSynced, isRtl)}`
-                        : ""}
+                    </div>
+                    <p className="text-xs font-sans text-[var(--color-text-muted)] leading-normal flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                        <span>
+                          {isRtl
+                            ? `إجمالي الخطوط: ${fontsCatalogInfo.totalGoogleFonts} خطاً (${fontsCatalogInfo.totalFamilies} عائلة)`
+                            : `Total Fonts: ${fontsCatalogInfo.totalGoogleFonts} fonts (${fontsCatalogInfo.totalFamilies} families)`}
+                        </span>
+                      </span>
+                      {fontsCatalogInfo.lastSynced && (
+                        <>
+                          <span aria-hidden="true" className="opacity-50">
+                            •
+                          </span>
+                          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                            <span>
+                              {isRtl ? "آخر مزامنة:" : "Last sync:"}{" "}
+                              {formatCheckTime(fontsCatalogInfo.lastSynced, isRtl)}
+                            </span>
+                          </span>
+                        </>
+                      )}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-[var(--color-border-subtle)]">
+                <div className="pt-3.5 border-t border-[var(--color-border-subtle)] flex flex-wrap items-center gap-2.5">
                   <button
                     onClick={handleSyncFontsCatalog}
                     disabled={syncingFonts}
-                    className="h-9 px-4 rounded-xl bg-[var(--color-action)] hover:opacity-90 text-white text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0 shadow-md shadow-[var(--color-action)]/20"
+                    className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-xs font-sans font-bold whitespace-nowrap shrink-0 transition cursor-pointer disabled:opacity-50 shadow-md shadow-[var(--color-action)]/20"
                   >
                     <RefreshCw
-                      className={`w-3.5 h-3.5 shrink-0 ${syncingFonts ? "animate-spin" : ""}`}
+                      className={`w-4 h-4 shrink-0 ${syncingFonts ? "animate-spin" : ""}`}
                     />
                     <span>
                       {syncingFonts
@@ -711,47 +780,53 @@ export default function UpdaterModal({
               </div>
 
               {fontsStatusMessage && (
-                <div className="p-3.5 rounded-xl bg-sky-500/10 border border-sky-500/20 text-sky-400 text-xs flex items-center gap-2 animate-in fade-in">
-                  <Check className="w-4 h-4 shrink-0" />
-                  <span className="min-w-0 break-words">{fontsStatusMessage}</span>
+                <div className="p-3.5 rounded-2xl bg-sky-500/12 border border-sky-500/30 text-sky-400 text-xs font-sans flex items-start gap-2.5 leading-relaxed animate-in fade-in">
+                  <Check className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span className="min-w-0 flex-1 break-words">
+                    {fontsStatusMessage}
+                  </span>
                 </div>
               )}
 
               {/* Fonts Breakdown Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="p-3.5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-1.5 shadow-2xs">
-                  <div className="flex items-center gap-2 text-sky-400 font-bold text-xs">
+                <div className="p-4 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-2 shadow-2xs">
+                  <div className="flex items-center gap-2 text-sky-400 font-sans font-bold text-xs">
                     <Globe className="w-4 h-4 shrink-0" />
                     <span>
                       {isRtl ? "مكتبة Google Fonts" : "Google Fonts Library"}
                     </span>
                   </div>
-                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                  <p className="text-[11px] font-sans text-[var(--color-text-muted)] leading-relaxed">
                     {isRtl
                       ? "كتالوج رسمي متكامل يضم كافة الخطوط العربية واللاتينية مع إمكانية التفعيل المباشر بالرام أو الحفظ بالقرص."
                       : "Official live catalog supporting all Arabic and Latin typography with 1-click RAM activation."}
                   </p>
-                  <span className="text-[10px] font-mono text-[var(--color-text-dim)] block pt-1">
-                    {fontsCatalogInfo.totalGoogleFonts}{" "}
-                    {isRtl ? "خطاً موثقاً" : "verified fonts"}
+                  <span className="text-[11px] font-sans text-[var(--color-text-dim)] inline-flex items-center gap-1 pt-0.5">
+                    <strong className="font-mono tabular-nums text-[var(--color-text-header)]">
+                      {fontsCatalogInfo.totalGoogleFonts}
+                    </strong>
+                    <span>{isRtl ? "خطاً موثقاً" : "verified fonts"}</span>
                   </span>
                 </div>
 
-                <div className="p-3.5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-1.5 shadow-2xs">
-                  <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+                <div className="p-4 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-2 shadow-2xs">
+                  <div className="flex items-center gap-2 text-emerald-400 font-sans font-bold text-xs">
                     <Layers className="w-4 h-4 shrink-0" />
                     <span>
                       {isRtl ? "حزم التوسعة (Cloud Packs)" : "Expansion Packs"}
                     </span>
                   </div>
-                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                  <p className="text-[11px] font-sans text-[var(--color-text-muted)] leading-relaxed">
                     {isRtl
                       ? "حزم متخصصة تشمل الخطوط الكوفية، الثلث، والنسخ، وخطوط واجهات المستخدم الحديثة."
                       : "Curated packages including Kufi, Thuluth, Naskh, and modern UI/UX typefaces."}
                   </p>
-                  <span className="text-[10px] font-mono text-[var(--color-text-dim)] block pt-1">
-                    {fontsCatalogInfo.cloudPacksCount}{" "}
-                    {isRtl ? "حزمة متكاملة" : "curated packs"}
+                  <span className="text-[11px] font-sans text-[var(--color-text-dim)] inline-flex items-center gap-1 pt-0.5">
+                    <strong className="font-mono tabular-nums text-[var(--color-text-header)]">
+                      {fontsCatalogInfo.cloudPacksCount}
+                    </strong>
+                    <span>{isRtl ? "حزمة متكاملة" : "curated packs"}</span>
                   </span>
                 </div>
               </div>
@@ -766,7 +841,7 @@ export default function UpdaterModal({
           </span>
           <button
             onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-header)] border border-[var(--color-border)] text-xs font-bold transition cursor-pointer shrink-0"
+            className="inline-flex items-center justify-center h-9 px-5 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-header)] border border-[var(--color-border)] text-xs font-sans font-bold whitespace-nowrap transition cursor-pointer shrink-0"
           >
             {isRtl ? "إغلاق" : "Close"}
           </button>
@@ -775,7 +850,7 @@ export default function UpdaterModal({
     </div>
   );
 
-  return typeof document !== "undefined"
+  return typeof document !== "undefined" && document.body?.nodeType === 1
     ? createPortal(modalContent, document.body)
     : modalContent;
 }

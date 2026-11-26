@@ -36,6 +36,9 @@ import {
   useFontLibrary,
   DEFAULT_VIEW_MODE,
   isFamilyViewMode,
+  CustomBucketType,
+  CustomFolderInfo,
+  normalizeFolderPath,
 } from "./hooks/useFontLibrary";
 import { useFontActivation } from "./hooks/useFontActivation";
 import {
@@ -77,11 +80,13 @@ import {
 export interface AppProps {
   initialTab?: string;
   initialShowSplash?: boolean;
+  initialFilter?: { type: string; value?: string | null };
 }
 
 export default function App({
   initialTab = "library",
   initialShowSplash = true,
+  initialFilter,
 }: AppProps) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [sidebarMode, setSidebarMode] = useState<"main" | "settings">("main");
@@ -262,6 +267,14 @@ export default function App({
     collections,
     filter,
     setFilter,
+    customBucket,
+    setCustomBucket,
+    customFolderPath,
+    setCustomFolderPath,
+    customFolders,
+    customBucketCounts,
+    fetchCustomBuckets,
+    handleDeleteFontFolder,
     scriptFilter,
     setScriptFilter,
     sourceFilter,
@@ -281,7 +294,7 @@ export default function App({
     handleCreateCollection,
     handleAddFontToCollection,
     handleDeleteCollection,
-  } = useFontLibrary({ activeTab, viewMode, inspectedFamily });
+  } = useFontLibrary({ activeTab, viewMode, inspectedFamily, isRtl, initialFilter });
 
   // Font Activation Hook
   const {
@@ -344,69 +357,60 @@ export default function App({
   }, []);
 
   const [contextBatchBusy, setContextBatchBusy] = useState(false);
+  const [confirmDeleteFolderPath, setConfirmDeleteFolderPath] = useState<
+    string | null
+  >(null);
+  const [deletingFolderPath, setDeletingFolderPath] = useState<string | null>(
+    null,
+  );
+  const [folderDeleteNotice, setFolderDeleteNotice] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
 
-  const customFolders = useMemo(() => {
-    const map = new Map<
-      string,
-      { path: string; name: string; total: number; active: number }
-    >();
-    for (const f of fonts || []) {
-      const src = String(f.source || "").toLowerCase();
-      const p = String(f.path || "");
-      if (
-        !p ||
-        src === "system" ||
-        src === "google" ||
-        p.startsWith("cloud://") ||
-        p.startsWith("http://") ||
-        p.startsWith("https://")
-      ) {
-        continue;
-      }
-      const normPath = p.replace(/\//g, "\\");
-      const lowPath = normPath.toLowerCase();
-      let dirPath = "";
-      let dirName = "";
+  useEffect(() => {
+    setConfirmDeleteFolderPath(null);
+    setFolderDeleteNotice(null);
+  }, [filter.type]);
 
-      const importedIdx = lowPath.indexOf("\\fonts\\imported\\");
-      const packsIdx = lowPath.indexOf("\\fonts\\packs\\");
-      const customIdx = lowPath.indexOf("\\fonts\\custom\\");
+  const visibleCustomFolders = useMemo(() => {
+    if (customBucket === "all") return customFolders;
+    return customFolders.filter((f) => f.bucket === customBucket);
+  }, [customFolders, customBucket]);
 
-      if (importedIdx >= 0) {
-        const after = normPath.slice(importedIdx + "\\fonts\\imported\\".length);
-        const seg = after.split("\\")[0] || "Imported";
-        dirPath = normPath.slice(0, importedIdx + "\\fonts\\imported\\".length) + seg;
-        dirName = seg;
-      } else if (packsIdx >= 0) {
-        const after = normPath.slice(packsIdx + "\\fonts\\packs\\".length);
-        const seg = after.split("\\")[0] || "Packs";
-        dirPath = normPath.slice(0, packsIdx + "\\fonts\\packs\\".length) + seg;
-        dirName = seg;
-      } else if (customIdx >= 0) {
-        const prefix = normPath.slice(0, customIdx + "\\fonts\\custom".length);
-        dirPath = prefix;
-        dirName = isRtl ? "الخطوط الخاصة (Custom)" : "Custom Fonts";
+  const onConfirmDeleteFolder = async (folder: CustomFolderInfo) => {
+    if (deletingFolderPath) return;
+    setDeletingFolderPath(folder.path);
+    setFolderDeleteNotice(null);
+    try {
+      const res = await handleDeleteFontFolder(folder.path);
+      if (res.success) {
+        setConfirmDeleteFolderPath(null);
+        setFolderDeleteNotice({
+          success: true,
+          message: isRtl
+            ? `تم حذف مجلد "${folder.displayLabel}" وإزالة ${res.removedCount.toLocaleString()} خطاً من المكتبة بنجاح.`
+            : `Deleted folder "${folder.displayLabel}" and removed ${res.removedCount.toLocaleString()} font(s) from the library.`,
+        });
       } else {
-        const lastSep = normPath.lastIndexOf("\\");
-        if (lastSep <= 0) continue;
-        dirPath = normPath.slice(0, lastSep);
-        dirName = dirPath.slice(dirPath.lastIndexOf("\\") + 1) || dirPath;
+        setFolderDeleteNotice({
+          success: false,
+          message:
+            res.error ||
+            (isRtl ? "تعذر حذف المجلد." : "Failed to delete folder."),
+        });
       }
-
-      const existing = map.get(dirPath) || {
-        path: dirPath,
-        name: dirName,
-        total: 0,
-        active: 0,
-      };
-      existing.total += 1;
-      if (f.isActive || f.active) {
-        existing.active += 1;
-      }
-      map.set(dirPath, existing);
+    } finally {
+      setDeletingFolderPath(null);
     }
-    return Array.from(map.values()).sort((a, b) => b.total - a.total);
-  }, [fonts, isRtl]);
+  };
+
+  const activeLibraryItemCount = isFamilyMode ? families.length : fonts.length;
+  const effectiveFonts = useMemo(
+    () =>
+      fonts.length > 0 ? fonts : families.flatMap((fam) => fam.fonts || []),
+    [fonts, families],
+  );
 
   const handleContextualBatch = async (
     action:
@@ -424,25 +428,36 @@ export default function App({
     try {
       if (action === "activate-folder" && folderPath) {
         await handleActivateFolder(folderPath);
+        await fetchCustomBuckets();
         await fetchData(true);
       } else if (action === "deactivate-folder" && folderPath) {
         await handleDeactivateFolder(folderPath);
+        await fetchCustomBuckets();
         await fetchData(true);
       } else if (action === "deactivate-all") {
         await handleDeactivateAll();
+        await fetchCustomBuckets();
         await fetchData(true);
       } else if (action === "activate-all-lib") {
         await fetch("/api/activate-all-library", { method: "POST" });
         await fetchStats();
+        await fetchCustomBuckets();
         await fetchData(true);
       } else if (action === "install-all-lib") {
         await fetch("/api/install-all-library", { method: "POST" });
         await fetchStats();
         await fetchData(true);
       } else if (action === "activate-ids" || action === "deactivate-ids") {
-        const eligibleIds = fonts
-          .filter((f) => String(f.source || "").toLowerCase() !== "system")
-          .map((f) => f.id);
+        const sourceItems = isFamilyMode
+          ? families.flatMap((fam) => fam.fonts || [])
+          : fonts;
+        const eligibleIds = Array.from(
+          new Set(
+            sourceItems
+              .filter((f) => String((f as any).source || "").toLowerCase() !== "system")
+              .map((f) => f.id),
+          ),
+        );
         if (eligibleIds.length > 0) {
           const ep =
             action === "activate-ids"
@@ -454,6 +469,7 @@ export default function App({
             body: JSON.stringify({ ids: eligibleIds }),
           });
           await fetchStats();
+          await fetchCustomBuckets();
           await fetchData(true);
         }
       }
@@ -1400,9 +1416,7 @@ export default function App({
                       >
                         <FolderOpen className="w-3 h-3 shrink-0" />
                         <span>
-                          {isRtl
-                            ? "خطوطي الخاصة والمحلية"
-                            : "My Custom & Local Fonts"}
+                          {isRtl ? "المحلية والخاصة" : "Local & Custom"}
                         </span>
                       </button>
 
@@ -1440,88 +1454,357 @@ export default function App({
                     {/* Contextual Smart Actions Strip per Active Filter */}
                     <div className="w-full flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[var(--color-border-subtle)]/70">
                       {filter.type === "custom" ? (
-                        <div className="flex flex-wrap items-center gap-2 w-full justify-between">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {customFolders.map((folder) => {
-                              const allActive = folder.active >= folder.total;
-                              return (
-                                <div
-                                  key={folder.path}
-                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--color-back-card)] border border-[var(--color-border)] text-[11px]"
-                                  title={folder.path}
+                        <div
+                          data-testid="local-segmented-panel"
+                          className="flex flex-col gap-2.5 w-full"
+                        >
+                          {/* Row 1: Sub-Category Filter Tabs + Quick Batch Actions */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 w-full">
+                            <div
+                              role="tablist"
+                              aria-label={
+                                isRtl
+                                  ? "تصنيف الخطوط المحلية والسحابية"
+                                  : "Local Font Categories"
+                              }
+                              className="flex flex-wrap items-center gap-1.5"
+                            >
+                              {(
+                                [
+                                  {
+                                    id: "all",
+                                    labelAr: "الكل (المحلية والسحابية)",
+                                    labelEn: "All Local & Offline",
+                                    count: customBucketCounts.all,
+                                    icon: Layers,
+                                  },
+                                  {
+                                    id: "custom",
+                                    labelAr: "مرفوعة يدوياً (Custom)",
+                                    labelEn: "Uploaded Custom",
+                                    count: customBucketCounts.custom,
+                                    icon: FilePlus2,
+                                  },
+                                  {
+                                    id: "imported",
+                                    labelAr: "مجلدات مستوردة (Imported)",
+                                    labelEn: "Imported Folders",
+                                    count: customBucketCounts.imported,
+                                    icon: FolderOpen,
+                                  },
+                                  {
+                                    id: "cloud",
+                                    labelAr: "حزم السحاب (Cloud Packs)",
+                                    labelEn: "Cloud Packs",
+                                    count: customBucketCounts.cloud,
+                                    icon: Package,
+                                  },
+                                  {
+                                    id: "google",
+                                    labelAr: "Google محفوظة (Google Offline)",
+                                    labelEn: "Google Offline",
+                                    count: customBucketCounts.google,
+                                    icon: Globe,
+                                  },
+                                ] as const
+                              ).map((tab) => {
+                                const TabIcon = tab.icon;
+                                const active = customBucket === tab.id;
+                                return (
+                                  <button
+                                    key={tab.id}
+                                    role="tab"
+                                    aria-selected={active}
+                                    data-testid={`local-bucket-tab-${tab.id}`}
+                                    onClick={() => {
+                                      setCustomBucket(
+                                        tab.id as CustomBucketType,
+                                      );
+                                      setConfirmDeleteFolderPath(null);
+                                    }}
+                                    className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[11px] font-sans font-semibold transition cursor-pointer whitespace-nowrap shrink-0 border ${
+                                      active
+                                        ? "bg-[var(--color-action)] text-[#130C16] border-[var(--color-action)] font-bold shadow-2xs"
+                                        : "bg-[var(--color-back-card)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:text-[var(--color-text-header)] hover:border-[var(--color-action)]/40"
+                                    }`}
+                                  >
+                                    <TabIcon className="w-3.5 h-3.5 shrink-0" />
+                                    <span>
+                                      {isRtl ? tab.labelAr : tab.labelEn}
+                                    </span>
+                                    <span
+                                      dir="ltr"
+                                      className={`text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded-md ${
+                                        active
+                                          ? "bg-black/15 text-[#130C16] font-bold"
+                                          : "bg-[var(--color-control)] text-[var(--color-text-dim)]"
+                                      }`}
+                                    >
+                                      {tab.count.toLocaleString()}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={handlePickFolder}
+                                className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-sans font-semibold text-[var(--color-text-header)] whitespace-nowrap cursor-pointer"
+                              >
+                                <FolderPlus className="w-3.5 h-3.5 text-[var(--color-action)] shrink-0" />
+                                <span>
+                                  {isRtl ? "استيراد مجلد" : "Import Folder"}
+                                </span>
+                              </button>
+                              <button
+                                onClick={() =>
+                                  handleContextualBatch("activate-ids")
+                                }
+                                disabled={
+                                  contextBatchBusy ||
+                                  activeLibraryItemCount === 0
+                                }
+                                className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-[#130C16] text-[11px] font-sans font-bold whitespace-nowrap cursor-pointer disabled:opacity-50"
+                              >
+                                <Zap className="w-3.5 h-3.5 shrink-0" />
+                                <span>
+                                  {isRtl
+                                    ? "تفعيل الكل بالرام"
+                                    : "Activate All RAM"}
+                                </span>
+                              </button>
+                              <button
+                                onClick={() =>
+                                  handleContextualBatch("deactivate-ids")
+                                }
+                                disabled={
+                                  contextBatchBusy ||
+                                  activeLibraryItemCount === 0
+                                }
+                                className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] text-[11px] font-sans font-semibold whitespace-nowrap cursor-pointer disabled:opacity-50"
+                              >
+                                {isRtl ? "إلغاء التفعيل" : "Deactivate All"}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Folder Deletion Result Notice */}
+                          {folderDeleteNotice && (
+                            <div
+                              data-testid="folder-delete-notice"
+                              className={`px-3 py-2 rounded-xl border text-[11px] font-sans flex items-center justify-between gap-2 ${
+                                folderDeleteNotice.success
+                                  ? "bg-emerald-500/12 border-emerald-500/30 text-emerald-400"
+                                  : "bg-rose-500/12 border-rose-500/30 text-rose-400"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {folderDeleteNotice.success ? (
+                                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                                ) : (
+                                  <AlertCircle className="w-4 h-4 shrink-0" />
+                                )}
+                                <span className="truncate font-semibold">
+                                  {folderDeleteNotice.message}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => setFolderDeleteNotice(null)}
+                                className="p-0.5 rounded hover:bg-black/10 cursor-pointer shrink-0"
+                                aria-label={isRtl ? "إغلاق" : "Dismiss"}
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Row 2: Clickable Grouped Folder Chips (Imported/<Name>, Packs/<Name>, Custom, Google) */}
+                          {visibleCustomFolders.length > 0 && (
+                            <div
+                              data-testid="local-folder-chips"
+                              className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-[var(--color-border-subtle)]/50"
+                            >
+                              {customFolderPath && (
+                                <button
+                                  onClick={() => setCustomFolderPath(null)}
+                                  className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-sans font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] cursor-pointer whitespace-nowrap"
                                 >
-                                  <FolderOpen className="w-3 h-3 text-[#B7A1D9] shrink-0" />
-                                  <span className="font-semibold text-[var(--color-text-header)] truncate max-w-[140px]">
-                                    {folder.name}
+                                  <X className="w-3 h-3 shrink-0" />
+                                  <span>
+                                    {isRtl ? "كل المجلدات" : "All Folders"}
                                   </span>
-                                  <span className="font-mono text-[10px] text-[var(--color-text-muted)]">
-                                    {folder.active}/{folder.total}
-                                  </span>
-                                  {!allActive ? (
-                                    <button
-                                      onClick={() =>
-                                        handleContextualBatch(
-                                          "activate-folder",
-                                          folder.path,
-                                        )
+                                </button>
+                              )}
+                              {visibleCustomFolders.map((folder) => {
+                                const allActive =
+                                  folder.total > 0 &&
+                                  folder.active >= folder.total;
+                                const isSelected =
+                                  Boolean(customFolderPath) &&
+                                  normalizeFolderPath(customFolderPath!) ===
+                                    normalizeFolderPath(folder.path);
+                                const isConfirmingDelete =
+                                  confirmDeleteFolderPath === folder.path;
+                                const isDeleting =
+                                  deletingFolderPath === folder.path;
+                                const FolderBadgeIcon =
+                                  folder.bucket === "cloud"
+                                    ? Package
+                                    : folder.bucket === "google"
+                                      ? Globe
+                                      : FolderOpen;
+
+                                return (
+                                  <div
+                                    key={folder.path}
+                                    data-testid="local-folder-chip"
+                                    onClick={() => {
+                                      if (isConfirmingDelete || isDeleting)
+                                        return;
+                                      setCustomFolderPath(
+                                        isSelected ? null : folder.path,
+                                      );
+                                    }}
+                                    role="button"
+                                    tabIndex={0}
+                                    onKeyDown={(e) => {
+                                      if (
+                                        (e.key === "Enter" || e.key === " ") &&
+                                        !isConfirmingDelete &&
+                                        !isDeleting
+                                      ) {
+                                        e.preventDefault();
+                                        setCustomFolderPath(
+                                          isSelected ? null : folder.path,
+                                        );
                                       }
-                                      disabled={contextBatchBusy}
-                                      className="px-2 py-0.5 rounded bg-[var(--color-action)]/15 hover:bg-[var(--color-action)] text-[var(--color-action)] hover:text-[#130C16] font-bold transition cursor-pointer text-[10px]"
+                                    }}
+                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] transition cursor-pointer select-none ${
+                                      isSelected
+                                        ? "bg-[var(--color-action)]/15 border-[var(--color-action)] text-[var(--color-text-header)] ring-1 ring-[var(--color-action)]/40 shadow-2xs"
+                                        : "bg-[var(--color-back-card)] border-[var(--color-border)] hover:border-[var(--color-action)]/50 text-[var(--color-text-main)]"
+                                    }`}
+                                    title={folder.path}
+                                  >
+                                    <FolderBadgeIcon
+                                      className={`w-3.5 h-3.5 shrink-0 ${
+                                        isSelected
+                                          ? "text-[var(--color-action)]"
+                                          : "text-[#B7A1D9]"
+                                      }`}
+                                    />
+                                    <span
+                                      dir="auto"
+                                      className="font-sans font-semibold text-[var(--color-text-header)] truncate max-w-[180px]"
                                     >
-                                      {isRtl ? "تفعيل بالرام" : "Activate"}
-                                    </button>
-                                  ) : (
-                                    <button
-                                      onClick={() =>
-                                        handleContextualBatch(
-                                          "deactivate-folder",
-                                          folder.path,
-                                        )
-                                      }
-                                      disabled={contextBatchBusy}
-                                      className="px-2 py-0.5 rounded bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] font-semibold transition cursor-pointer text-[10px]"
+                                      {folder.displayLabel}
+                                    </span>
+                                    <span
+                                      dir="ltr"
+                                      className="font-mono tabular-nums text-[10px] text-[var(--color-text-muted)] px-1 py-0.5 rounded bg-[var(--color-control)]"
                                     >
-                                      {isRtl ? "إلغاء" : "Deactivate"}
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              onClick={handlePickFolder}
-                              className="px-2.5 py-1 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-semibold text-[var(--color-text-header)] flex items-center gap-1 cursor-pointer"
-                            >
-                              <FolderPlus className="w-3 h-3 text-[var(--color-action)]" />
-                              <span>
-                                {isRtl ? "استيراد مجلد" : "Import Folder"}
-                              </span>
-                            </button>
-                            <button
-                              onClick={() =>
-                                handleContextualBatch("activate-ids")
-                              }
-                              disabled={contextBatchBusy || fonts.length === 0}
-                              className="px-2.5 py-1 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-[#130C16] text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                            >
-                              <Zap className="w-3 h-3" />
-                              <span>
-                                {isRtl
-                                  ? "تفعيل الكل بالرام"
-                                  : "Activate All RAM"}
-                              </span>
-                            </button>
-                            <button
-                              onClick={() =>
-                                handleContextualBatch("deactivate-ids")
-                              }
-                              disabled={contextBatchBusy || fonts.length === 0}
-                              className="px-2.5 py-1 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] text-[11px] font-semibold cursor-pointer disabled:opacity-50"
-                            >
-                              {isRtl ? "إلغاء التفعيل" : "Deactivate All"}
-                            </button>
-                          </div>
+                                      {folder.active}/{folder.total}
+                                    </span>
+
+                                    <div
+                                      className="inline-flex items-center gap-1 shrink-0"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {!allActive ? (
+                                        <button
+                                          onClick={() =>
+                                            handleContextualBatch(
+                                              "activate-folder",
+                                              folder.path,
+                                            )
+                                          }
+                                          disabled={
+                                            contextBatchBusy || isDeleting
+                                          }
+                                          className="px-2 py-0.5 rounded bg-[var(--color-action)]/15 hover:bg-[var(--color-action)] text-[var(--color-action)] hover:text-[#130C16] font-sans font-bold transition cursor-pointer text-[10px] whitespace-nowrap"
+                                        >
+                                          {isRtl ? "تفعيل بالرام" : "Activate"}
+                                        </button>
+                                      ) : (
+                                        <button
+                                          onClick={() =>
+                                            handleContextualBatch(
+                                              "deactivate-folder",
+                                              folder.path,
+                                            )
+                                          }
+                                          disabled={
+                                            contextBatchBusy || isDeleting
+                                          }
+                                          className="px-2 py-0.5 rounded bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] font-sans font-semibold transition cursor-pointer text-[10px] whitespace-nowrap"
+                                        >
+                                          {isRtl ? "إلغاء" : "Deactivate"}
+                                        </button>
+                                      )}
+
+                                      {isConfirmingDelete ? (
+                                        <div
+                                          data-testid="folder-delete-confirm-pill"
+                                          className="inline-flex items-center gap-1 ps-1 ms-0.5 border-s border-[var(--color-border-subtle)]"
+                                        >
+                                          <button
+                                            onClick={() =>
+                                              onConfirmDeleteFolder(folder)
+                                            }
+                                            disabled={isDeleting}
+                                            className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-sans font-bold text-[10px] cursor-pointer whitespace-nowrap disabled:opacity-50"
+                                          >
+                                            {isDeleting
+                                              ? isRtl
+                                                ? "جاري الحذف..."
+                                                : "Deleting..."
+                                              : isRtl
+                                                ? "تأكيد الحذف"
+                                                : "Confirm Delete"}
+                                          </button>
+                                          <button
+                                            onClick={() =>
+                                              setConfirmDeleteFolderPath(null)
+                                            }
+                                            disabled={isDeleting}
+                                            className="px-1.5 py-0.5 rounded bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] font-sans font-semibold text-[10px] cursor-pointer whitespace-nowrap"
+                                          >
+                                            {isRtl ? "إلغاء" : "Cancel"}
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          onClick={() =>
+                                            setConfirmDeleteFolderPath(
+                                              folder.path,
+                                            )
+                                          }
+                                          disabled={
+                                            contextBatchBusy || isDeleting
+                                          }
+                                          data-testid="folder-delete-trigger"
+                                          className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-rose-500/12 transition cursor-pointer shrink-0"
+                                          title={
+                                            isRtl
+                                              ? "حذف المجلد"
+                                              : "Delete Folder"
+                                          }
+                                          aria-label={
+                                            isRtl
+                                              ? "حذف المجلد"
+                                              : "Delete Folder"
+                                          }
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       ) : filter.type === "google" ||
                         filter.type === "favorites" ? (
@@ -1540,7 +1823,9 @@ export default function App({
                               onClick={() =>
                                 handleContextualBatch("activate-ids")
                               }
-                              disabled={contextBatchBusy || fonts.length === 0}
+                              disabled={
+                                contextBatchBusy || activeLibraryItemCount === 0
+                              }
                               className="px-2.5 py-1 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-[#130C16] text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
                             >
                               <Zap className="w-3 h-3" />
@@ -1554,7 +1839,9 @@ export default function App({
                               onClick={() =>
                                 handleContextualBatch("deactivate-ids")
                               }
-                              disabled={contextBatchBusy || fonts.length === 0}
+                              disabled={
+                                contextBatchBusy || activeLibraryItemCount === 0
+                              }
                               className="px-2.5 py-1 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] text-[11px] font-semibold cursor-pointer disabled:opacity-50"
                             >
                               {isRtl
@@ -1956,6 +2243,24 @@ export default function App({
                                 </button>
                               </>
                             )}
+                            {!searchQuery &&
+                              filter.type === "custom" &&
+                              (customBucket !== "all" || customFolderPath) && (
+                                <button
+                                  onClick={() => {
+                                    setCustomBucket("all");
+                                    setCustomFolderPath(null);
+                                  }}
+                                  className="px-4 py-2 rounded-xl bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-[#130C16] text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
+                                >
+                                  <Layers className="w-3.5 h-3.5" />
+                                  <span>
+                                    {isRtl
+                                      ? "عرض كافة الخطوط المحلية"
+                                      : "Show All Local Fonts"}
+                                  </span>
+                                </button>
+                              )}
                             {!searchQuery && (
                               <button
                                 onClick={() =>
@@ -2024,18 +2329,23 @@ export default function App({
               />
             ) : activeTab === "specimen" ? (
               <SpecimenView
-                font={fonts[0]}
-                fonts={fonts}
+                font={effectiveFonts[0]}
+                fonts={effectiveFonts}
                 previewText={previewText}
                 isRtl={isRtl}
                 t={t}
               />
             ) : activeTab === "glyphs" ? (
-              <GlyphsView font={fonts[0]} fonts={fonts} isRtl={isRtl} t={t} />
+              <GlyphsView
+                font={effectiveFonts[0]}
+                fonts={effectiveFonts}
+                isRtl={isRtl}
+                t={t}
+              />
             ) : activeTab === "ui-lab" ? (
               <UiTypographyLabView
-                fonts={fonts}
-                activeFont={fonts[0]}
+                fonts={effectiveFonts}
+                activeFont={effectiveFonts[0]}
                 t={t}
                 isRtl={isRtl}
               />
@@ -2049,7 +2359,7 @@ export default function App({
               <CloudPacksView onRefreshStats={fetchStats} t={t} isRtl={isRtl} />
             ) : activeTab === "workspaces" || activeTab === "brand-kits" ? (
               <WorkspacesView
-                fonts={fonts}
+                fonts={effectiveFonts}
                 onActivateFont={handleToggleActive}
                 onRefreshStats={fetchStats}
                 t={t}
@@ -2099,7 +2409,7 @@ export default function App({
               />
             ) : activeTab === "playground" ? (
               <PlaygroundView
-                fonts={fonts}
+                fonts={effectiveFonts}
                 families={families}
                 t={t}
                 isRtl={isRtl}
@@ -2185,7 +2495,7 @@ export default function App({
         onApplyPaletteToCanvas={handleApplyPaletteToCanvas}
         isUiLabOpen={isUiLabOpen}
         setIsUiLabOpen={setIsUiLabOpen}
-        fonts={fonts}
+        fonts={effectiveFonts}
         detailFont={detailFont}
         setDetailFont={setDetailFont}
         isCompareOpen={isCompareOpen}

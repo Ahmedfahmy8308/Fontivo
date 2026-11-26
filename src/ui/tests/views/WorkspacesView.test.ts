@@ -1,14 +1,26 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import React from "react";
 import { renderToString } from "react-dom/server";
 import "../setup";
-import WorkspacesView from "../../src/components/views/WorkspacesView";
+import WorkspacesView, {
+  BRAND_FOLDER_TEMPLATES,
+  buildSyncedProjectFonts,
+  getDeadlineMeta,
+  isProtectedRootFolder,
+  localizeSwatchRole,
+  localizeWorkspaceCategory,
+  normalizeHexColor,
+} from "../../src/components/views/WorkspacesView";
 import {
   exportToCssVariables,
   exportToTailwindConfig,
 } from "../../src/utils/aseParser";
 
 describe("WorkspacesView Component & Workspace Switching Tests", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   const initialWorkspaces = [
     {
       id: "ws-1",
@@ -113,6 +125,16 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
         id: "ws-backend",
         name: "Backend Synced Workspace",
         category: "Fintech / SaaS",
+        deadline: "2026-12-20",
+        customFonts: [
+          {
+            id: "cf-1",
+            label: "Social Media Headlines",
+            name: "Tajawal ExtraBold",
+            family: "Tajawal",
+            style: "ExtraBold",
+          },
+        ],
         typography: {
           headingFont: {
             name: "Cairo Bold",
@@ -138,8 +160,16 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
           previewHeading: "Custom Backend Specimen",
           previewBody: "Legibility test under font object data.",
         },
-        palette: [{ name: "Primary Cyan", hex: "#00F0FF" }],
-        tasks: [],
+        palette: [{ name: "Primary Cyan", hex: "#00F0FF", role: "primary" }],
+        tasks: [
+          {
+            id: "t-high",
+            text: "Prepare campaign exports.",
+            status: "todo",
+            priority: "high",
+            dueDate: "2026-12-10",
+          },
+        ],
       },
     ];
 
@@ -162,15 +192,18 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain("Cairo Bold");
     expect(html).toContain("Inter Regular");
     expect(html).toContain("JetBrains Mono");
+    expect(html).toContain("Social Media Headlines");
+    expect(html).toContain("Tajawal ExtraBold");
+    expect(html).toContain("2026-12-20");
+    expect(html).toContain("High");
     expect(html).not.toContain("[object Object]");
   });
 
-  it("localizes workspace categories and renders nested folder + design upload studio controls", async () => {
-    const mod = await import("../../src/components/views/WorkspacesView");
+  it("localizes workspace categories and renders nested folder + design upload studio controls", () => {
     expect(
-      mod.localizeWorkspaceCategory("Branding & Visual Identity", true),
+      localizeWorkspaceCategory("Branding & Visual Identity", true),
     ).toBe("الهوية البصرية والعلامات التجارية");
-    expect(mod.localizeWorkspaceCategory("Fintech / SaaS", false)).toBe(
+    expect(localizeWorkspaceCategory("Fintech / SaaS", false)).toBe(
       "Fintech / SaaS",
     );
 
@@ -189,5 +222,124 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain("تعديل الملاحظات");
     expect(html).toContain("max-w-7xl");
     expect(html).toContain('dir="ltr"');
+    expect(html).toContain('dir="auto"');
+  });
+
+  it("renders redesigned palette cards, preset brand folder templates, Open File / Pin controls, StyleGuide.html link, and non-mono Arabic filters", () => {
+    const html = renderToString(
+      React.createElement(WorkspacesView, {
+        fonts: [],
+        isRtl: true,
+      }),
+    );
+
+    // Responsive swatch grid classes
+    expect(html).toContain(
+      "grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3 gap-3",
+    );
+
+    // Preset Brand Folder Templates
+    for (const tpl of BRAND_FOLDER_TEMPLATES) {
+      expect(html).toContain(tpl.label.replace(/&/g, "&amp;"));
+    }
+
+    // Open File & StyleGuide.html button
+    expect(html).toContain("فتح الملف");
+    expect(html).toContain("فتح دليل الهوية (StyleGuide.html)");
+    expect(html).toContain(
+      "/api/workspaces/fontivo-studio-swiss/asset?path=Guidelines/styleguide.html",
+    );
+
+    // Arabic task filter pills must use font-sans (never font-mono)
+    expect(html).toContain("الكل");
+    expect(html).toContain("قيد الانتظار");
+    expect(html).toContain("جاري العمل");
+    expect(html).toContain("مكتمل");
+    expect(html).not.toMatch(/font-mono[^>]*>[^<]*(?:الكل|قيد الانتظار|جاري العمل|مكتمل)/);
+  });
+
+  it("renders Ergonomic Create/Edit Brand Builder modal with custom font roles, library picker, target deadline, and dynamic palette builder", () => {
+    const html = renderToString(
+      React.createElement(WorkspacesView, {
+        fonts: [
+          {
+            id: 11,
+            name: "Cairo-Bold.ttf",
+            family: "Cairo",
+            style: "Bold",
+            source: "local",
+          },
+          {
+            id: 12,
+            name: "Tajawal-Regular.ttf",
+            family: "Tajawal",
+            style: "Regular",
+            source: "google",
+          },
+        ],
+        isRtl: true,
+        initialModalOpen: true,
+      }),
+    );
+
+    expect(html).toContain("إضافة نوع/دور خط مخصص");
+    expect(html).toContain("إضافة لون / ليبل جديد");
+    expect(html).toContain('type="date"');
+    expect(html).toContain('type="color"');
+    expect(html).toContain("Cairo — Bold");
+    expect(html).toContain("Tajawal — Regular");
+    expect(html).toContain("Cairo-Bold.ttf (Bold)");
+    expect(html).toContain("pe-9");
+    expect(html).toContain('dir="auto"');
+    expect(html).toContain('appearance:none');
+    expect(html).toContain('flex-1 min-w-0 text-start text-xs break-words');
+    expect(html).toContain('dir="ltr" class="flex flex-wrap items-center gap-2 text-[11px] font-mono');
+  });
+
+  it("syncs heading, body, accent, and custom font roles cleanly into deduplicated projectFonts", () => {
+    const synced = buildSyncedProjectFonts(
+      [
+        { name: "Cairo Bold", fontId: 11, family: "Cairo", path: "Fonts/Cairo.ttf" },
+        { name: "Tajawal Regular", fontId: 12, family: "Tajawal", path: "Fonts/Tajawal.ttf" },
+        { name: "JetBrains Mono", fontId: 13, family: "JetBrains Mono", path: "Fonts/JB.ttf" },
+        { name: "Cairo Bold", fontId: 11, family: "Cairo", path: "Fonts/Cairo.ttf" }, // duplicate
+      ],
+      [{ name: "IBM Plex Sans Arabic", fontId: 14, family: "IBM Plex Sans Arabic" }],
+    );
+
+    expect(synced).toHaveLength(4);
+    expect(synced.map((f) => f.name)).toEqual([
+      "Cairo Bold",
+      "Tajawal Regular",
+      "JetBrains Mono",
+      "IBM Plex Sans Arabic",
+    ]);
+  });
+
+  it("computes deadline countdown metadata, swatch role labels, hex normalization, and root folder protection", () => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+    const todayStr = fmt(now);
+    const past = new Date(now);
+    past.setDate(past.getDate() - 2);
+    const future = new Date(now);
+    future.setDate(future.getDate() + 5);
+
+    expect(getDeadlineMeta(todayStr, false, false)?.tone).toBe("soon");
+    expect(getDeadlineMeta(todayStr, false, true)?.label).toBe("موعد التسليم اليوم");
+    expect(getDeadlineMeta(fmt(past), false, false)?.tone).toBe("overdue");
+    expect(getDeadlineMeta(fmt(future), false, false)?.tone).toBe("ok");
+    expect(getDeadlineMeta(fmt(past), true, false)?.tone).toBe("neutral");
+
+    expect(localizeSwatchRole("primary", true)).toBe("أساسي");
+    expect(localizeSwatchRole("Gold Foil", true)).toBe("Gold Foil");
+    expect(normalizeHexColor("f60")).toBe("#FF6600");
+    expect(normalizeHexColor("#b7a1d9")).toBe("#B7A1D9");
+
+    expect(isProtectedRootFolder("Designs")).toBe(true);
+    expect(isProtectedRootFolder("Designs/Instagram")).toBe(false);
   });
 });

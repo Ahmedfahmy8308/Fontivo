@@ -91,10 +91,19 @@ export default function Sidebar({
     (stats as any).favoritesCount ?? stats.favorites ?? 0,
   );
   const googleCount = Number((stats as any).googleCount ?? 0);
+  const downloadedGoogleCount = Number(
+    (stats as any).downloadedGoogleCount ??
+      (stats as any).googleOfflineCount ??
+      googleCount,
+  );
   const systemCount = Number((stats as any).systemCount ?? 0);
-  const localCount =
+  const customAndCloudCount =
     Number((stats as any).localCount ?? (stats as any).customCount ?? 0) +
     Number((stats as any).cloudCount ?? 0);
+  const localCount = Number(
+    (stats as any).localAllCount ??
+      customAndCloudCount + downloadedGoogleCount,
+  );
 
   const getCollectionName = (name: string) => {
     if (isRtl) {

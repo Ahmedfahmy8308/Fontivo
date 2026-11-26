@@ -47,7 +47,54 @@ pub fn filter_font_refs<'a>(st: &'a AppState, q: &HashMap<String, String>) -> Ve
         .or_else(|| q.get("downloadedOnly"))
         .map(|v| v == "true" || v == "1")
         .unwrap_or(false);
+    let custom_only = q
+        .get("customOnly")
+        .or_else(|| q.get("custom_only"))
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
     let source_filter = q.get("source").map(|s| s.trim().to_ascii_lowercase());
+    let bucket_filter = q.get("bucket").map(|s| s.trim().to_ascii_lowercase());
+    let folder_path_filter = q
+        .get("folderPath")
+        .or_else(|| q.get("folder_path"))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let normalized_folder_prefixes: Option<Vec<String>> = folder_path_filter.as_ref().map(|raw| {
+        let mut prefixes = Vec::new();
+        let norm_raw = crate::server::state::normalize_font_path_key(raw)
+            .trim_end_matches('\\')
+            .to_string();
+        if !norm_raw.is_empty() {
+            prefixes.push(norm_raw.clone());
+        }
+        if !Path::new(raw).is_absolute() {
+            let trimmed_rel = raw
+                .replace('/', "\\")
+                .trim_start_matches('\\')
+                .to_string();
+            let rel_under_fonts = if trimmed_rel.to_ascii_lowercase().starts_with("fonts\\") {
+                trimmed_rel[6..].to_string()
+            } else {
+                trimmed_rel
+            };
+            if !rel_under_fonts.is_empty() {
+                for base_dir in [
+                    st.data_dir.join("Fonts"),
+                    LibraryStorageManager::get_storage_dir(),
+                ] {
+                    let candidate = base_dir.join(&rel_under_fonts);
+                    let cand_norm =
+                        crate::server::state::normalize_font_path_key(&candidate.to_string_lossy())
+                            .trim_end_matches('\\')
+                            .to_string();
+                    if !cand_norm.is_empty() && !prefixes.contains(&cand_norm) {
+                        prefixes.push(cand_norm);
+                    }
+                }
+            }
+        }
+        prefixes
+    });
     let script_filter = q
         .get("scriptFilter")
         .or_else(|| q.get("script_filter"))
@@ -79,14 +126,40 @@ pub fn filter_font_refs<'a>(st: &'a AppState, q: &HashMap<String, String>) -> Ve
 
             if let Some(ref src) = source_filter {
                 if !src.is_empty() && src != "all" {
-                    let matched = if !f.source.is_empty() {
-                        f.source.eq_ignore_ascii_case(src)
+                    let matched = if src == "local_all" || src == "local-all" || src == "non_system" {
+                        crate::server::state::is_offline_non_system_font(f)
                     } else {
-                        crate::server::state::classify_font_source(
-                            &f.path,
-                            f.sub_category.as_deref(),
-                        ) == *src
+                        crate::server::state::resolve_font_source(f) == *src
                     };
+                    if !matched {
+                        return false;
+                    }
+                } else if custom_only && !crate::server::state::is_offline_non_system_font(f) {
+                    return false;
+                }
+            } else if custom_only && !crate::server::state::is_offline_non_system_font(f) {
+                return false;
+            }
+
+            if let Some(ref bucket) = bucket_filter {
+                if !bucket.is_empty() && bucket != "all" {
+                    let actual_bucket = crate::server::state::classify_font_bucket(f);
+                    let target_bucket = match bucket.as_str() {
+                        "packs" | "pack" => "cloud",
+                        other => other,
+                    };
+                    if actual_bucket != target_bucket {
+                        return false;
+                    }
+                }
+            }
+
+            if let Some(ref prefixes) = normalized_folder_prefixes {
+                if !prefixes.is_empty() {
+                    let font_norm = crate::server::state::normalize_font_path_key(&f.path);
+                    let matched = prefixes.iter().any(|pref| {
+                        font_norm == *pref || font_norm.starts_with(&format!("{}\\", pref))
+                    });
                     if !matched {
                         return false;
                     }
@@ -407,6 +480,8 @@ pub fn handle_stats(
         *formats_breakdown.entry(fmt).or_insert(0) += 1;
     }
 
+    let custom_buckets_summary = compute_custom_buckets(&st);
+
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct StatsRes {
@@ -428,12 +503,14 @@ pub fn handle_stats(
         collections_count: usize,
         system_count: usize,
         local_count: usize,
+        local_all_count: usize,
         google_count: usize,
         cloud_count: usize,
         packs_count: usize,
         storage_used_bytes: u64,
         missing_files_count: usize,
         formats_breakdown: HashMap<String, usize>,
+        custom_buckets: BucketCounts,
     }
 
     let res_obj = StatsRes {
@@ -455,18 +532,209 @@ pub fn handle_stats(
         collections_count: st.collections.len(),
         system_count,
         local_count,
+        local_all_count: custom_buckets_summary.total,
         google_count,
         cloud_count,
         packs_count,
         storage_used_bytes,
         missing_files_count,
         formats_breakdown,
+        custom_buckets: custom_buckets_summary.counts,
     };
 
     respond_json_str(
         req,
         200,
         serde_json::to_string(&res_obj).unwrap_or_default(),
+        cors_origin,
+        json_header,
+    );
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BucketCounts {
+    pub all: usize,
+    pub custom: usize,
+    pub imported: usize,
+    pub cloud: usize,
+    pub google: usize,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomFolderBucketInfo {
+    pub bucket: String,
+    pub name: String,
+    pub relative_path: String,
+    pub folder_path: String,
+    pub path: String,
+    pub total: usize,
+    pub count: usize,
+    pub active: usize,
+    pub active_count: usize,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomBucketsResponse {
+    pub success: bool,
+    pub total: usize,
+    pub counts: BucketCounts,
+    pub buckets: BucketCounts,
+    pub folders: Vec<CustomFolderBucketInfo>,
+}
+
+/// Computes bucket counts and folder breakdown across all offline non-system library fonts (`source=local_all`).
+pub fn compute_custom_buckets(st: &AppState) -> CustomBucketsResponse {
+    let mut counts = BucketCounts::default();
+    let mut folder_map: HashMap<String, CustomFolderBucketInfo> = HashMap::new();
+
+    for f in &st.fonts {
+        let bucket = crate::server::state::classify_font_bucket(f);
+        if bucket == "system" || bucket == "remote" {
+            continue;
+        }
+        counts.all += 1;
+        match bucket {
+            "custom" => counts.custom += 1,
+            "imported" => counts.imported += 1,
+            "cloud" => counts.cloud += 1,
+            "google" => counts.google += 1,
+            _ => counts.custom += 1,
+        }
+
+        let clean_path_buf = crate::server::state::strip_windows_verbatim_prefix(Path::new(&f.path));
+        let norm_p = clean_path_buf
+            .to_string_lossy()
+            .replace(['/', '\\'], std::path::MAIN_SEPARATOR_STR);
+        let low_p = norm_p.replace('/', "\\").to_ascii_lowercase();
+
+        let (folder_path, rel_path, dir_name) =
+            if let Some(idx) = low_p.find("\\fonts\\imported\\") {
+                let prefix_len = idx + "\\fonts\\imported\\".len();
+                let after = &norm_p[prefix_len..];
+                let seg = after
+                    .split(['\\', '/'])
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("Imported");
+                (
+                    format!("{}{}", &norm_p[..prefix_len], seg),
+                    format!("Imported/{}", seg),
+                    seg.to_string(),
+                )
+            } else if let Some(idx) = low_p.find("\\fonts\\packs\\") {
+                let prefix_len = idx + "\\fonts\\packs\\".len();
+                let after = &norm_p[prefix_len..];
+                let seg = after
+                    .split(['\\', '/'])
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("Packs");
+                (
+                    format!("{}{}", &norm_p[..prefix_len], seg),
+                    format!("Packs/{}", seg),
+                    seg.to_string(),
+                )
+            } else if let Some(idx) = low_p.find("\\extracted\\") {
+                let prefix_len = idx + "\\extracted\\".len();
+                let after = &norm_p[prefix_len..];
+                let seg = after
+                    .split(['\\', '/'])
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("Packs");
+                (
+                    format!("{}{}", &norm_p[..prefix_len], seg),
+                    format!("Packs/{}", seg),
+                    seg.to_string(),
+                )
+            } else if let Some(idx) = low_p.find("\\fonts\\custom\\") {
+                let prefix_len = idx + "\\fonts\\custom".len();
+                (
+                    norm_p[..prefix_len].to_string(),
+                    "Custom".to_string(),
+                    "Custom".to_string(),
+                )
+            } else if low_p.ends_with("\\fonts\\custom") {
+                (norm_p.clone(), "Custom".to_string(), "Custom".to_string())
+            } else if let Some(idx) = low_p.find("\\fonts\\google\\") {
+                let prefix_len = idx + "\\fonts\\google".len();
+                (
+                    norm_p[..prefix_len].to_string(),
+                    "Google".to_string(),
+                    "Google".to_string(),
+                )
+            } else if low_p.ends_with("\\fonts\\google") {
+                (norm_p.clone(), "Google".to_string(), "Google".to_string())
+            } else if let Some(parent) = clean_path_buf.parent() {
+                let p_str = parent.to_string_lossy().to_string();
+                let seg = parent
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(bucket)
+                    .to_string();
+                (p_str, seg.clone(), seg)
+            } else {
+                continue;
+            };
+
+        let key = crate::server::state::normalize_font_path_key(&folder_path)
+            .trim_end_matches('\\')
+            .to_string();
+        let is_act = f.is_active && st.active_font_ids.contains(&f.id);
+        let entry = folder_map
+            .entry(key)
+            .or_insert_with(|| CustomFolderBucketInfo {
+                bucket: bucket.to_string(),
+                name: dir_name,
+                relative_path: rel_path,
+                folder_path: folder_path.clone(),
+                path: folder_path,
+                total: 0,
+                count: 0,
+                active: 0,
+                active_count: 0,
+            });
+        entry.total += 1;
+        entry.count += 1;
+        if is_act {
+            entry.active += 1;
+            entry.active_count += 1;
+        }
+    }
+
+    let mut folders: Vec<CustomFolderBucketInfo> = folder_map.into_values().collect();
+    folders.sort_by(|a, b| {
+        b.total
+            .cmp(&a.total)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+
+    CustomBucketsResponse {
+        success: true,
+        total: counts.all,
+        counts: counts.clone(),
+        buckets: counts,
+        folders,
+    }
+}
+
+/// GET /api/fonts/custom-buckets: returns exact non-system local bucket counts and managed folder chips.
+pub fn handle_custom_buckets(
+    req: Request,
+    state: &Arc<RwLock<AppState>>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let st = state.read().unwrap();
+    let summary = compute_custom_buckets(&st);
+    respond_json_str(
+        req,
+        200,
+        serde_json::to_string(&summary).unwrap_or_default(),
         cors_origin,
         json_header,
     );
