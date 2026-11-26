@@ -323,6 +323,14 @@ fn test_styleguide_html_escapes_all_xss_payloads_and_sanitizes_hex() {
         name: r#"Brand <script>alert("name")</script>"#.into(),
         client: Some(r#"Client <img src=x onerror=alert(1)>"#.into()),
         business: Some(r#"<b>Biz</b>"#.into()),
+        category: None,
+        campaign_name: None,
+        brand_tagline: None,
+        target_audience: None,
+        logo_data_url: None,
+        logo_path: None,
+        folder_path: None,
+        folders: Vec::new(),
         description: Some(r#"<svg onload=alert(2)>"#.into()),
         updated_at: 1700000000,
         typography: WorkspaceTypography {
@@ -855,6 +863,220 @@ fn test_http_api_security_headers_collections_and_endpoints() {
         st.fonts.len()
     };
     assert_eq!(total_after, total_before - 1);
+
+    let _ = fs::remove_dir_all(&temp_data);
+}
+
+#[test]
+fn test_delete_library_family_removes_all_variants_and_empty_dirs() {
+    let temp_data =
+        std::env::temp_dir().join(format!("fontivo_del_fam_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_data);
+    let custom_fam_dir = temp_data.join("Fonts").join("Custom").join("TestFamily");
+    fs::create_dir_all(&custom_fam_dir).unwrap();
+
+    let f1 = custom_fam_dir.join("TestFamily-Regular.ttf");
+    let f2 = custom_fam_dir.join("TestFamily-Bold.ttf");
+    fs::write(&f1, b"DUMMY_FONT_1").unwrap();
+    fs::write(&f2, b"DUMMY_FONT_2").unwrap();
+
+    let mut state = AppState::new();
+    state.data_dir = temp_data.clone();
+    state.fonts.push(Fontivo::server::state::FontRecord {
+        id: 90001,
+        name: "TestFamily-Regular.ttf".into(),
+        path: f1.to_string_lossy().into_owned(),
+        category: "02 - English Fonts".into(),
+        sub_category: Some("Custom Fonts".into()),
+        family: Some("TestFamily".into()),
+        format: "TTF".into(),
+        size: 12,
+        is_arabic: false,
+        is_latin: true,
+        is_bilingual: false,
+        is_variable: false,
+        weight: 400,
+        source: "local".into(),
+        is_active: false,
+        is_favorite: false,
+        display_name: Some("TestFamily Regular".into()),
+        style: Some("Regular".into()),
+        post_script_name: Some("TestFamily-Regular".into()),
+        glyph_count: Some(10),
+        has_tashkeel: false,
+        has_extended_arabic: false,
+        has_arabic_numerals: false,
+        has_western_numerals: true,
+        is_local: true,
+    });
+    state.fonts.push(Fontivo::server::state::FontRecord {
+        id: 90002,
+        name: "TestFamily-Bold.ttf".into(),
+        path: f2.to_string_lossy().into_owned(),
+        category: "02 - English Fonts".into(),
+        sub_category: Some("Custom Fonts".into()),
+        family: Some("TestFamily".into()),
+        format: "TTF".into(),
+        size: 12,
+        is_arabic: false,
+        is_latin: true,
+        is_bilingual: false,
+        is_variable: false,
+        weight: 700,
+        source: "local".into(),
+        is_active: false,
+        is_favorite: false,
+        display_name: Some("TestFamily Bold".into()),
+        style: Some("Bold".into()),
+        post_script_name: Some("TestFamily-Bold".into()),
+        glyph_count: Some(10),
+        has_tashkeel: false,
+        has_extended_arabic: false,
+        has_arabic_numerals: false,
+        has_western_numerals: true,
+        is_local: true,
+    });
+
+    let deleted = state
+        .delete_library_family("TestFamily")
+        .expect("Should delete entire TestFamily");
+    assert_eq!(deleted.len(), 2);
+    assert!(!f1.exists());
+    assert!(!f2.exists());
+    assert!(
+        !custom_fam_dir.exists(),
+        "Empty parent family folder should be pruned on family deletion"
+    );
+
+    let _ = fs::remove_dir_all(&temp_data);
+}
+
+#[test]
+fn test_duplicate_detection_sha256_path_and_metadata() {
+    let temp_data = std::env::temp_dir().join(format!("fontivo_dup_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_data);
+    let fonts_dir = temp_data.join("Fonts").join("Custom");
+    fs::create_dir_all(&fonts_dir).unwrap();
+
+    let payload = b"FONT_CONTENT_UNIQUE_BYTES_12345";
+    let existing_file = fonts_dir.join("BrandSans-Regular.ttf");
+    fs::write(&existing_file, payload).unwrap();
+
+    let mut state = AppState::new();
+    state.data_dir = temp_data.clone();
+    state.fonts.push(Fontivo::server::state::FontRecord {
+        id: 91001,
+        name: "BrandSans-Regular.ttf".into(),
+        path: existing_file.to_string_lossy().into_owned(),
+        category: "02 - English Fonts".into(),
+        sub_category: Some("Custom Fonts".into()),
+        family: Some("BrandSans".into()),
+        format: "TTF".into(),
+        size: payload.len(),
+        is_arabic: false,
+        is_latin: true,
+        is_bilingual: false,
+        is_variable: false,
+        weight: 400,
+        source: "local".into(),
+        is_active: false,
+        is_favorite: false,
+        display_name: Some("BrandSans Regular".into()),
+        style: Some("Regular".into()),
+        post_script_name: Some("BrandSans-Regular".into()),
+        glyph_count: Some(50),
+        has_tashkeel: false,
+        has_extended_arabic: false,
+        has_arabic_numerals: false,
+        has_western_numerals: true,
+        is_local: true,
+    });
+
+    // 1. Same bytes under different filename should match by SHA-256
+    let dup_hash = state.find_duplicate_font(
+        None,
+        Some(payload),
+        "RenamedCopy.ttf",
+        Some("OtherName"),
+        Some("Regular"),
+        None,
+        payload.len(),
+    );
+    assert!(dup_hash.is_some());
+    assert_eq!(dup_hash.unwrap().match_reason, "sha256");
+
+    // 2. Same path should match by path
+    let dup_path = state.find_duplicate_font(
+        Some(&existing_file),
+        None,
+        "BrandSans-Regular.ttf",
+        None,
+        None,
+        None,
+        payload.len(),
+    );
+    assert!(dup_path.is_some());
+    assert_eq!(dup_path.unwrap().match_reason, "path");
+
+    // 3. Different bytes + different metadata must NOT false-positive
+    let other_bytes = b"COMPLETELY_DIFFERENT_FONT_999";
+    let no_dup = state.find_duplicate_font(
+        None,
+        Some(other_bytes),
+        "UniqueFont-Bold.ttf",
+        Some("UniqueFont"),
+        Some("Bold"),
+        Some("UniqueFont-Bold"),
+        other_bytes.len(),
+    );
+    assert!(no_dup.is_none());
+
+    let _ = fs::remove_dir_all(&temp_data);
+}
+
+#[test]
+fn test_workspace_nested_folders_validation_and_migration() {
+    use Fontivo::server::routes::workspaces::validate_relative_subfolder;
+
+    assert_eq!(
+        validate_relative_subfolder("Designs\\Campaigns\\Ramadan-2026").unwrap(),
+        "Designs/Campaigns/Ramadan-2026"
+    );
+    assert!(validate_relative_subfolder("../Windows/System32").is_err());
+    assert!(validate_relative_subfolder("C:\\secret").is_err());
+
+    let temp_data =
+        std::env::temp_dir().join(format!("fontivo_migrate_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_data);
+    fs::create_dir_all(temp_data.join("CustomFonts")).unwrap();
+    fs::create_dir_all(temp_data.join("Library").join("GoogleFonts")).unwrap();
+    fs::create_dir_all(temp_data.join("Library").join("Downloads")).unwrap();
+    fs::write(temp_data.join("CustomFonts").join("MyCustom.ttf"), b"ABC").unwrap();
+    fs::write(
+        temp_data
+            .join("Library")
+            .join("GoogleFonts")
+            .join("Cairo.ttf"),
+        b"DEF",
+    )
+    .unwrap();
+
+    let mut state = AppState::new();
+    state.data_dir = temp_data.clone();
+    state.migrate_legacy_storage();
+
+    assert!(temp_data
+        .join("Fonts")
+        .join("Custom")
+        .join("MyCustom.ttf")
+        .is_file());
+    assert!(temp_data
+        .join("Fonts")
+        .join("Google")
+        .join("Cairo.ttf")
+        .is_file());
+    assert!(!temp_data.join("CustomFonts").exists());
+    assert!(!temp_data.join("Library").exists());
 
     let _ = fs::remove_dir_all(&temp_data);
 }

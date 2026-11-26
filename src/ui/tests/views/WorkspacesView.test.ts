@@ -164,4 +164,27 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain("JetBrains Mono");
     expect(html).not.toContain("[object Object]");
   });
+
+  it("localizes workspace categories and renders nested folder + design upload studio controls", async () => {
+    const mod = await import("../../src/components/views/WorkspacesView");
+    expect(
+      mod.localizeWorkspaceCategory("Branding & Visual Identity", true),
+    ).toBe("الهوية البصرية والعلامات التجارية");
+    expect(mod.localizeWorkspaceCategory("Fintech / SaaS", false)).toBe(
+      "Fintech / SaaS",
+    );
+
+    const html = renderToString(
+      React.createElement(WorkspacesView, {
+        fonts: [],
+        onActivateFont: () => {},
+        onRefreshStats: () => {},
+        t: {},
+        isRtl: true,
+      }),
+    );
+    expect(html).toContain("رفع تصميم");
+    expect(html).toContain("مجلد داخلي");
+    expect(html).toContain("تعديل المشروع");
+  });
 });

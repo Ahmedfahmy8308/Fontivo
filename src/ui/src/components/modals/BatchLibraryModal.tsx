@@ -110,11 +110,22 @@ export default function BatchLibraryModal({
       const data = await res.json();
       if (data && data.path) {
         setCustomFolderPath(data.path);
+        const dupCount = Number(data.skippedDuplicatesCount || 0);
+        const firstDupPath = data.duplicates?.[0]?.existingPath
+          ? ` (${data.duplicates[0].fileName} -> ${data.duplicates[0].existingPath})`
+          : "";
         setStatusMessage({
-          type: "success",
+          type:
+            dupCount > 0 && (data.importedCount || 0) === 0
+              ? "info"
+              : "success",
           text: isRtl
-            ? `تم تصفح واستيراد ${data.importedCount || 0} خطاً بنجاح من مجلد: ${data.folderName}`
-            : `Successfully imported ${data.importedCount || 0} fonts from: ${data.folderName}`,
+            ? dupCount > 0
+              ? `تم استيراد ${data.importedCount || 0} خطاً من ${data.folderName} وتجاهل ${dupCount} مكرراً${firstDupPath}`
+              : `تم تصفح واستيراد ${data.importedCount || 0} خطاً بنجاح من مجلد: ${data.folderName}`
+            : dupCount > 0
+              ? `Imported ${data.importedCount || 0} fonts from ${data.folderName}; skipped ${dupCount} duplicates${firstDupPath}`
+              : `Successfully imported ${data.importedCount || 0} fonts from: ${data.folderName}`,
         });
         if (onRefresh) onRefresh();
       }
@@ -137,11 +148,22 @@ export default function BatchLibraryModal({
       });
       const data = await res.json();
       if (data.success) {
+        const dupCount = Number(data.skippedDuplicatesCount || 0);
+        const firstDupPath = data.duplicates?.[0]?.existingPath
+          ? ` (${data.duplicates[0].fileName} -> ${data.duplicates[0].existingPath})`
+          : "";
         setStatusMessage({
-          type: "success",
+          type:
+            dupCount > 0 && (data.importedCount || 0) === 0
+              ? "info"
+              : "success",
           text: isRtl
-            ? `تم استيراد ${data.importedCount || 0} خطاً جديداً بنجاح ومراقبة المجلد!`
-            : `Successfully imported ${data.importedCount || 0} new fonts and watching folder!`,
+            ? dupCount > 0
+              ? `تم استيراد ${data.importedCount || 0} خطاً وتجاهل ${dupCount} خطوط مكررة موجودة مسبقاً${firstDupPath}`
+              : `تم استيراد ${data.importedCount || 0} خطاً جديداً بنجاح!`
+            : dupCount > 0
+              ? `Imported ${data.importedCount || 0} fonts and skipped ${dupCount} duplicates${firstDupPath}`
+              : `Successfully imported ${data.importedCount || 0} new fonts and watching folder!`,
         });
         setCustomFolderPath("");
         if (onRefresh) onRefresh();

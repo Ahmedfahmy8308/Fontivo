@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.3] - 2026-11-26
+
+### Fixed & Improved
+- **Clean Installer Naming (`Fontivo-Setup.exe`) & Live Website Auto-Sync**: Standardized Windows setup installer filename to `Fontivo-Setup.exe` (keeping version in GitHub Release tags), updated `AutoUpdater` to query GitHub Releases latest API (`tag_name` + `assets[]`), and wired live client-side release sync into `Fontivo-Site`.
+- **Unified AppData Storage Architecture**: Consolidated split `AppData\Roaming\Fontivo` and `AppData\Local\Fontivo` directories into one clean `%LOCALAPPDATA%\Fontivo\` hierarchy (`Fonts/{Google,Packs,Custom}`, `Workspaces/`, `Backups/`, `WebView2/`) with idempotent migration, automatic cleanup of empty/duplicate folders, and removal of redundant `.zip` archives after extraction.
+- **Large Library Performance & Complete Family Deletion**: Switched library index to single-file compact JSON, eliminated full-vector `FontRecord` cloning in `/api/fonts` and `/api/families`, cached recursive disk usage checks, added batched/memoized `@font-face` card loading, and added `POST /api/fonts/delete-family` to cleanly delete entire font families and prune empty family folders.
+- **Smart Duplicate Font Detection**: Implemented SHA-256 content hash, normalized path, and identity metadata duplicate detection on single/multi font uploads (`POST /api/fonts/import-file`), folder import (`POST /api/import-folder`), and folder picker (`POST /api/dialog/pick-folder`) with detailed bilingual skip notifications.
+- **Project Workspaces Overhaul**: Expanded Workspaces canvas with collapsible sidebar, Project Logo upload/preview, localized Arabic/English project categories, client & campaign metadata, real library font role pickers, unlimited nested subfolders (`Folder inside Folder`), and direct design file uploads (`.psd`, `.ai`, `.indd`, `.pdf`, `.svg`, `.png`, `.jpg`, `.webp`) with automatic font scanning.
+
+---
+
 ## [1.0.2] - 2026-11-26
 
 ### Fixed

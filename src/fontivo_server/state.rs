@@ -54,16 +54,24 @@ pub fn classify_font_source(path: &str, sub_category: Option<&str>) -> String {
     {
         return "system".to_string();
     }
-    if p.contains("\\googlefonts\\")
+    if p.contains("\\fonts\\google\\")
+        || p.ends_with("\\fonts\\google")
+        || p.contains("\\googlefonts\\")
         || p.contains("\\google_fonts\\")
         || p.ends_with("\\googlefonts")
     {
         return "google".to_string();
     }
-    if p.contains("\\extracted\\") {
+    if p.contains("\\fonts\\packs\\")
+        || p.ends_with("\\fonts\\packs")
+        || p.contains("\\extracted\\")
+    {
         return "cloud".to_string();
     }
-    if p.contains("\\customfonts\\") {
+    if p.contains("\\fonts\\custom\\")
+        || p.ends_with("\\fonts\\custom")
+        || p.contains("\\customfonts\\")
+    {
         return "local".to_string();
     }
 
@@ -83,6 +91,41 @@ fn normalize_font_path_key(path: &str) -> String {
     let s = path.replace('/', "\\");
     let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
     stripped.trim().to_ascii_lowercase()
+}
+
+pub fn compute_bytes_sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
+
+pub fn compute_file_sha256(path: &Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = file.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Some(hex::encode(hasher.finalize()))
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateFontMatch {
+    pub file_name: String,
+    pub family: String,
+    pub style: String,
+    pub existing_id: usize,
+    pub existing_path: String,
+    pub existing_source: String,
+    pub match_reason: String,
 }
 
 fn is_symbol_font_name(name: &str) -> bool {
@@ -325,25 +368,21 @@ impl AppState {
         state
     }
 
-    /// Resolves `%LOCALAPPDATA%\Fontivo` (or `data_dir` fallback on non-Windows)
+    /// Resolves `%LOCALAPPDATA%\Fontivo` (unified AppData root)
     pub fn get_local_fontivo_dir(&self) -> PathBuf {
-        let dir = env::var("LOCALAPPDATA")
-            .map(|p| PathBuf::from(p).join("Fontivo"))
-            .unwrap_or_else(|_| self.data_dir.clone());
-        let _ = fs::create_dir_all(&dir);
-        dir
+        self.data_dir.clone()
     }
 
-    /// Resolves `%LOCALAPPDATA%\Fontivo\CustomFonts`
+    /// Resolves `%LOCALAPPDATA%\Fontivo\Fonts\Custom`
     pub fn get_custom_fonts_dir(&self) -> PathBuf {
-        let dir = self.get_local_fontivo_dir().join("CustomFonts");
+        let dir = self.data_dir.join("Fonts").join("Custom");
         let _ = fs::create_dir_all(&dir);
         dir
     }
 
     /// Resolves `%LOCALAPPDATA%\Fontivo\user-library-index.json`
     pub fn get_user_library_index_path(&self) -> PathBuf {
-        self.get_local_fontivo_dir().join("user-library-index.json")
+        self.data_dir.join("user-library-index.json")
     }
 
     /// Resolves a usable font file path on disk (falling back to a valid Windows core TTF
@@ -380,7 +419,233 @@ impl AppState {
         None
     }
 
+    /// Checks whether a legacy cached path has been relocated into the clean unified Fonts/ structure.
+    fn resolve_migrated_font_path(&self, raw_path: &str) -> Option<PathBuf> {
+        let p = Path::new(raw_path);
+        if p.is_file() {
+            return Some(p.to_path_buf());
+        }
+        let norm = raw_path.replace('/', "\\");
+        let lower = norm.to_ascii_lowercase();
+        let fonts_root = self.data_dir.join("Fonts");
+
+        for (needle, sub) in [
+            ("\\customfonts\\", "Custom"),
+            ("\\library\\googlefonts\\", "Google"),
+            ("\\googlefonts\\", "Google"),
+            ("\\library\\extracted\\", "Packs"),
+        ] {
+            if let Some(pos) = lower.find(needle) {
+                let rel = &norm[pos + needle.len()..];
+                let cand = fonts_root.join(sub).join(rel);
+                if cand.is_file() {
+                    return Some(cand);
+                }
+            }
+        }
+        None
+    }
+
+    /// Safely migrates files from a source directory into a destination directory without overwriting
+    /// existing destination files, then removes empty directories from `src`.
+    fn merge_move_dir(src: &Path, dst: &Path) {
+        if !src.exists() || !src.is_dir() || src == dst {
+            return;
+        }
+        let _ = fs::create_dir_all(dst);
+        if let Ok(entries) = fs::read_dir(src) {
+            for entry in entries.flatten() {
+                let s_path = entry.path();
+                let d_path = dst.join(entry.file_name());
+                if s_path.is_dir() {
+                    Self::merge_move_dir(&s_path, &d_path);
+                } else if s_path.is_file() {
+                    if d_path.exists() {
+                        // Already present at destination; remove redundant legacy copy
+                        let _ = fs::remove_file(&s_path);
+                    } else if fs::rename(&s_path, &d_path).is_err() {
+                        if fs::copy(&s_path, &d_path).is_ok() {
+                            let _ = fs::remove_file(&s_path);
+                        }
+                    }
+                }
+            }
+        }
+        let _ = fs::remove_dir(src);
+    }
+
+    /// Prunes empty directories upward until a protected boundary root is reached.
+    pub fn prune_empty_parent_dirs(file_path: &Path, roots: &[PathBuf]) {
+        let mut curr_opt = file_path.parent().map(|p| p.to_path_buf());
+        while let Some(curr) = curr_opt {
+            if roots.iter().any(|r| {
+                r == &curr
+                    || r.canonicalize()
+                        .ok()
+                        .zip(curr.canonicalize().ok())
+                        .map(|(a, b)| a == b)
+                        .unwrap_or(false)
+            }) {
+                break;
+            }
+            if curr.exists() && curr.is_dir() {
+                let is_empty = fs::read_dir(&curr)
+                    .map(|mut it| it.next().is_none())
+                    .unwrap_or(false);
+                if is_empty {
+                    let next = curr.parent().map(|p| p.to_path_buf());
+                    if fs::remove_dir(&curr).is_ok() {
+                        curr_opt = next;
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    /// One-time idempotent migration from pre-v1.0.3 split Roaming/Local directories
+    /// into the single clean `%LOCALAPPDATA%\Fontivo` hierarchy.
+    pub fn migrate_legacy_storage(&self) {
+        let fonts_root = self.data_dir.join("Fonts");
+        let google_dst = fonts_root.join("Google");
+        let packs_dst = fonts_root.join("Packs");
+        let custom_dst = fonts_root.join("Custom");
+        let workspaces_dst = self.data_dir.join("Workspaces");
+
+        // 1. Consolidate folders inside `self.data_dir`
+        Self::merge_move_dir(&self.data_dir.join("CustomFonts"), &custom_dst);
+        Self::merge_move_dir(&self.data_dir.join("GoogleFonts"), &google_dst);
+        Self::merge_move_dir(
+            &self.data_dir.join("Library").join("GoogleFonts"),
+            &google_dst,
+        );
+        Self::merge_move_dir(&self.data_dir.join("Library").join("Extracted"), &packs_dst);
+
+        // Remove empty legacy ghost folders inside `self.data_dir`
+        for empty_candidate in [
+            self.data_dir.join("Library").join("Downloads"),
+            self.data_dir.join("Library").join("Packs"),
+            self.data_dir.join("Library"),
+            self.data_dir.join("GoogleFonts"),
+            self.data_dir.join("CustomFonts"),
+            self.data_dir.join("webview_data"),
+        ] {
+            if empty_candidate.exists() && empty_candidate.is_dir() {
+                let is_empty = fs::read_dir(&empty_candidate)
+                    .map(|mut it| it.next().is_none())
+                    .unwrap_or(false);
+                if is_empty {
+                    let _ = fs::remove_dir(&empty_candidate);
+                }
+            }
+        }
+
+        // 2. Migrate legacy `%APPDATA%\Fontivo` (Roaming) -> `%LOCALAPPDATA%\Fontivo` (Local)
+        if let Some(roaming) = crate::engine::lifecycle::get_legacy_roaming_app_data_dir() {
+            if roaming.exists() && roaming.is_dir() {
+                Self::merge_move_dir(&roaming.join("GoogleFonts"), &google_dst);
+                Self::merge_move_dir(&roaming.join("Library").join("GoogleFonts"), &google_dst);
+                Self::merge_move_dir(&roaming.join("Library").join("Extracted"), &packs_dst);
+                Self::merge_move_dir(&roaming.join("workspaces"), &workspaces_dst);
+                Self::merge_move_dir(&roaming.join("CustomFonts"), &custom_dst);
+                Self::merge_move_dir(&roaming.join("Backups"), &self.data_dir.join("Backups"));
+                Self::merge_move_dir(&roaming.join("updates"), &self.data_dir.join("updates"));
+
+                // Handle legacy ZIP archives: delete redundant ZIP if extracted pack exists cleanly
+                let roaming_packs = roaming.join("Library").join("Packs");
+                if roaming_packs.exists() && roaming_packs.is_dir() {
+                    if let Ok(entries) = fs::read_dir(&roaming_packs) {
+                        let archive_dst = self.data_dir.join("Cache").join("PackArchives");
+                        for entry in entries.flatten() {
+                            let zp = entry.path();
+                            if zp.is_file() {
+                                let stem = zp.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                                // Zip names look like `fontivo-essential-001.zip`, extracted id `pack-essential-001`
+                                let pack_id_guess =
+                                    if let Some(rest) = stem.strip_prefix("fontivo-") {
+                                        format!("pack-{}", rest)
+                                    } else {
+                                        stem.to_string()
+                                    };
+                                let extracted_pack_dir = packs_dst.join(&pack_id_guess);
+                                let already_extracted = extracted_pack_dir.is_dir()
+                                    && fs::read_dir(&extracted_pack_dir)
+                                        .map(|mut it| it.next().is_some())
+                                        .unwrap_or(false);
+                                if already_extracted {
+                                    let _ = fs::remove_file(&zp);
+                                } else {
+                                    let _ = fs::create_dir_all(&archive_dst);
+                                    let target = archive_dst.join(entry.file_name());
+                                    if !target.exists() && fs::rename(&zp, &target).is_err() {
+                                        if fs::copy(&zp, &target).is_ok() {
+                                            let _ = fs::remove_file(&zp);
+                                        }
+                                    } else if target.exists() {
+                                        let _ = fs::remove_file(&zp);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let _ = fs::remove_dir(&roaming_packs);
+                }
+
+                // Remove redundant copies from legacy Library\Downloads if present in Fonts/Google or Fonts/Packs
+                let roaming_dl = roaming.join("Library").join("Downloads");
+                if roaming_dl.exists() && roaming_dl.is_dir() {
+                    if let Ok(entries) = fs::read_dir(&roaming_dl) {
+                        for entry in entries.flatten() {
+                            let f = entry.path();
+                            if f.is_file() {
+                                if google_dst.join(entry.file_name()).is_file() {
+                                    let _ = fs::remove_file(&f);
+                                }
+                            }
+                        }
+                    }
+                    let _ = fs::remove_dir(&roaming_dl);
+                }
+                let _ = fs::remove_dir(roaming.join("Library"));
+
+                // Move small JSON config files if not already present locally
+                for cfg_name in [
+                    "user-library-index.json",
+                    "active-fonts.json",
+                    "favorites.json",
+                    "collections.json",
+                    "brand-kits.json",
+                    "google-fonts-catalog.json",
+                ] {
+                    let src_f = roaming.join(cfg_name);
+                    let dst_f = self.data_dir.join(cfg_name);
+                    if src_f.is_file() {
+                        if dst_f.exists() {
+                            let _ = fs::remove_file(&src_f);
+                        } else if fs::rename(&src_f, &dst_f).is_err() {
+                            if fs::copy(&src_f, &dst_f).is_ok() {
+                                let _ = fs::remove_file(&src_f);
+                            }
+                        }
+                    }
+                }
+                for junk in ["library-config.json", "webview_data"] {
+                    let j = roaming.join(junk);
+                    if j.is_file() {
+                        let _ = fs::remove_file(&j);
+                    } else if j.is_dir() {
+                        let _ = fs::remove_dir_all(&j);
+                    }
+                }
+                let _ = fs::remove_dir(&roaming);
+            }
+        }
+    }
+
     pub fn load_state(&mut self) {
+        self.migrate_legacy_storage();
+
         let mut loaded_fonts: Vec<FontRecord> = Vec::new();
         let mut seen_paths: HashSet<String> = HashSet::new();
 
@@ -548,12 +813,17 @@ impl AppState {
         // 3. Load cached user library index from `%LOCALAPPDATA%\Fontivo\user-library-index.json`
         // (only real files still on disk; never duplicates Windows system fonts)
         let user_index_path = self.get_user_library_index_path();
+        let mut index_needs_resave = false;
         if user_index_path.exists() {
             if let Ok(content) = fs::read_to_string(&user_index_path) {
                 if let Ok(cached_user_fonts) = serde_json::from_str::<Vec<FontRecord>>(&content) {
                     for mut uf in cached_user_fonts {
-                        let p = Path::new(&uf.path);
-                        if p.exists() && p.is_file() {
+                        if let Some(resolved) = self.resolve_migrated_font_path(&uf.path) {
+                            let resolved_str = resolved.to_string_lossy().to_string();
+                            if !resolved_str.eq_ignore_ascii_case(&uf.path) {
+                                uf.path = resolved_str;
+                                index_needs_resave = true;
+                            }
                             let norm_key = normalize_font_path_key(&uf.path);
                             if seen_paths.insert(norm_key) {
                                 uf.id = next_id;
@@ -573,36 +843,34 @@ impl AppState {
                                 uf.is_bilingual = uf.is_arabic && uf.is_latin;
                                 next_id += 1;
                                 loaded_fonts.push(uf);
+                            } else {
+                                index_needs_resave = true;
                             }
+                        } else {
+                            index_needs_resave = true;
                         }
                     }
                 }
             }
         }
 
-        // 4. Dynamically scan real Fontivo directories (downloaded Google Fonts, Cloud Packs, Custom/Local)
-        let local_fontivo = self.get_local_fontivo_dir();
+        // 4. Dynamically scan real Fontivo directories that already exist on disk
+        let fonts_root = self.data_dir.join("Fonts");
         let mut scan_dirs: Vec<PathBuf> = vec![
-            local_fontivo.join("GoogleFonts"),
-            GoogleFontsManager::get_storage_dir(),
             LibraryStorageManager::get_google_dir(),
             LibraryStorageManager::get_extracted_dir(),
-            local_fontivo.join("CustomFonts"),
-            local_fontivo.join("Library"),
+            fonts_root.join("Custom"),
+            fonts_root,
             LibraryStorageManager::get_storage_dir(),
         ];
-        if let Ok(roaming) = env::var("APPDATA") {
-            let roaming_gf = PathBuf::from(roaming).join("Fontivo").join("GoogleFonts");
-            if !scan_dirs.contains(&roaming_gf) {
-                scan_dirs.insert(0, roaming_gf);
-            }
-        }
+        // Deduplicate scan dirs case-insensitively
+        let mut seen_dirs = HashSet::new();
+        scan_dirs.retain(|d| seen_dirs.insert(normalize_font_path_key(&d.to_string_lossy())));
 
         let mut newly_discovered = false;
 
         for dir in scan_dirs {
-            if !dir.exists() {
-                let _ = fs::create_dir_all(&dir);
+            if !dir.exists() || !dir.is_dir() {
                 continue;
             }
             if let Ok(files) = crate::server::routes::common::walk_fonts_in_dir(&dir) {
@@ -685,13 +953,18 @@ impl AppState {
                     let glyph_count = meta.as_ref().map(|m| m.glyph_count as usize);
 
                     let path_low = path_str.replace('/', "\\").to_ascii_lowercase();
-                    let sub_cat = if path_low.contains("\\googlefonts\\")
+                    let sub_cat = if path_low.contains("\\fonts\\google\\")
+                        || path_low.contains("\\googlefonts\\")
                         || path_low.contains("\\google_fonts\\")
                     {
                         "Google Fonts"
-                    } else if path_low.contains("\\extracted\\") {
+                    } else if path_low.contains("\\fonts\\packs\\")
+                        || path_low.contains("\\extracted\\")
+                    {
                         "Fontivo Cloud Pack"
-                    } else if path_low.contains("\\customfonts\\") {
+                    } else if path_low.contains("\\fonts\\custom\\")
+                        || path_low.contains("\\customfonts\\")
+                    {
                         "Custom Fonts"
                     } else {
                         "Local Library"
@@ -736,7 +1009,7 @@ impl AppState {
         }
 
         self.fonts = loaded_fonts;
-        if newly_discovered {
+        if newly_discovered || index_needs_resave {
             self.save_user_library_index();
         }
 
@@ -919,7 +1192,7 @@ impl AppState {
     }
 
     /// Persists locally downloaded/custom fonts to `%LOCALAPPDATA%\Fontivo\user-library-index.json`
-    /// (excludes OS-installed Windows system fonts which are enumerated live from Registry/disk).
+    /// using fast compact JSON (excluding OS-installed Windows system fonts).
     pub fn save_user_library_index(&self) {
         let local_fonts: Vec<&FontRecord> = self
             .fonts
@@ -927,16 +1200,45 @@ impl AppState {
             .filter(|f| f.is_local && f.source != "system" && Path::new(&f.path).exists())
             .collect();
         let index_path = self.get_user_library_index_path();
-        if let Ok(json) = serde_json::to_string_pretty(&local_fonts) {
-            let _ = fs::write(&index_path, &json);
-            let fallback_path = self.data_dir.join("user-library-index.json");
-            if fallback_path != index_path {
-                let _ = fs::write(fallback_path, json);
+        if let Ok(json) = serde_json::to_string(&local_fonts) {
+            let _ = fs::write(&index_path, json);
+        }
+    }
+
+    fn remove_managed_font_file(&self, path_str: &str) {
+        let file_path = Path::new(path_str);
+        if file_path.exists() && file_path.is_file() {
+            if let Ok(canon_file) = file_path.canonicalize() {
+                let allowed_roots = [
+                    self.get_local_fontivo_dir(),
+                    self.data_dir.clone(),
+                    LibraryStorageManager::get_storage_dir(),
+                    GoogleFontsManager::get_storage_dir(),
+                    LibraryStorageManager::get_extracted_dir(),
+                ];
+                let boundary_roots = [
+                    self.data_dir.join("Fonts").join("Google"),
+                    self.data_dir.join("Fonts").join("Packs"),
+                    self.data_dir.join("Fonts").join("Custom"),
+                    self.data_dir.join("Fonts"),
+                    self.data_dir.clone(),
+                    LibraryStorageManager::get_storage_dir(),
+                    LibraryStorageManager::get_google_dir(),
+                    LibraryStorageManager::get_extracted_dir(),
+                ];
+                let is_managed = allowed_roots.iter().any(|root| {
+                    root.canonicalize()
+                        .map(|c| canon_file.starts_with(c))
+                        .unwrap_or(false)
+                });
+                if is_managed && fs::remove_file(&canon_file).is_ok() {
+                    Self::prune_empty_parent_dirs(&canon_file, &boundary_roots);
+                }
             }
         }
     }
 
-    /// Removes/deletes a custom or downloaded font from the library (and deactivates it from RAM if active).
+    /// Removes/deletes a single custom or downloaded font from the library, RAM, favorites, collections, and managed disk storage.
     pub fn delete_library_font(
         &mut self,
         id: Option<usize>,
@@ -964,39 +1266,243 @@ impl AppState {
 
         let removed = self.fonts.remove(pos);
 
-        // Deactivate from RAM if active
         if self.active_font_ids.remove(&removed.id) || removed.is_active {
             let _ = self.activator.deactivate_ram(&removed.path);
             self.save_active_fonts();
         }
-
         if self.favorite_font_ids.remove(&removed.id) {
             self.save_favorites();
         }
+        let mut col_changed = false;
+        for ids in self.collections.values_mut() {
+            let before = ids.len();
+            ids.retain(|&fid| fid != removed.id);
+            if ids.len() != before {
+                col_changed = true;
+            }
+        }
+        if col_changed {
+            self.save_collections();
+        }
 
-        // Safely remove file from disk ONLY if it resides inside Fontivo managed directories
-        let file_path = Path::new(&removed.path);
-        if file_path.exists() && file_path.is_file() {
-            if let Ok(canon_file) = file_path.canonicalize() {
-                let allowed_roots = [
-                    self.get_local_fontivo_dir(),
-                    self.data_dir.clone(),
-                    LibraryStorageManager::get_storage_dir(),
-                    GoogleFontsManager::get_storage_dir(),
-                ];
-                let is_managed = allowed_roots.iter().any(|root| {
-                    root.canonicalize()
-                        .map(|c| canon_file.starts_with(c))
-                        .unwrap_or(false)
+        self.remove_managed_font_file(&removed.path);
+        self.save_user_library_index();
+        Ok(removed)
+    }
+
+    /// Deletes an entire non-system font family (all weights/styles) from memory, RAM activation,
+    /// favorites, collections, user index, and Fontivo-managed storage folders (pruning empty family folders).
+    pub fn delete_library_family(&mut self, family_name: &str) -> Result<Vec<FontRecord>, String> {
+        let clean = family_name.trim();
+        if clean.is_empty() {
+            return Err("Family name cannot be empty".to_string());
+        }
+
+        let mut removed_list = Vec::new();
+        let mut i = 0;
+        while i < self.fonts.len() {
+            let matches_family = self.fonts[i]
+                .family
+                .as_deref()
+                .map(|fam| fam.eq_ignore_ascii_case(clean))
+                .unwrap_or(false)
+                || self.fonts[i].name.eq_ignore_ascii_case(clean);
+
+            if matches_family && !self.fonts[i].source.eq_ignore_ascii_case("system") {
+                removed_list.push(self.fonts.remove(i));
+            } else {
+                i += 1;
+            }
+        }
+
+        if removed_list.is_empty() {
+            return Err(format!(
+                "No removable local fonts found for family '{}'",
+                clean
+            ));
+        }
+
+        let mut active_changed = false;
+        let mut fav_changed = false;
+        let removed_ids: HashSet<usize> = removed_list.iter().map(|f| f.id).collect();
+
+        for removed in &removed_list {
+            if self.active_font_ids.remove(&removed.id) || removed.is_active {
+                let _ = self.activator.deactivate_ram(&removed.path);
+                active_changed = true;
+            }
+            if self.favorite_font_ids.remove(&removed.id) {
+                fav_changed = true;
+            }
+            self.remove_managed_font_file(&removed.path);
+        }
+
+        let mut col_changed = false;
+        for ids in self.collections.values_mut() {
+            let before = ids.len();
+            ids.retain(|fid| !removed_ids.contains(fid));
+            if ids.len() != before {
+                col_changed = true;
+            }
+        }
+
+        if active_changed {
+            self.save_active_fonts();
+        }
+        if fav_changed {
+            self.save_favorites();
+        }
+        if col_changed {
+            self.save_collections();
+        }
+        self.save_user_library_index();
+
+        Ok(removed_list)
+    }
+
+    /// Detects whether a candidate font already exists in the library (Local, Google, Cloud Pack, or System)
+    /// by exact normalized path, SHA-256 content hash (O(1) filtered by file size), or font identity metadata.
+    pub fn find_duplicate_font(
+        &self,
+        candidate_path: Option<&Path>,
+        candidate_bytes: Option<&[u8]>,
+        file_name: &str,
+        family: Option<&str>,
+        style: Option<&str>,
+        postscript_name: Option<&str>,
+        file_size: usize,
+    ) -> Option<DuplicateFontMatch> {
+        let cand_path_key = candidate_path.map(|p| normalize_font_path_key(&p.to_string_lossy()));
+        let mut cand_hash: Option<String> = None;
+
+        let norm_family = family
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty());
+        let norm_style = style
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty());
+        let norm_ps = postscript_name
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty());
+        let clean_fname = file_name.trim().to_ascii_lowercase();
+
+        // 1. Exact normalized path check
+        if let Some(ref pkey) = cand_path_key {
+            if let Some(existing) = self
+                .fonts
+                .iter()
+                .find(|f| normalize_font_path_key(&f.path) == *pkey)
+            {
+                return Some(DuplicateFontMatch {
+                    file_name: file_name.to_string(),
+                    family: existing
+                        .family
+                        .clone()
+                        .unwrap_or_else(|| existing.name.clone()),
+                    style: existing
+                        .style
+                        .clone()
+                        .unwrap_or_else(|| "Regular".to_string()),
+                    existing_id: existing.id,
+                    existing_path: existing.path.clone(),
+                    existing_source: existing.source.clone(),
+                    match_reason: "path".to_string(),
                 });
-                if is_managed {
-                    let _ = fs::remove_file(&canon_file);
+            }
+        }
+
+        // 2. Same byte-size SHA-256 hash check (only hashes files of matching size)
+        if file_size > 0 {
+            for existing in &self.fonts {
+                if existing.size == file_size {
+                    let ex_path = Path::new(&existing.path);
+                    if !ex_path.is_file() {
+                        continue;
+                    }
+                    if cand_hash.is_none() {
+                        cand_hash = if let Some(b) = candidate_bytes {
+                            Some(compute_bytes_sha256(b))
+                        } else if let Some(cp) = candidate_path {
+                            compute_file_sha256(cp)
+                        } else {
+                            None
+                        };
+                    }
+                    if let Some(ref ch) = cand_hash {
+                        if let Some(ref eh) = compute_file_sha256(ex_path) {
+                            if ch == eh {
+                                return Some(DuplicateFontMatch {
+                                    file_name: file_name.to_string(),
+                                    family: existing
+                                        .family
+                                        .clone()
+                                        .unwrap_or_else(|| existing.name.clone()),
+                                    style: existing
+                                        .style
+                                        .clone()
+                                        .unwrap_or_else(|| "Regular".to_string()),
+                                    existing_id: existing.id,
+                                    existing_path: existing.path.clone(),
+                                    existing_source: existing.source.clone(),
+                                    match_reason: "sha256".to_string(),
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        self.save_user_library_index();
-        Ok(removed)
+        // 3. Exact identity check (PostScript / family + style + filename)
+        for existing in &self.fonts {
+            if !Path::new(&existing.path).is_file() && existing.is_local {
+                continue;
+            }
+            let same_ps = norm_ps.as_ref().is_some_and(|ps| {
+                existing
+                    .post_script_name
+                    .as_deref()
+                    .map(|eps| eps.trim().eq_ignore_ascii_case(ps))
+                    .unwrap_or(false)
+            });
+            let same_fam_style = norm_family.as_ref().is_some_and(|fam| {
+                let efam = existing
+                    .family
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                let estyle = existing
+                    .style
+                    .as_deref()
+                    .unwrap_or("regular")
+                    .trim()
+                    .to_ascii_lowercase();
+                let cstyle = norm_style.as_deref().unwrap_or("regular");
+                !efam.is_empty() && efam == *fam && estyle == cstyle
+            });
+            let same_filename = existing.name.eq_ignore_ascii_case(&clean_fname);
+
+            if (same_ps || same_fam_style) && (same_filename || file_size == existing.size) {
+                return Some(DuplicateFontMatch {
+                    file_name: file_name.to_string(),
+                    family: existing
+                        .family
+                        .clone()
+                        .unwrap_or_else(|| existing.name.clone()),
+                    style: existing
+                        .style
+                        .clone()
+                        .unwrap_or_else(|| "Regular".to_string()),
+                    existing_id: existing.id,
+                    existing_path: existing.path.clone(),
+                    existing_source: existing.source.clone(),
+                    match_reason: "metadata".to_string(),
+                });
+            }
+        }
+
+        None
     }
 
     /// Records or updates an active/recent system operation in the unified tracker

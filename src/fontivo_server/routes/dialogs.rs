@@ -26,6 +26,9 @@ pub fn handle_pick_folder(
             .to_string();
 
         let mut imported_count = 0;
+        let mut duplicates: Vec<crate::server::state::DuplicateFontMatch> = Vec::new();
+        let mut batch_hashes: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         if let Ok(entries) = walk_fonts_in_dir(&folder_path) {
             let mut st = state.write().unwrap();
             let current_max_id = st.fonts.iter().map(|f| f.id).max().unwrap_or(0);
@@ -40,6 +43,35 @@ pub fn handle_pick_folder(
                         .unwrap_or("font")
                         .to_string();
                     let size = fs::metadata(&p).map(|m| m.len() as usize).unwrap_or(0);
+
+                    if let Some(dup) = st.find_duplicate_font(
+                        Some(&p),
+                        None,
+                        &fname,
+                        Some(&meta.family),
+                        Some(&meta.subfamily),
+                        Some(&meta.postscript_name),
+                        size,
+                    ) {
+                        duplicates.push(dup);
+                        continue;
+                    }
+
+                    if let Some(h) = crate::server::state::compute_file_sha256(&p) {
+                        if !batch_hashes.insert(h) {
+                            duplicates.push(crate::server::state::DuplicateFontMatch {
+                                file_name: fname,
+                                family: meta.family,
+                                style: meta.subfamily,
+                                existing_id: 0,
+                                existing_path: path_str.clone(),
+                                existing_source: "batch".to_string(),
+                                match_reason: "sha256".to_string(),
+                            });
+                            continue;
+                        }
+                    }
+
                     let is_arabic = meta.coverage.supports_arabic
                         || meta.family.to_lowercase().contains("arabic");
                     let is_latin = meta.coverage.supports_latin;
@@ -99,6 +131,8 @@ pub fn handle_pick_folder(
             }
         }
 
+        let skipped_duplicates_count = duplicates.len();
+
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct PickRes {
@@ -106,6 +140,8 @@ pub fn handle_pick_folder(
             path: String,
             folder_name: String,
             imported_count: usize,
+            skipped_duplicates_count: usize,
+            duplicates: Vec<crate::server::state::DuplicateFontMatch>,
         }
 
         let res_obj = PickRes {
@@ -113,6 +149,8 @@ pub fn handle_pick_folder(
             path: path_str,
             folder_name,
             imported_count,
+            skipped_duplicates_count,
+            duplicates,
         };
 
         respond_json_str(

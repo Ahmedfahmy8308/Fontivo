@@ -223,7 +223,7 @@ describe("Cloud Packages Hub & Real v1.0.3 Manifest Verification", () => {
     );
     expect(html).toContain("#001 • v1.0.3");
     expect(html).toContain("fontivo-essential-001.zip");
-    expect(html).toContain("dir=\"ltr\"");
+    expect(html).toContain('dir="ltr"');
     expect(html).toContain("الحزمة الأساسية 001 — الخطوط العربية");
   });
 });

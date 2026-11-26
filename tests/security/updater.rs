@@ -12,7 +12,7 @@ fn test_updater_check() {
     );
 
     let info = update_res.unwrap();
-    assert_eq!(info.current_version, "1.0.2");
+    assert_eq!(info.current_version, AutoUpdater::CURRENT_VERSION);
     assert!(!info.release_notes.is_empty());
     assert!(!info.download_url.is_empty());
     assert!(info.asset_size_bytes > 0);
@@ -168,10 +168,10 @@ fn test_parse_github_releases_api_payload_detects_newer_version_and_sha256() {
         "html_url": "https://github.com/Ahmedfahmy8308/Fontivo/releases/tag/v9.9.9",
         "assets": [
             {
-                "name": "Fontivo-v1.0-Setup.exe",
+                "name": "Fontivo-Setup.exe",
                 "size": 4520404,
                 "digest": "sha256:2ef8204cf4bca5fe3c137b22ac50117a2b0831900c7a0744d8835ce8715614d4",
-                "browser_download_url": "https://github.com/Ahmedfahmy8308/Fontivo/releases/download/v9.9.9/Fontivo-v1.0-Setup.exe"
+                "browser_download_url": "https://github.com/Ahmedfahmy8308/Fontivo/releases/download/v9.9.9/Fontivo-Setup.exe"
             },
             {
                 "name": "Fontivo-macos-arm64.tar.gz",

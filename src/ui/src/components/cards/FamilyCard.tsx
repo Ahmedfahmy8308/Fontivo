@@ -116,8 +116,31 @@ function pickDefaultFont(fonts: FontItem[]): FontItem {
   return regular || fonts[0];
 }
 
+const loadedFontFaceIds = new Set<string>();
+const MAX_CONCURRENT_FONT_LOADS = 6;
+let activeFontLoads = 0;
+const pendingFontLoads: Array<() => void> = [];
+
+function enqueueFontLoad(task: () => Promise<void>): void {
+  const run = () => {
+    activeFontLoads++;
+    task().finally(() => {
+      activeFontLoads = Math.max(0, activeFontLoads - 1);
+      const next = pendingFontLoads.shift();
+      if (next) next();
+    });
+  };
+  if (activeFontLoads < MAX_CONCURRENT_FONT_LOADS) {
+    run();
+  } else {
+    pendingFontLoads.push(run);
+  }
+}
+
 function injectFontFaceStyle(font: FontItem, fontFamilyName: string): void {
   if (typeof document === "undefined" || !font?.id) return;
+  const cacheKey = `${fontFamilyName}::${String(font.id)}`;
+  if (loadedFontFaceIds.has(cacheKey)) return;
 
   const isLocal = isFontLocal(font);
   const isGoogleCloud =
@@ -127,21 +150,22 @@ function injectFontFaceStyle(font: FontItem, fontFamilyName: string): void {
   if (isGoogleCloud) {
     const fam = font.family || font.name;
     if (!fam) return;
+    loadedFontFaceIds.add(cacheKey);
     const linkId = `fontivo-gf-${fam.replace(/[^a-zA-Z0-9]/g, "-")}`;
-    if (!document.getElementById(linkId)) {
+    if (!document.getElementById(linkId) && document.head) {
       const link = document.createElement("link");
       link.id = linkId;
       link.rel = "stylesheet";
-      link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(fam)}:wght@300;400;500;600;700;800;900&display=swap`;
+      link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(fam)}:wght@400;600;700&display=swap`;
       document.head.appendChild(link);
     }
     return;
   }
 
+  loadedFontFaceIds.add(cacheKey);
   const fontUrl = `/api/font-file/${encodeURIComponent(String(font.id))}`;
   const styleId = `fontivo-face-${String(font.id).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
 
-  // Inject @font-face stylesheet tag for reliable WebView2 rendering
   if (!document.getElementById(styleId) && document.head) {
     const styleEl = document.createElement("style");
     styleEl.id = styleId;
@@ -149,7 +173,6 @@ function injectFontFaceStyle(font: FontItem, fontFamilyName: string): void {
     document.head.appendChild(styleEl);
   }
 
-  // Also load eagerly via FontFace API when available
   if (typeof FontFace !== "undefined" && document.fonts) {
     if (
       typeof document.fonts.check === "function" &&
@@ -157,17 +180,15 @@ function injectFontFaceStyle(font: FontItem, fontFamilyName: string): void {
     ) {
       return;
     }
-    try {
-      const fontFace = new FontFace(fontFamilyName, `url("${fontUrl}")`);
-      fontFace
-        .load()
-        .then((loaded) => {
-          document.fonts.add(loaded);
-        })
-        .catch(() => {});
-    } catch {
-      // ignore in SSR/test environments
-    }
+    enqueueFontLoad(async () => {
+      try {
+        const fontFace = new FontFace(fontFamilyName, `url("${fontUrl}")`);
+        const loaded = await fontFace.load();
+        document.fonts.add(loaded);
+      } catch {
+        // ignore in SSR/test environments
+      }
+    });
   }
 }
 
@@ -224,7 +245,7 @@ export interface FamilyCardProps {
   onOpenPack?: (family?: FontFamily) => void;
 }
 
-export default function FamilyCard({
+const FamilyCard = React.memo(function FamilyCard({
   family,
   previewText,
   fontSize,
@@ -1011,4 +1032,6 @@ export default function FamilyCard({
       </div>
     </div>
   );
-}
+});
+
+export default FamilyCard;

@@ -274,6 +274,7 @@ export default function App({
     setShowSortMenu,
     sortRef,
     fetchData,
+    fetchCollections,
     loadMoreTriggerRef,
     handlePickFolder,
     handleImportFontFiles,
@@ -292,7 +293,37 @@ export default function App({
     handleToggleFavorite,
     handleDeleteFont,
     handleDeactivateAll,
-  } = useFontActivation({ setFonts, setFamilies, fetchStats });
+  } = useFontActivation({
+    setFonts,
+    setFamilies,
+    fetchStats,
+    fetchCollections,
+  });
+
+  const [importBanner, setImportBanner] = useState<{
+    importedCount: number;
+    duplicates: Array<{
+      fileName: string;
+      existingPath: string;
+      existingSource: string;
+    }>;
+  } | null>(null);
+
+  useEffect(() => {
+    const onImportRes = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail;
+      if (
+        detail &&
+        Array.isArray(detail.duplicates) &&
+        detail.duplicates.length > 0
+      ) {
+        setImportBanner(detail);
+      }
+    };
+    window.addEventListener("fontivo:import-result", onImportRes);
+    return () =>
+      window.removeEventListener("fontivo:import-result", onImportRes);
+  }, []);
 
   const [contextBatchBusy, setContextBatchBusy] = useState(false);
 
@@ -882,6 +913,39 @@ export default function App({
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Live Duplicate Font Detection Banner */}
+      {importBanner && importBanner.duplicates.length > 0 && (
+        <div
+          data-testid="duplicate-import-banner"
+          className="px-4 py-2 bg-amber-500/12 border-b border-amber-500/35 text-xs text-[var(--color-text-header)] flex items-center justify-between gap-3 shrink-0"
+        >
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <div className="truncate">
+              <span className="font-bold">
+                {isRtl
+                  ? `تم تجاهل ${importBanner.duplicates.length} ${importBanner.duplicates.length === 1 ? "خط مكرر" : "خطوط مكررة"} (موجودة بالفعل): `
+                  : `Skipped ${importBanner.duplicates.length} duplicate font(s) already in library: `}
+              </span>
+              <span className="font-mono text-[11px] text-[var(--color-text-muted)]">
+                {importBanner.duplicates
+                  .slice(0, 3)
+                  .map((d) => `${d.fileName} (${d.existingPath})`)
+                  .join(" • ")}
+                {importBanner.duplicates.length > 3 ? " ..." : ""}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => setImportBanner(null)}
+            className="p-1 rounded hover:bg-black/10 text-[var(--color-text-muted)] cursor-pointer shrink-0"
+            aria-label="Dismiss duplicate alert"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 

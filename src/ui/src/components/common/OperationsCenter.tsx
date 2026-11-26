@@ -439,7 +439,10 @@ export default function OperationsCenter({
 
                 {/* Meta Row: Step Status, MB / Total MB, Items / Total Items, Speed */}
                 <div className="flex items-center justify-between text-[10px] font-mono text-[var(--color-text-muted)] gap-2">
-                  <span className="truncate max-w-[165px]" title={op.error || step || ""}>
+                  <span
+                    className="truncate max-w-[165px]"
+                    title={op.error || step || ""}
+                  >
                     {op.error
                       ? op.error
                       : step ||

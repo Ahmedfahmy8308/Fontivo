@@ -66,8 +66,14 @@ const ACTIVE_PHASES = new Set<PackDownloadState["phase"]>([
   "Indexing",
 ]);
 
-export function normalizeJobPhase(rawPhase?: string): PackDownloadState["phase"] {
-  switch (String(rawPhase || "").trim().toLowerCase()) {
+export function normalizeJobPhase(
+  rawPhase?: string,
+): PackDownloadState["phase"] {
+  switch (
+    String(rawPhase || "")
+      .trim()
+      .toLowerCase()
+  ) {
     case "queued":
       return "Queued";
     case "verifying":
@@ -114,7 +120,9 @@ export function formatPhaseLabel(
 
 function getPackIndexLabel(pack: CloudPackage, fallbackIndex: number): string {
   const match = pack.id.match(/(\d+)$/);
-  return match ? match[1].padStart(3, "0") : String(fallbackIndex + 1).padStart(3, "0");
+  return match
+    ? match[1].padStart(3, "0")
+    : String(fallbackIndex + 1).padStart(3, "0");
 }
 
 export default function CloudPacksView({
@@ -260,7 +268,10 @@ export default function CloudPacksView({
             error: job.error ?? null,
           });
 
-          if (phase === "Completed" && !completedNotifiedRef.current.has(packId)) {
+          if (
+            phase === "Completed" &&
+            !completedNotifiedRef.current.has(packId)
+          ) {
             completedNotifiedRef.current.add(packId);
             newlyCompleted = true;
             markPackDownloaded(packId);
@@ -526,8 +537,10 @@ export default function CloudPacksView({
             const totalBytes = Number(
               item.totalBytes ?? packMeta?.compressedBytes ?? 0,
             );
-            const isFailed = String(item.status || "").toLowerCase() === "failed";
-            const packVer = item.version || packMeta?.version || libraryVersionRef.current;
+            const isFailed =
+              String(item.status || "").toLowerCase() === "failed";
+            const packVer =
+              item.version || packMeta?.version || libraryVersionRef.current;
 
             next[packId] = {
               jobId: item.jobId,
@@ -546,7 +559,9 @@ export default function CloudPacksView({
               status: isFailed ? "failed" : "queued",
               progressPercent: isFailed ? 0 : 2,
               stepLabel: isFailed ? "Failed to queue" : "Queued...",
-              stepLabelAr: isFailed ? "فشل بدء التحميل" : "في قائمة الانتظار...",
+              stepLabelAr: isFailed
+                ? "فشل بدء التحميل"
+                : "في قائمة الانتظار...",
               bytesDone: 0,
               bytesTotal: totalBytes,
               error: item.error ?? null,
@@ -573,7 +588,9 @@ export default function CloudPacksView({
         type: "error",
         text:
           e?.message ||
-          (isRtl ? "تعذر بدء تنزيل جميع الحزم." : "Failed to start batch pack download."),
+          (isRtl
+            ? "تعذر بدء تنزيل جميع الحزم."
+            : "Failed to start batch pack download."),
       });
     }
   };
@@ -718,8 +735,8 @@ export default function CloudPacksView({
               ) : (
                 <>
                   {packages.length} curated verified packs containing{" "}
-                  {totalPackFonts.toLocaleString()} high-grade typography fonts (
-                  {formatCloudBytes(totalCompressedBytes)}) with SHA-256
+                  {totalPackFonts.toLocaleString()} high-grade typography fonts
+                  ({formatCloudBytes(totalCompressedBytes)}) with SHA-256
                   verification.
                 </>
               )}
@@ -808,7 +825,10 @@ export default function CloudPacksView({
                 )}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono shrink-0" dir="ltr">
+              <div
+                className="flex flex-wrap items-center gap-2 text-[11px] font-mono shrink-0"
+                dir="ltr"
+              >
                 <span className="px-2 py-0.5 rounded-md bg-[var(--color-control)] text-[var(--color-text-muted)]">
                   {queueTelemetry.completedCount}/{queueTelemetry.totalTracked}{" "}
                   {isRtl ? "حزمة" : "packs"}
@@ -827,7 +847,9 @@ export default function CloudPacksView({
             <div className="w-full h-2.5 rounded-full bg-[var(--color-control)] fontivo-progress-track">
               <div
                 className="h-full rounded-full bg-gradient-to-r from-[var(--color-action)] via-[#f7b544] to-[var(--color-action)] transition-all duration-300 fontivo-progress-fill"
-                style={{ width: `${Math.max(4, queueTelemetry.overallPercent)}%` }}
+                style={{
+                  width: `${Math.max(4, queueTelemetry.overallPercent)}%`,
+                }}
               />
             </div>
 
@@ -846,7 +868,10 @@ export default function CloudPacksView({
                   </span>
                 )}
               </div>
-              <span dir="ltr" className="font-mono font-semibold text-[var(--color-text-header)]">
+              <span
+                dir="ltr"
+                className="font-mono font-semibold text-[var(--color-text-header)]"
+              >
                 {formatCloudBytes(queueTelemetry.bytesDone)} /{" "}
                 {formatCloudBytes(queueTelemetry.bytesTotal)}
               </span>
@@ -941,7 +966,9 @@ export default function CloudPacksView({
               <div
                 key={pack.id}
                 data-pack-id={pack.id}
-                data-pack-phase={state?.phase || (isDownloaded ? "Installed" : "Idle")}
+                data-pack-phase={
+                  state?.phase || (isDownloaded ? "Installed" : "Idle")
+                }
                 className={`p-5 rounded-2xl bg-[var(--color-back-card)] border transition-all duration-300 flex flex-col justify-between space-y-4 shadow-xs ${
                   isBusy && !isQueued
                     ? "border-[var(--color-action)]/80 ring-1 ring-[var(--color-action)]/35 shadow-[0_0_24px_rgba(241,107,80,0.16)]"
@@ -1016,8 +1043,7 @@ export default function CloudPacksView({
                 <div className="space-y-3 pt-3 border-t border-[var(--color-border-subtle)]">
                   <div className="flex items-center justify-between text-[11px] font-mono text-[var(--color-text-muted)] gap-2">
                     <span>
-                      {pack.fontCount.toLocaleString()}{" "}
-                      {isRtl ? "خط" : "fonts"}
+                      {pack.fontCount.toLocaleString()} {isRtl ? "خط" : "fonts"}
                     </span>
                     <span className="flex items-center gap-1">
                       <span dir="ltr" className="inline-block">
@@ -1043,7 +1069,10 @@ export default function CloudPacksView({
                           )}
                           <span>{formatPhaseLabel(state.phase, isRtl)}</span>
                         </span>
-                        <div className="flex items-center gap-2 font-mono shrink-0" dir="ltr">
+                        <div
+                          className="flex items-center gap-2 font-mono shrink-0"
+                          dir="ltr"
+                        >
                           {speedText && (
                             <span className="text-emerald-400 font-bold">
                               {speedText}
@@ -1115,7 +1144,9 @@ export default function CloudPacksView({
                   {/* Action Button */}
                   <button
                     onClick={() =>
-                      isFailed ? handleRetryPack(pack) : handleDownloadPack(pack)
+                      isFailed
+                        ? handleRetryPack(pack)
+                        : handleDownloadPack(pack)
                     }
                     disabled={isBusy}
                     className={`w-full h-9 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-60 ${

@@ -398,6 +398,15 @@ impl ApiServer {
                             cors_origin,
                             json_header,
                         ),
+                        ("POST", "/api/fonts/import-file") => {
+                            routes::fonts::handle_import_font_file(
+                                req,
+                                &state,
+                                &query_params,
+                                cors_origin,
+                                json_header,
+                            )
+                        }
                         ("POST", "/api/install-permanent") => {
                             routes::fonts::handle_install_permanent(
                                 req,
@@ -435,6 +444,14 @@ impl ApiServer {
                         | ("DELETE", "/api/fonts/custom")
                         | ("POST", "/api/fonts/custom") => {
                             routes::fonts::handle_delete_font(req, &state, cors_origin, json_header)
+                        }
+                        ("POST", "/api/fonts/delete-family") => {
+                            routes::fonts::handle_delete_family(
+                                req,
+                                &state,
+                                cors_origin,
+                                json_header,
+                            )
                         }
 
                         // Smart & Custom Collections
@@ -551,6 +568,18 @@ impl ApiServer {
                         ("POST", "/api/ase/inspect") => {
                             routes::workspaces::inspect_ase(req, &state, cors_origin, json_header)
                         }
+                        ("GET", p)
+                            if p.starts_with("/api/workspaces/") && p.ends_with("/asset") =>
+                        {
+                            let id = &p["/api/workspaces/".len()..p.len() - "/asset".len()];
+                            routes::workspaces::serve_workspace_asset(
+                                req,
+                                &state,
+                                id,
+                                &query_params,
+                                cors_origin,
+                            );
+                        }
                         ("GET", p) if p.starts_with("/api/workspaces/") => {
                             let id = &p["/api/workspaces/".len()..];
                             routes::workspaces::get_workspace_by_id(
@@ -567,6 +596,32 @@ impl ApiServer {
                                 req,
                                 &state,
                                 id,
+                                cors_origin,
+                                json_header,
+                            );
+                        }
+                        ("POST", p)
+                            if p.starts_with("/api/workspaces/") && p.ends_with("/folders") =>
+                        {
+                            let id = &p["/api/workspaces/".len()..p.len() - "/folders".len()];
+                            routes::workspaces::create_workspace_folder(
+                                req,
+                                &state,
+                                id,
+                                cors_origin,
+                                json_header,
+                            );
+                        }
+                        ("POST", p)
+                            if p.starts_with("/api/workspaces/")
+                                && p.ends_with("/upload-design") =>
+                        {
+                            let id = &p["/api/workspaces/".len()..p.len() - "/upload-design".len()];
+                            routes::workspaces::upload_workspace_design(
+                                req,
+                                &state,
+                                id,
+                                &query_params,
                                 cors_origin,
                                 json_header,
                             );

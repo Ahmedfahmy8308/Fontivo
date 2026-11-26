@@ -65,7 +65,7 @@
 
 Download the official Windows installer packaged with Inno Setup 6:
 
-- **[Download Fontivo-v1.0-Setup.exe](https://github.com/Ahmedfahmy8308/Fontivo/releases/latest/download/Fontivo-v1.0-Setup.exe)** (`4.30 MB`)
+- **[Download Fontivo-Setup.exe](https://github.com/Ahmedfahmy8308/Fontivo/releases/latest/download/Fontivo-Setup.exe)** (`4.3 MB`)
 - Non-elevated least-privilege installation into `{autopf}\Fontivo` with zero UAC administrative prompts.
 - Desktop shortcut, Start Menu entry, full PE VersionInfo metadata, and uninstaller included.
 
@@ -89,10 +89,10 @@ Every official release asset includes `SHA256SUMS` and free GitHub SLSA Build Pr
 
 ```powershell
 # Verify official GitHub build provenance without paid certificates:
-gh attestation verify .\Fontivo-v1.0-Setup.exe --owner Ahmedfahmy8308
+gh attestation verify .\Fontivo-Setup.exe --owner Ahmedfahmy8308
 
 # Or check local SHA-256 digest against SHA256SUMS:
-Get-FileHash .\Fontivo-v1.0-Setup.exe -Algorithm SHA256
+Get-FileHash .\Fontivo-Setup.exe -Algorithm SHA256
 ```
 
 Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).

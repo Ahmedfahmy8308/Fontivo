@@ -532,18 +532,9 @@ pub fn handle_import_folder(
     if let Ok(data) = serde_json::from_str::<ImportReq>(&body) {
         let folder = Path::new(&data.folder_path);
         if folder.exists() && folder.is_dir() {
-            let mut new_fonts = Vec::new();
-            let mut next_id = {
-                let st = state.read().unwrap();
-                st.fonts.iter().map(|f| f.id).max().unwrap_or(0) + 1
-            };
+            let mut candidate_paths: Vec<std::path::PathBuf> = Vec::new();
 
-            fn scan_recursive(
-                dir: &Path,
-                next_id: &mut usize,
-                list: &mut Vec<FontRecord>,
-                depth: usize,
-            ) {
+            fn collect_recursive(dir: &Path, list: &mut Vec<std::path::PathBuf>, depth: usize) {
                 if depth > 12 || list.len() >= 50_000 {
                     return;
                 }
@@ -551,99 +542,143 @@ pub fn handle_import_folder(
                     for entry in entries.flatten() {
                         let p = entry.path();
                         if p.is_dir() {
-                            scan_recursive(&p, next_id, list, depth + 1);
+                            collect_recursive(&p, list, depth + 1);
                         } else if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
                             let e = ext.to_lowercase();
                             if e == "ttf" || e == "otf" || e == "woff" || e == "woff2" || e == "ttc"
                             {
-                                let file_name = p
-                                    .file_name()
-                                    .and_then(|s| s.to_str())
-                                    .unwrap_or("font")
-                                    .to_string();
-                                let meta = FontParser::parse_file(&p).ok();
-                                let is_arabic = meta
-                                    .as_ref()
-                                    .map(|m| m.coverage.supports_arabic)
-                                    .unwrap_or(false);
-                                let is_latin = meta
-                                    .as_ref()
-                                    .map(|m| m.coverage.supports_latin)
-                                    .unwrap_or(!is_arabic);
-                                let is_bilingual = is_arabic && is_latin;
-                                let is_variable =
-                                    meta.as_ref().map(|m| m.is_variable).unwrap_or(false);
-                                let has_tashkeel = meta
-                                    .as_ref()
-                                    .map(|m| m.coverage.has_tashkeel)
-                                    .unwrap_or(false);
-                                let has_extended_arabic = meta
-                                    .as_ref()
-                                    .map(|m| m.coverage.has_extended_arabic)
-                                    .unwrap_or(false);
-                                let has_arabic_numerals = meta
-                                    .as_ref()
-                                    .map(|m| m.coverage.has_arabic_numerals)
-                                    .unwrap_or(false);
-                                let has_western_numerals = meta
-                                    .as_ref()
-                                    .map(|m| m.coverage.has_western_numerals)
-                                    .unwrap_or(true);
-                                let display_name = meta.as_ref().map(|m| m.full_name.clone());
-                                let family = meta.as_ref().map(|m| m.family.clone());
-                                let style = meta.as_ref().map(|m| m.subfamily.clone());
-                                let weight = meta
-                                    .as_ref()
-                                    .map(|m| m.weight_class)
-                                    .filter(|&w| w > 0)
-                                    .unwrap_or_else(|| {
-                                        crate::server::state::style_to_weight(style.as_deref())
-                                    });
-                                let glyph_count = meta.as_ref().map(|m| m.glyph_count as usize);
-                                let post_script_name =
-                                    meta.as_ref().map(|m| m.postscript_name.clone());
-                                let size = entry.metadata().map(|m| m.len() as usize).unwrap_or(0);
-
-                                list.push(FontRecord {
-                                    id: *next_id,
-                                    name: file_name,
-                                    path: p.to_string_lossy().to_string(),
-                                    category: if is_arabic {
-                                        "01 - Arabic Fonts".to_string()
-                                    } else {
-                                        "02 - English Fonts".to_string()
-                                    },
-                                    sub_category: Some("Imported".to_string()),
-                                    family,
-                                    format: e.to_uppercase(),
-                                    size,
-                                    is_arabic,
-                                    is_latin,
-                                    is_bilingual,
-                                    is_variable,
-                                    weight,
-                                    source: "local".to_string(),
-                                    is_active: false,
-                                    is_favorite: false,
-                                    display_name,
-                                    style,
-                                    post_script_name,
-                                    glyph_count,
-                                    has_tashkeel,
-                                    has_extended_arabic,
-                                    has_arabic_numerals,
-                                    has_western_numerals,
-                                    is_local: true,
-                                });
-                                *next_id += 1;
+                                list.push(p);
                             }
                         }
                     }
                 }
             }
 
-            scan_recursive(folder, &mut next_id, &mut new_fonts, 0);
+            collect_recursive(folder, &mut candidate_paths, 0);
+
+            let mut new_fonts = Vec::new();
+            let mut duplicates = Vec::new();
+            let mut batch_hashes: HashSet<String> = HashSet::new();
+
+            let mut st = state.write().unwrap();
+            let mut next_id = st.fonts.iter().map(|f| f.id).max().unwrap_or(0) + 1;
+
+            for p in candidate_paths {
+                let file_name = p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("font")
+                    .to_string();
+                let ext = p
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("ttf")
+                    .to_lowercase();
+                let size = fs::metadata(&p).map(|m| m.len() as usize).unwrap_or(0);
+                let meta = FontParser::parse_file(&p).ok();
+                let family = meta.as_ref().map(|m| m.family.clone());
+                let style = meta.as_ref().map(|m| m.subfamily.clone());
+                let post_script_name = meta.as_ref().map(|m| m.postscript_name.clone());
+
+                if let Some(dup) = st.find_duplicate_font(
+                    Some(&p),
+                    None,
+                    &file_name,
+                    family.as_deref(),
+                    style.as_deref(),
+                    post_script_name.as_deref(),
+                    size,
+                ) {
+                    duplicates.push(dup);
+                    continue;
+                }
+
+                // Intra-batch exact content deduplication
+                if let Some(h) = crate::server::state::compute_file_sha256(&p) {
+                    if !batch_hashes.insert(h) {
+                        duplicates.push(crate::server::state::DuplicateFontMatch {
+                            file_name,
+                            family: family.unwrap_or_else(|| "Unknown".to_string()),
+                            style: style.unwrap_or_else(|| "Regular".to_string()),
+                            existing_id: 0,
+                            existing_path: data.folder_path.clone(),
+                            existing_source: "batch".to_string(),
+                            match_reason: "sha256".to_string(),
+                        });
+                        continue;
+                    }
+                }
+
+                let is_arabic = meta
+                    .as_ref()
+                    .map(|m| m.coverage.supports_arabic)
+                    .unwrap_or(false);
+                let is_latin = meta
+                    .as_ref()
+                    .map(|m| m.coverage.supports_latin)
+                    .unwrap_or(!is_arabic);
+                let is_bilingual = is_arabic && is_latin;
+                let is_variable = meta.as_ref().map(|m| m.is_variable).unwrap_or(false);
+                let has_tashkeel = meta
+                    .as_ref()
+                    .map(|m| m.coverage.has_tashkeel)
+                    .unwrap_or(false);
+                let has_extended_arabic = meta
+                    .as_ref()
+                    .map(|m| m.coverage.has_extended_arabic)
+                    .unwrap_or(false);
+                let has_arabic_numerals = meta
+                    .as_ref()
+                    .map(|m| m.coverage.has_arabic_numerals)
+                    .unwrap_or(false);
+                let has_western_numerals = meta
+                    .as_ref()
+                    .map(|m| m.coverage.has_western_numerals)
+                    .unwrap_or(true);
+                let display_name = meta.as_ref().map(|m| m.full_name.clone());
+                let weight = meta
+                    .as_ref()
+                    .map(|m| m.weight_class)
+                    .filter(|&w| w > 0)
+                    .unwrap_or_else(|| crate::server::state::style_to_weight(style.as_deref()));
+                let glyph_count = meta.as_ref().map(|m| m.glyph_count as usize);
+
+                new_fonts.push(FontRecord {
+                    id: next_id,
+                    name: file_name,
+                    path: p.to_string_lossy().to_string(),
+                    category: if is_arabic {
+                        "01 - Arabic Fonts".to_string()
+                    } else {
+                        "02 - English Fonts".to_string()
+                    },
+                    sub_category: Some("Imported".to_string()),
+                    family,
+                    format: ext.to_uppercase(),
+                    size,
+                    is_arabic,
+                    is_latin,
+                    is_bilingual,
+                    is_variable,
+                    weight,
+                    source: "local".to_string(),
+                    is_active: false,
+                    is_favorite: false,
+                    display_name,
+                    style,
+                    post_script_name,
+                    glyph_count,
+                    has_tashkeel,
+                    has_extended_arabic,
+                    has_arabic_numerals,
+                    has_western_numerals,
+                    is_local: true,
+                });
+                next_id += 1;
+            }
+
             let imported_count = new_fonts.len();
+            let skipped_duplicates_count = duplicates.len();
             let folder_name = folder
                 .file_name()
                 .and_then(|s| s.to_str())
@@ -656,17 +691,19 @@ pub fn handle_import_folder(
                 dictionary.insert(f.name.clone(), f.clone());
             }
 
-            {
-                let mut st = state.write().unwrap();
+            if !new_fonts.is_empty() {
                 st.fonts.extend(new_fonts.clone());
                 st.save_user_library_index();
             }
+            drop(st);
 
             #[derive(Serialize)]
             #[serde(rename_all = "camelCase")]
             struct ImportFolderResponse {
                 success: bool,
                 imported_count: usize,
+                skipped_duplicates_count: usize,
+                duplicates: Vec<crate::server::state::DuplicateFontMatch>,
                 folder_name: String,
                 folder_path: String,
                 fonts: Vec<FontRecord>,
@@ -676,6 +713,8 @@ pub fn handle_import_folder(
             let resp = ImportFolderResponse {
                 success: true,
                 imported_count,
+                skipped_duplicates_count,
+                duplicates,
                 folder_name,
                 folder_path: data.folder_path.clone(),
                 fonts: new_fonts,
@@ -697,6 +736,269 @@ pub fn handle_import_folder(
         req,
         404,
         serde_json::json!({ "success": false, "error": "Folder not found" }),
+        cors_origin,
+        json_header,
+    );
+}
+
+/// POST /api/fonts/import-file?fileName=...: imports a single font file with SHA-256 & metadata
+/// duplicate detection, saving unique fonts cleanly into `%LOCALAPPDATA%\Fontivo\Fonts\Custom\<Family>\`.
+pub fn handle_import_font_file(
+    mut req: Request,
+    state: &Arc<RwLock<AppState>>,
+    query_params: &std::collections::HashMap<String, String>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    use std::io::Read;
+
+    let raw_name = query_params
+        .get("fileName")
+        .or_else(|| query_params.get("filename"))
+        .cloned()
+        .or_else(|| {
+            req.headers()
+                .iter()
+                .find(|h| {
+                    h.field
+                        .as_str()
+                        .as_str()
+                        .eq_ignore_ascii_case("X-File-Name")
+                })
+                .map(|h| super::common::urlencoding_decode(h.value.as_str()))
+        })
+        .unwrap_or_else(|| "CustomFont.ttf".to_string());
+
+    let clean_name = Path::new(&raw_name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("CustomFont.ttf")
+        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'], "_");
+    let ext = Path::new(&clean_name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    if !matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "woff" | "woff2") {
+        respond_json(
+            req,
+            400,
+            serde_json::json!({
+                "success": false,
+                "error": "Unsupported font extension. Allowed: .ttf, .otf, .ttc, .woff, .woff2"
+            }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let mut bytes = Vec::new();
+    let cap = 64 * 1024 * 1024 + 1;
+    if req
+        .as_reader()
+        .take(cap as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.is_empty()
+    {
+        respond_json(
+            req,
+            400,
+            serde_json::json!({ "success": false, "error": "Empty or unreadable font file upload" }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+    if bytes.len() > 64 * 1024 * 1024 {
+        respond_json(
+            req,
+            413,
+            serde_json::json!({ "success": false, "error": "Font file exceeds 64 MB limit" }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let custom_dir = {
+        let st = state.read().unwrap();
+        st.get_custom_fonts_dir()
+    };
+    let staging_dir = custom_dir.join(".staging");
+    let _ = fs::create_dir_all(&staging_dir);
+    let temp_path = staging_dir.join(format!("tmp_{}_{}", std::process::id(), &clean_name));
+    if let Err(e) = fs::write(&temp_path, &bytes) {
+        respond_json(
+            req,
+            500,
+            serde_json::json!({ "success": false, "error": format!("Failed to stage font upload: {}", e) }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let meta_res = FontParser::parse_file(&temp_path);
+    let meta = match meta_res {
+        Ok(m) => m,
+        Err(e) => {
+            let _ = fs::remove_file(&temp_path);
+            let _ = fs::remove_dir(&staging_dir);
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": format!("Invalid or corrupt font file: {}", e) }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let mut st = state.write().unwrap();
+    if let Some(dup) = st.find_duplicate_font(
+        None,
+        Some(&bytes),
+        &clean_name,
+        Some(&meta.family),
+        Some(&meta.subfamily),
+        Some(&meta.postscript_name),
+        bytes.len(),
+    ) {
+        let _ = fs::remove_file(&temp_path);
+        let _ = fs::remove_dir(&staging_dir);
+        respond_json(
+            req,
+            200,
+            serde_json::json!({
+                "success": false,
+                "duplicate": true,
+                "duplicateInfo": dup,
+                "message": format!(
+                    "Duplicate font '{}' skipped (already exists in {} at {})",
+                    clean_name, dup.existing_source, dup.existing_path
+                )
+            }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    // Store cleanly organized inside Fonts/Custom/<SafeFamily>/<FileName>
+    let fam_folder_raw = if meta.family.trim().is_empty() {
+        Path::new(&clean_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Imported")
+    } else {
+        meta.family.trim()
+    };
+    let safe_fam_folder: String = fam_folder_raw
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let safe_fam_dir = safe_fam_folder.trim();
+    let dest_dir = if safe_fam_dir.is_empty() {
+        custom_dir.clone()
+    } else {
+        custom_dir.join(safe_fam_dir)
+    };
+    let _ = fs::create_dir_all(&dest_dir);
+
+    let mut dest_path = dest_dir.join(&clean_name);
+    if dest_path.exists() {
+        let stem = Path::new(&clean_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Font");
+        dest_path = dest_dir.join(format!("{}_{}.{}", stem, bytes.len(), ext));
+    }
+
+    if fs::rename(&temp_path, &dest_path).is_err() {
+        if fs::copy(&temp_path, &dest_path).is_err() {
+            let _ = fs::remove_file(&temp_path);
+            let _ = fs::remove_dir(&staging_dir);
+            respond_json(
+                req,
+                500,
+                serde_json::json!({ "success": false, "error": "Failed to save font file into Custom library" }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+        let _ = fs::remove_file(&temp_path);
+    }
+    let _ = fs::remove_dir(&staging_dir);
+
+    let next_id = st.fonts.iter().map(|f| f.id).max().unwrap_or(0) + 1;
+    let is_arabic = meta.coverage.supports_arabic || meta.family.to_lowercase().contains("arabic");
+    let is_latin = meta.coverage.supports_latin;
+    let is_bilingual = is_arabic && is_latin;
+    let weight = if meta.weight_class > 0 {
+        meta.weight_class
+    } else {
+        crate::server::state::style_to_weight(Some(&meta.subfamily))
+    };
+
+    let record = FontRecord {
+        id: next_id,
+        name: dest_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&clean_name)
+            .to_string(),
+        path: dest_path.to_string_lossy().to_string(),
+        category: if is_arabic {
+            "01 - Arabic Fonts".into()
+        } else {
+            "02 - English Fonts".into()
+        },
+        sub_category: Some("Custom Fonts".to_string()),
+        family: Some(meta.family),
+        format: meta.format,
+        size: bytes.len(),
+        is_arabic,
+        is_latin,
+        is_bilingual,
+        is_variable: meta.is_variable,
+        weight,
+        source: "local".to_string(),
+        is_active: false,
+        is_favorite: false,
+        display_name: Some(meta.full_name),
+        style: Some(meta.subfamily),
+        post_script_name: Some(meta.postscript_name),
+        glyph_count: Some(meta.glyph_count as usize),
+        has_tashkeel: meta.coverage.has_tashkeel,
+        has_extended_arabic: meta.coverage.has_extended_arabic,
+        has_arabic_numerals: meta.coverage.has_arabic_numerals,
+        has_western_numerals: meta.coverage.has_western_numerals,
+        is_local: true,
+    };
+
+    st.fonts.push(record.clone());
+    st.save_user_library_index();
+    drop(st);
+
+    respond_json(
+        req,
+        200,
+        serde_json::json!({
+            "success": true,
+            "duplicate": false,
+            "font": record
+        }),
         cors_origin,
         json_header,
     );
@@ -1077,13 +1379,6 @@ pub fn handle_download_google_font(
             Ok(mut record) => {
                 let mode = data.mode.as_deref().unwrap_or("ram");
                 let activated = if mode == "disk" || mode == "download" {
-                    let dl_dir = LibraryStorageManager::get_downloads_dir();
-                    let _ = fs::create_dir_all(&dl_dir);
-                    let src_path = Path::new(&record.path);
-                    if let Some(fname) = src_path.file_name() {
-                        let dst = dl_dir.join(fname);
-                        let _ = fs::copy(src_path, &dst);
-                    }
                     false
                 } else {
                     let mut st = state.write().unwrap();
@@ -2180,14 +2475,59 @@ pub fn handle_delete_font(
     struct DeleteFontReq {
         id: Option<usize>,
         path: Option<String>,
+        family: Option<String>,
+        #[serde(default)]
+        delete_family: bool,
     }
 
     if let Ok(data) = serde_json::from_str::<DeleteFontReq>(&body) {
-        if data.id.is_none() && data.path.as_deref().unwrap_or("").trim().is_empty() {
+        if data.delete_family {
+            let fam = data.family.as_deref().unwrap_or("").trim();
+            if !fam.is_empty() {
+                let mut st = state.write().unwrap();
+                match st.delete_library_family(fam) {
+                    Ok(removed_list) => {
+                        let deleted_ids: Vec<usize> = removed_list.iter().map(|f| f.id).collect();
+                        let deleted_paths: Vec<String> =
+                            removed_list.iter().map(|f| f.path.clone()).collect();
+                        respond_json(
+                            req,
+                            200,
+                            serde_json::json!({
+                                "success": true,
+                                "family": fam,
+                                "deletedCount": removed_list.len(),
+                                "deletedIds": deleted_ids,
+                                "deletedPaths": deleted_paths,
+                                "message": format!("Removed {} fonts in family '{}' from library", removed_list.len(), fam)
+                            }),
+                            cors_origin,
+                            json_header,
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        respond_json(
+                            req,
+                            404,
+                            serde_json::json!({ "success": false, "error": err }),
+                            cors_origin,
+                            json_header,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
+        if data.id.is_none()
+            && data.path.as_deref().unwrap_or("").trim().is_empty()
+            && data.family.as_deref().unwrap_or("").trim().is_empty()
+        {
             respond_json(
                 req,
                 400,
-                serde_json::json!({ "success": false, "error": "Either 'id' or 'path' must be provided" }),
+                serde_json::json!({ "success": false, "error": "Either 'id', 'path', or 'family' must be provided" }),
                 cors_origin,
                 json_header,
             );
@@ -2195,6 +2535,40 @@ pub fn handle_delete_font(
         }
 
         let mut st = state.write().unwrap();
+        if data.id.is_none() && data.path.as_deref().unwrap_or("").trim().is_empty() {
+            if let Some(ref fam) = data.family {
+                match st.delete_library_family(fam) {
+                    Ok(removed_list) => {
+                        let deleted_ids: Vec<usize> = removed_list.iter().map(|f| f.id).collect();
+                        respond_json(
+                            req,
+                            200,
+                            serde_json::json!({
+                                "success": true,
+                                "family": fam,
+                                "deletedCount": removed_list.len(),
+                                "deletedIds": deleted_ids,
+                                "message": format!("Removed {} fonts in family '{}' from library", removed_list.len(), fam)
+                            }),
+                            cors_origin,
+                            json_header,
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        respond_json(
+                            req,
+                            404,
+                            serde_json::json!({ "success": false, "error": err }),
+                            cors_origin,
+                            json_header,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
         match st.delete_library_font(data.id, data.path.as_deref()) {
             Ok(removed) => {
                 respond_json(
@@ -2205,6 +2579,7 @@ pub fn handle_delete_font(
                         "id": removed.id,
                         "name": removed.name,
                         "path": removed.path,
+                        "deletedCount": 1,
                         "message": format!("Removed font '{}' from library", removed.name)
                     }),
                     cors_origin,
@@ -2229,6 +2604,64 @@ pub fn handle_delete_font(
         req,
         400,
         serde_json::json!({ "success": false, "error": "Invalid delete font payload" }),
+        cors_origin,
+        json_header,
+    );
+}
+
+pub fn handle_delete_family(
+    mut req: Request,
+    state: &Arc<RwLock<AppState>>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let body = read_body(&mut req);
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct DeleteFamReq {
+        family: String,
+    }
+
+    if let Ok(data) = serde_json::from_str::<DeleteFamReq>(&body) {
+        let mut st = state.write().unwrap();
+        match st.delete_library_family(&data.family) {
+            Ok(removed_list) => {
+                let deleted_ids: Vec<usize> = removed_list.iter().map(|f| f.id).collect();
+                let deleted_paths: Vec<String> =
+                    removed_list.iter().map(|f| f.path.clone()).collect();
+                respond_json(
+                    req,
+                    200,
+                    serde_json::json!({
+                        "success": true,
+                        "family": data.family,
+                        "deletedCount": removed_list.len(),
+                        "deletedIds": deleted_ids,
+                        "deletedPaths": deleted_paths,
+                        "message": format!("Deleted entire family '{}' ({} variants)", data.family, removed_list.len())
+                    }),
+                    cors_origin,
+                    json_header,
+                );
+                return;
+            }
+            Err(err) => {
+                respond_json(
+                    req,
+                    404,
+                    serde_json::json!({ "success": false, "error": err }),
+                    cors_origin,
+                    json_header,
+                );
+                return;
+            }
+        }
+    }
+
+    respond_json(
+        req,
+        400,
+        serde_json::json!({ "success": false, "error": "Invalid delete family payload" }),
         cors_origin,
         json_header,
     );

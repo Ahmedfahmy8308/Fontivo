@@ -74,12 +74,12 @@ jobs:
 
           ---
           ### Platform Install Channels & Verification
-          - **Windows:** Download \`Fontivo-v1.0-Setup.exe\` (per-user Inno Setup installer)
+          - **Windows:** Download \`Fontivo-Setup.exe\` (per-user Inno Setup installer)
           - **macOS & Linux:** \`curl -fsSL https://raw.githubusercontent.com/Ahmedfahmy8308/Fontivo/main/scripts/install.sh | bash\`
           - **Cryptographic Verification (Free SLSA Build Provenance):**
             \`\`\`powershell
-            gh attestation verify Fontivo-v1.0-Setup.exe --owner Ahmedfahmy8308
-            Get-FileHash .\Fontivo-v1.0-Setup.exe -Algorithm SHA256
+            gh attestation verify Fontivo-Setup.exe --owner Ahmedfahmy8308
+            Get-FileHash .\Fontivo-Setup.exe -Algorithm SHA256
             \`\`\`
           EOF
 
@@ -166,15 +166,15 @@ jobs:
           }
           & $iscc "installer/Setup_Fontivo.iss"
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
-          if (-not (Test-Path "release/Fontivo-v1.0-Setup.exe")) {
-            throw "Fontivo-v1.0-Setup.exe not generated"
+          if (-not (Test-Path "release/Fontivo-Setup.exe")) {
+            throw "Fontivo-Setup.exe not generated"
           }
 
       - name: Generate SHA-256 Checksums
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path "release/checksums" -Force | Out-Null
-          foreach ($file in @("Fontivo.exe", "Fontivo-v1.0-Setup.exe")) {
+          foreach ($file in @("Fontivo.exe", "Fontivo-Setup.exe")) {
             $filePath = Join-Path "release" $file
             $hash = (Get-FileHash -Path $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
             Set-Content -Path "$filePath.sha256" -Value "$hash  $file`n" -NoNewline
@@ -185,7 +185,7 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            release/Fontivo-v1.0-Setup.exe
+            release/Fontivo-Setup.exe
             release/Fontivo.exe
 
       - name: Upload Windows Checksum Partials
@@ -200,8 +200,8 @@ jobs:
           tag_name: ${{ needs.create-release.outputs.tag }}
           draft: true
           files: |
-            release/Fontivo-v1.0-Setup.exe
-            release/Fontivo-v1.0-Setup.exe.sha256
+            release/Fontivo-Setup.exe
+            release/Fontivo-Setup.exe.sha256
             release/Fontivo.exe
             release/Fontivo.exe.sha256
         env:

@@ -13,9 +13,9 @@ $appDir = Split-Path -Parent $scriptDir
 $rootDir = Split-Path -Parent $appDir
 $releaseDir = Join-Path $appDir "release"
 $exePath = Join-Path $releaseDir "Fontivo.exe"
-$setupPath = Join-Path $releaseDir "Fontivo-v1.0-Setup.exe"
+$setupPath = Join-Path $releaseDir "Fontivo-Setup.exe"
 if (-not (Test-Path $setupPath)) {
-    $setupPath = Join-Path $releaseDir "Fontivo-v2.0-Setup.exe"
+    $setupPath = Join-Path $releaseDir "Fontivo-v1.0-Setup.exe"
 }
 
 $totalPassed = 0
@@ -50,7 +50,7 @@ if (Test-Path $setupPath) {
     $size = (Get-Item $setupPath).Length / 1MB
     Report-Pass ("$([System.IO.Path]::GetFileName($setupPath)) exists ({0:N2} MB)" -f $size)
 } else {
-    Report-Fail "Fontivo-v1.0-Setup.exe missing from release directory!"
+    Report-Fail "Fontivo-Setup.exe missing from release directory!"
 }
 
 # ------------------------------------------------------------------------------

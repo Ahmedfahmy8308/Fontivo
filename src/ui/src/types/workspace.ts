@@ -30,17 +30,22 @@ export interface WorkspaceTask {
 export interface WorkspaceDesignFile {
   name: string;
   path: string;
+  relativePath?: string;
   subfolder?: string;
-  format: "PSD" | "AI" | "INDD" | "PDF" | "SVG" | string;
+  format:
+    "PSD" | "AI" | "INDD" | "PDF" | "SVG" | "PNG" | "JPG" | "WEBP" | string;
+  size?: number;
   usedFonts: string[];
   missingFonts?: string[];
   allActive?: boolean;
+  previewUrl?: string;
 }
 
 export interface WorkspaceFontFile {
   id?: string | number;
   name: string;
   family?: string;
+  style?: string;
   format?: string;
   path: string;
   isActive?: boolean;
@@ -65,8 +70,15 @@ export interface Workspace {
   name: string;
   client: string;
   category: string;
+  business?: string;
+  campaignName?: string;
+  brandTagline?: string;
+  targetAudience?: string;
+  logoDataUrl?: string;
+  logoPath?: string;
   description: string;
   folderPath?: string;
+  folders?: string[];
   typography: WorkspaceTypography;
   palette: ColorSwatch[];
   notes?: string;

@@ -39,7 +39,7 @@ export interface FontCardProps {
   onOpenPack?: (font?: FontItem) => void;
 }
 
-export default function FontCard({
+const FontCard = React.memo(function FontCard({
   font,
   previewText,
   fontSize,
@@ -800,4 +800,6 @@ export default function FontCard({
       </div>
     </div>
   );
-}
+});
+
+export default FontCard;

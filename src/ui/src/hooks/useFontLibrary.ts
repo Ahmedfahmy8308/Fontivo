@@ -377,14 +377,25 @@ export function useFontLibrary({
         timeoutMs: 30000,
       });
       if (data && data.success) {
+        const dupCount = Number(data.skippedDuplicatesCount || 0);
+        const dupSample =
+          Array.isArray(data.duplicates) && data.duplicates[0]
+            ? ` (${data.duplicates[0].fileName} -> ${data.duplicates[0].existingPath})`
+            : "";
         upsertLiveOperation({
           id: opId,
           status: "completed",
           progressPercent: 100,
-          itemsDone: data.importedCount || data.count || 1,
-          itemsTotal: data.importedCount || data.count || 1,
-          stepLabel: "Custom fonts indexed into library!",
-          stepLabelAr: "تم استيراد وفهرسة الخطوط الخاصة بنجاح!",
+          itemsDone: data.importedCount || data.count || 0,
+          itemsTotal: (data.importedCount || 0) + dupCount || 1,
+          stepLabel:
+            dupCount > 0
+              ? `Imported ${data.importedCount || 0} fonts; skipped ${dupCount} duplicates${dupSample}`
+              : `Imported ${data.importedCount || 0} fonts into library!`,
+          stepLabelAr:
+            dupCount > 0
+              ? `تم استيراد ${data.importedCount || 0} خطاً وتجاهل ${dupCount} خطوط مكررة موجودة مسبقاً${dupSample}`
+              : `تم استيراد وفهرسة ${data.importedCount || 0} خطاً بنجاح!`,
         });
         fetchStats();
         fetchCollections();
@@ -424,11 +435,14 @@ export function useFontLibrary({
     });
 
     const newlyImported: FontItem[] = [];
+    const skippedDuplicates: Array<{
+      fileName: string;
+      existingPath: string;
+      existingSource: string;
+    }> = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const ext = (file.name.split(".").pop() || "TTF").toUpperCase();
-      const baseName = file.name.replace(/\.(ttf|otf|ttc|woff2?)$/i, "");
 
       upsertLiveOperation({
         id: opId,
@@ -448,35 +462,25 @@ export function useFontLibrary({
         },
       );
 
-      let importedFont: FontItem | null = null;
       if (res && res.ok) {
         try {
           const d = await res.json();
-          if (d && d.font) importedFont = d.font;
+          if (d?.duplicate && d.duplicateInfo) {
+            skippedDuplicates.push({
+              fileName: d.duplicateInfo.fileName || file.name,
+              existingPath: d.duplicateInfo.existingPath || "",
+              existingSource: d.duplicateInfo.existingSource || "local",
+            });
+            continue;
+          }
+          if (d?.success && d.font) {
+            newlyImported.push(d.font);
+            continue;
+          }
         } catch {
-          // fallback below
+          // ignore parse error
         }
       }
-
-      if (!importedFont) {
-        importedFont = {
-          id: `custom-${Date.now()}-${i}`,
-          name: baseName,
-          displayName: baseName,
-          family: baseName.split("-")[0] || baseName,
-          style: baseName.split("-")[1] || "Regular",
-          format: ext,
-          category: "Custom",
-          provider: "custom",
-          isLocal: true,
-          isDownloaded: true,
-          isActive: true,
-          isFavorite: false,
-          size: file.size,
-          path: (file as any).path || `CustomFonts\\${file.name}`,
-        };
-      }
-      newlyImported.push(importedFont);
     }
 
     if (newlyImported.length > 0) {
@@ -501,7 +505,7 @@ export function useFontLibrary({
               isAllActive: Boolean(f.isActive),
               isFavorite: Boolean(f.isFavorite),
               isLocal: true,
-              provider: "custom",
+              provider: "local",
             });
           }
         }
@@ -509,15 +513,33 @@ export function useFontLibrary({
       });
     }
 
+    const firstDup = skippedDuplicates[0];
     upsertLiveOperation({
       id: opId,
       status: "completed",
       progressPercent: 100,
-      itemsDone: files.length,
+      itemsDone: newlyImported.length,
       itemsTotal: files.length,
-      stepLabel: `Imported ${files.length} custom fonts`,
-      stepLabelAr: `تم استيراد ${files.length} خطوط خاصة بنجاح!`,
+      stepLabel:
+        skippedDuplicates.length > 0
+          ? `Imported ${newlyImported.length}; skipped ${skippedDuplicates.length} duplicates (${firstDup.fileName} already at ${firstDup.existingPath})`
+          : `Imported ${newlyImported.length} custom fonts`,
+      stepLabelAr:
+        skippedDuplicates.length > 0
+          ? `تم استيراد ${newlyImported.length} وتجاهل ${skippedDuplicates.length} مكرر (${firstDup.fileName} موجود مسبقاً في: ${firstDup.existingPath})`
+          : `تم استيراد ${newlyImported.length} خطوط خاصة بنجاح!`,
     });
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("fontivo:import-result", {
+          detail: {
+            importedCount: newlyImported.length,
+            duplicates: skippedDuplicates,
+          },
+        }),
+      );
+    }
 
     fetchStats();
   };

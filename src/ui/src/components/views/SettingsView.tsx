@@ -23,7 +23,10 @@ import {
   Package,
 } from "lucide-react";
 import { SUPPORTED_LANGUAGES } from "../../i18n/locales";
-import { CLOUD_MANIFEST_VERSION, CLOUD_TOTAL_FONTS } from "../../utils/cloudPackages";
+import {
+  CLOUD_MANIFEST_VERSION,
+  CLOUD_TOTAL_FONTS,
+} from "../../utils/cloudPackages";
 import uiPkg from "../../../package.json";
 
 const APP_VERSION = uiPkg.version || "1.0.2";
@@ -63,10 +66,10 @@ export default function SettingsView({
   });
   const [checkingFontsUpdate, setCheckingFontsUpdate] = useState(false);
   const [storagePath, setStoragePath] = useState<string>(
-    "%APPDATA%\\Fontivo\\Fonts",
+    "%LOCALAPPDATA%\\Fontivo\\Fonts",
   );
   const [downloadsDir, setDownloadsDir] = useState<string>(
-    "%APPDATA%\\Fontivo\\Library\\Downloads",
+    "%USERPROFILE%\\Downloads\\Fontivo",
   );
   const [pickingDir, setPickingDir] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
@@ -306,7 +309,10 @@ export default function SettingsView({
                   : "Manage language, appearance, storage path, startup, backup & recovery, and system health.")}
             </p>
           </div>
-          <span className="px-3.5 py-1.5 rounded-full bg-[var(--color-control)] border border-[var(--color-border)] text-xs font-mono font-medium text-[var(--color-text-muted)] self-start md:self-center whitespace-nowrap shrink-0" dir="ltr">
+          <span
+            className="px-3.5 py-1.5 rounded-full bg-[var(--color-control)] border border-[var(--color-border)] text-xs font-mono font-medium text-[var(--color-text-muted)] self-start md:self-center whitespace-nowrap shrink-0"
+            dir="ltr"
+          >
             {`Fontivo v${updateStatus?.currentVersion || APP_VERSION}`}
           </span>
         </div>
@@ -851,7 +857,8 @@ export default function SettingsView({
                     dir="ltr"
                     className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#B7A1D9]/15 text-[#B7A1D9] border border-[#B7A1D9]/30"
                   >
-                    v{fontsUpdateStatus.libraryVersion || CLOUD_MANIFEST_VERSION}
+                    v
+                    {fontsUpdateStatus.libraryVersion || CLOUD_MANIFEST_VERSION}
                   </span>
                 </div>
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-1">

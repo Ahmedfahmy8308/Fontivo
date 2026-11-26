@@ -32,7 +32,7 @@
 
 ### What Must Sync Elsewhere After Changes Here
 1. **After rebuilding a release (`scripts/build-release.ps1`):**
-   - `Fontivo-v1.0-Setup.exe` size and SHA-256 change → update `Fontivo-Site/src/config/version.ts` (`FONTIVO_INSTALLER_SIZE_BYTES`, `FONTIVO_INSTALLER_SIZE_FORMATTED`, `FONTIVO_INSTALLER_SHA256`, `FONTIVO_VERSION`) and `Fontivo-Site/public/api/manifest.json`, then rebuild `Fontivo-Site`.
+   - `Fontivo-Setup.exe` size and SHA-256 change → update `Fontivo-Site/src/config/version.ts` (`FONTIVO_INSTALLER_SIZE_BYTES`, `FONTIVO_INSTALLER_SIZE_FORMATTED`, `FONTIVO_INSTALLER_SHA256`, `FONTIVO_VERSION`) and `Fontivo-Site/public/api/manifest.json`, then rebuild `Fontivo-Site`.
 2. **After updating `assets/diagrams/*.svg` (`architecture-diagram.svg`, `benchmarks.svg`, `fontivo-hero-demo.svg`):**
    - Copy updated SVGs to `Fontivo-Site/public/diagrams/` and verify references in `README.md`.
 3. **After `Fontivo-Fonts` publishes a new release or pack manifest:**

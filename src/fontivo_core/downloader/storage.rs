@@ -1,9 +1,29 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-#[cfg(windows)]
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
+
+static TEST_LIBRARY_OVERRIDE: RwLock<Option<LibraryConfig>> = RwLock::new(None);
+
+fn is_ephemeral_test_path(path_str: &str) -> bool {
+    let lower = path_str.replace('/', "\\").to_ascii_lowercase();
+    lower.contains("fontivo_lib_test_")
+        || lower.contains("fontivo_repair_test_")
+        || lower.contains("fontivo_test_")
+        || (lower.contains("\\temp\\") && lower.contains("fontivo_"))
+        || (lower.contains("\\tmp\\") && lower.contains("fontivo_"))
+}
+
+fn default_export_downloads_dir() -> PathBuf {
+    env::var("USERPROFILE")
+        .or_else(|_| env::var("HOME"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| crate::engine::lifecycle::get_app_data_dir())
+        .join("Downloads")
+        .join("Fontivo")
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -17,8 +37,8 @@ pub struct LibraryConfig {
 
 impl Default for LibraryConfig {
     fn default() -> Self {
-        let base_dir = crate::engine::lifecycle::get_app_data_dir().join("Library");
-        let dl_dir = base_dir.join("Downloads");
+        let base_dir = crate::engine::lifecycle::get_app_data_dir().join("Fonts");
+        let dl_dir = default_export_downloads_dir();
         Self {
             library_dir: base_dir.to_string_lossy().to_string(),
             downloads_dir: dl_dir.to_string_lossy().to_string(),
@@ -38,10 +58,36 @@ impl LibraryStorageManager {
 
     /// Loads the library configuration or returns default
     pub fn get_config() -> LibraryConfig {
+        if let Ok(guard) = TEST_LIBRARY_OVERRIDE.read() {
+            if let Some(ref test_cfg) = *guard {
+                return test_cfg.clone();
+            }
+        }
         let path = Self::config_path();
         if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(cfg) = serde_json::from_str::<LibraryConfig>(&content) {
-                return cfg;
+            if let Ok(mut cfg) = serde_json::from_str::<LibraryConfig>(&content) {
+                if !is_ephemeral_test_path(&cfg.library_dir) {
+                    // Upgrade legacy AppData\Roaming\Fontivo\Library paths seamlessly
+                    let low = cfg.library_dir.replace('/', "\\").to_ascii_lowercase();
+                    if low.ends_with("\\appdata\\roaming\\fontivo\\library")
+                        || low.ends_with("\\appdata\\local\\fontivo\\library")
+                    {
+                        cfg.library_dir = crate::engine::lifecycle::get_app_data_dir()
+                            .join("Fonts")
+                            .to_string_lossy()
+                            .to_string();
+                        if cfg
+                            .downloads_dir
+                            .to_ascii_lowercase()
+                            .contains("\\library\\downloads")
+                        {
+                            cfg.downloads_dir =
+                                default_export_downloads_dir().to_string_lossy().to_string();
+                        }
+                        let _ = Self::save_config(&cfg);
+                    }
+                    return cfg;
+                }
             }
         }
         let def = LibraryConfig::default();
@@ -49,9 +95,23 @@ impl LibraryStorageManager {
         def
     }
 
-    /// Saves the library configuration
+    /// Saves the library configuration (keeping test temp overrides isolated in memory)
     pub fn save_config(config: &LibraryConfig) -> Result<(), String> {
+        if is_ephemeral_test_path(&config.library_dir)
+            || is_ephemeral_test_path(&config.downloads_dir)
+        {
+            if let Ok(mut guard) = TEST_LIBRARY_OVERRIDE.write() {
+                *guard = Some(config.clone());
+            }
+            return Ok(());
+        }
+        if let Ok(mut guard) = TEST_LIBRARY_OVERRIDE.write() {
+            *guard = None;
+        }
         let path = Self::config_path();
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
         let json = serde_json::to_string_pretty(config)
             .map_err(|e| format!("Failed to serialize library config: {}", e))?;
         fs::write(&path, json)
@@ -148,19 +208,21 @@ impl LibraryStorageManager {
         Ok(validated)
     }
 
-    /// Returns the active downloads directory (defaults to `<storage_dir>/Downloads`)
+    /// Returns the active downloads directory (defaults cleanly to user's Downloads\Fontivo)
     pub fn get_downloads_dir() -> PathBuf {
         let cfg = Self::get_config();
-        if !cfg.downloads_dir.trim().is_empty() {
+        if !cfg.downloads_dir.trim().is_empty()
+            && !cfg
+                .downloads_dir
+                .to_ascii_lowercase()
+                .contains("\\library\\downloads")
+        {
             let p = PathBuf::from(&cfg.downloads_dir);
             if let Ok(validated) = Self::validate_library_dir(&p) {
-                let _ = fs::create_dir_all(&validated);
                 return validated;
             }
         }
-        let fallback = Self::get_storage_dir().join("Downloads");
-        let _ = fs::create_dir_all(&fallback);
-        fallback
+        default_export_downloads_dir()
     }
 
     /// Updates the configured downloads directory
@@ -172,41 +234,46 @@ impl LibraryStorageManager {
         Ok(validated)
     }
 
-    /// Returns the active library root storage directory
+    /// Returns the active library root storage directory (`%LOCALAPPDATA%\Fontivo\Fonts`)
     pub fn get_storage_dir() -> PathBuf {
         let cfg = Self::get_config();
-        let is_polluted_test_dir = cfg
-            .library_dir
-            .to_ascii_lowercase()
-            .contains("fontivo_lib_test_");
-        if !is_polluted_test_dir {
-            let path = PathBuf::from(&cfg.library_dir);
-            if let Ok(validated) = Self::validate_library_dir(&path) {
-                return validated;
-            }
+        let path = PathBuf::from(&cfg.library_dir);
+        if let Ok(validated) = Self::validate_library_dir(&path) {
+            return validated;
         }
-        let fallback = crate::engine::lifecycle::get_app_data_dir().join("Library");
+        let fallback = crate::engine::lifecycle::get_app_data_dir().join("Fonts");
         let _ = fs::create_dir_all(&fallback);
         fallback
     }
 
-    /// Subdirectory for downloaded ZIP font packs
+    /// Subdirectory for temporary ZIP archives during pack download (`Cache/PackArchives` when default)
     pub fn get_packs_dir() -> PathBuf {
-        let dir = Self::get_storage_dir().join("Packs");
+        let default_fonts = crate::engine::lifecycle::get_app_data_dir().join("Fonts");
+        let storage = Self::get_storage_dir();
+        let dir = if storage
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&default_fonts.to_string_lossy())
+        {
+            crate::engine::lifecycle::get_app_data_dir()
+                .join("Cache")
+                .join("PackArchives")
+        } else {
+            storage.join("PacksArchives")
+        };
         let _ = fs::create_dir_all(&dir);
         dir
     }
 
-    /// Subdirectory for downloaded Google Fonts
+    /// Subdirectory for downloaded Google Fonts (`%LOCALAPPDATA%\Fontivo\Fonts\Google`)
     pub fn get_google_dir() -> PathBuf {
-        let dir = Self::get_storage_dir().join("GoogleFonts");
+        let dir = Self::get_storage_dir().join("Google");
         let _ = fs::create_dir_all(&dir);
         dir
     }
 
-    /// Subdirectory for extracted font pack files
+    /// Subdirectory for extracted cloud font packs (`%LOCALAPPDATA%\Fontivo\Fonts\Packs`)
     pub fn get_extracted_dir() -> PathBuf {
-        let dir = Self::get_storage_dir().join("Extracted");
+        let dir = Self::get_storage_dir().join("Packs");
         let _ = fs::create_dir_all(&dir);
         dir
     }
@@ -267,9 +334,27 @@ impl LibraryStorageManager {
     }
 
     /// Calculates total storage space used by all files in the library directory in bytes
+    /// (cached for 15s to prevent expensive 10k+ file directory walks on every UI stats poll).
     pub fn calculate_used_space() -> u64 {
+        use std::sync::{Mutex, OnceLock};
+        use std::time::{Duration, Instant};
+
+        static SPACE_CACHE: OnceLock<Mutex<Option<(Instant, u64)>>> = OnceLock::new();
+        let cache = SPACE_CACHE.get_or_init(|| Mutex::new(None));
+        if let Ok(guard) = cache.lock() {
+            if let Some((ts, bytes)) = *guard {
+                if ts.elapsed() < Duration::from_secs(15) {
+                    return bytes;
+                }
+            }
+        }
+
         let root = Self::get_storage_dir();
-        Self::dir_size_recursive(&root)
+        let bytes = Self::dir_size_recursive(&root);
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((Instant::now(), bytes));
+        }
+        bytes
     }
 
     fn dir_size_recursive(path: &Path) -> u64 {

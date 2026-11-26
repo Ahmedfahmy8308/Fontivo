@@ -98,6 +98,11 @@ class TestWorkspacesEngine(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        try:
+            requests.delete(f"{BASE_URL}/api/workspaces/{cls.test_ws_id}", timeout=2)
+        except Exception:
+            pass
+
         if cls.server_process:
             cls.server_process.terminate()
             try:

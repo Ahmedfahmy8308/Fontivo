@@ -10,7 +10,25 @@ use crate::engine::LibraryStorageManager;
 use crate::parser::FontParser;
 use crate::server::state::{AppState, FamilyGroup, FontRecord};
 
-pub fn filter_fonts(st: &AppState, q: &HashMap<String, String>) -> Vec<FontRecord> {
+#[inline]
+fn contains_ci(haystack: &str, needle_lower: &str, is_ascii_needle: bool) -> bool {
+    if is_ascii_needle && haystack.is_ascii() {
+        let nb = needle_lower.as_bytes();
+        let hb = haystack.as_bytes();
+        if nb.is_empty() {
+            return true;
+        }
+        if nb.len() > hb.len() {
+            return false;
+        }
+        hb.windows(nb.len())
+            .any(|w| w.iter().zip(nb).all(|(a, b)| a.to_ascii_lowercase() == *b))
+    } else {
+        haystack.to_lowercase().contains(needle_lower)
+    }
+}
+
+pub fn filter_font_refs<'a>(st: &'a AppState, q: &HashMap<String, String>) -> Vec<&'a FontRecord> {
     let active_only = q.get("activeOnly").map(|v| v == "true").unwrap_or(false);
     let inactive_only = q.get("inactiveOnly").map(|v| v == "true").unwrap_or(false);
     let favorite_only = q.get("favoriteOnly").map(|v| v == "true").unwrap_or(false);
@@ -21,7 +39,9 @@ pub fn filter_fonts(st: &AppState, q: &HashMap<String, String>) -> Vec<FontRecor
     let style = q.get("style").map(|s| s.as_str());
     let format = q.get("format").map(|s| s.as_str());
     let collection = q.get("collection").map(|s| s.as_str());
-    let search = q.get("search").map(|s| s.to_lowercase());
+    let search_raw = q.get("search").map(|s| s.trim().to_lowercase());
+    let search_term = search_raw.as_deref().filter(|s| !s.is_empty());
+    let is_ascii_search = search_term.map(|s| s.is_ascii()).unwrap_or(true);
     let local_only = q
         .get("localOnly")
         .or_else(|| q.get("downloadedOnly"))
@@ -40,7 +60,7 @@ pub fn filter_fonts(st: &AppState, q: &HashMap<String, String>) -> Vec<FontRecor
             .map(|ids| ids.iter().cloned().collect())
     });
 
-    let mut filtered: Vec<FontRecord> = st
+    let mut filtered: Vec<&'a FontRecord> = st
         .fonts
         .iter()
         .filter(|f| {
@@ -59,15 +79,15 @@ pub fn filter_fonts(st: &AppState, q: &HashMap<String, String>) -> Vec<FontRecor
 
             if let Some(ref src) = source_filter {
                 if !src.is_empty() && src != "all" {
-                    let font_src = if f.source.is_empty() {
+                    let matched = if !f.source.is_empty() {
+                        f.source.eq_ignore_ascii_case(src)
+                    } else {
                         crate::server::state::classify_font_source(
                             &f.path,
                             f.sub_category.as_deref(),
-                        )
-                    } else {
-                        f.source.to_ascii_lowercase()
+                        ) == *src
                     };
-                    if font_src != *src {
+                    if !matched {
                         return false;
                     }
                 }
@@ -93,45 +113,48 @@ pub fn filter_fonts(st: &AppState, q: &HashMap<String, String>) -> Vec<FontRecor
 
             if let Some(ref prov) = provider {
                 if prov == "google" {
-                    let name = f.name.to_lowercase();
-                    let path = f.path.to_lowercase();
-                    let is_google = path.contains("google")
-                        || name.contains("cairo")
-                        || name.contains("amiri")
-                        || name.contains("almarai")
-                        || name.contains("tajawal")
-                        || name.contains("changa")
-                        || name.contains("el messiri")
-                        || name.contains("lateef")
-                        || name.contains("scheherazade")
-                        || name.contains("mada")
-                        || name.contains("rakkas")
-                        || name.contains("reem kufi")
-                        || name.contains("katibeh")
-                        || name.contains("marhey")
-                        || name.contains("vazirmatn")
-                        || name.contains("noto")
-                        || name.contains("roboto")
-                        || name.contains("open sans")
-                        || name.contains("lato")
-                        || name.contains("montserrat")
-                        || name.contains("poppins")
-                        || name.contains("inter")
-                        || name.contains("oswald")
-                        || name.contains("raleway")
-                        || name.contains("ubuntu")
-                        || name.contains("merriweather")
-                        || name.contains("playfair")
-                        || name.contains("lora")
-                        || name.contains("fira")
-                        || name.contains("nunito")
-                        || name.contains("rubik")
-                        || name.contains("karla")
-                        || name.contains("quicksand")
-                        || name.contains("barlow")
-                        || name.contains("manrope")
-                        || name.contains("dm sans")
-                        || name.contains("bebas");
+                    let is_google = f.source.eq_ignore_ascii_case("google")
+                        || contains_ci(&f.path, "google", true)
+                        || [
+                            "cairo",
+                            "amiri",
+                            "almarai",
+                            "tajawal",
+                            "changa",
+                            "el messiri",
+                            "lateef",
+                            "scheherazade",
+                            "mada",
+                            "rakkas",
+                            "reem kufi",
+                            "katibeh",
+                            "marhey",
+                            "vazirmatn",
+                            "noto",
+                            "roboto",
+                            "open sans",
+                            "lato",
+                            "montserrat",
+                            "poppins",
+                            "inter",
+                            "oswald",
+                            "raleway",
+                            "ubuntu",
+                            "merriweather",
+                            "playfair",
+                            "lora",
+                            "fira",
+                            "nunito",
+                            "rubik",
+                            "karla",
+                            "quicksand",
+                            "barlow",
+                            "manrope",
+                            "dm sans",
+                            "bebas",
+                        ]
+                        .iter()
+                        .any(|kw| contains_ci(&f.name, kw, true));
                     if !is_google {
                         return false;
                     }
@@ -152,30 +175,37 @@ pub fn filter_fonts(st: &AppState, q: &HashMap<String, String>) -> Vec<FontRecor
                         if !f.category.contains("Symbols") {
                             return false;
                         }
-                    } else {
-                        if !f.category.to_lowercase().contains(&cat.to_lowercase()) {
-                            return false;
-                        }
+                    } else if !contains_ci(&f.category, &cat.to_lowercase(), cat.is_ascii()) {
+                        return false;
                     }
                 }
             }
 
             if let Some(sub) = sub_category {
-                if f.sub_category.as_deref().unwrap_or("").to_lowercase() != sub.to_lowercase() {
+                if !f
+                    .sub_category
+                    .as_deref()
+                    .unwrap_or("")
+                    .eq_ignore_ascii_case(sub)
+                {
                     return false;
                 }
             }
 
             if let Some(st_val) = style {
                 if st_val != "all"
-                    && f.style.as_deref().unwrap_or("").to_lowercase() != st_val.to_lowercase()
+                    && !f
+                        .style
+                        .as_deref()
+                        .unwrap_or("")
+                        .eq_ignore_ascii_case(st_val)
                 {
                     return false;
                 }
             }
 
             if let Some(fmt_val) = format {
-                if fmt_val != "all" && f.format.to_lowercase() != fmt_val.to_lowercase() {
+                if fmt_val != "all" && !f.format.eq_ignore_ascii_case(fmt_val) {
                     return false;
                 }
             }
@@ -186,27 +216,19 @@ pub fn filter_fonts(st: &AppState, q: &HashMap<String, String>) -> Vec<FontRecor
                 }
             }
 
-            if let Some(ref term) = search {
-                let t = term.trim();
-                if !t.is_empty() {
-                    let matches = f.name.to_lowercase().contains(t)
-                        || f.display_name
-                            .as_deref()
-                            .unwrap_or("")
-                            .to_lowercase()
-                            .contains(t)
-                        || f.family.as_deref().unwrap_or("").to_lowercase().contains(t)
-                        || f.category.to_lowercase().contains(t)
-                        || f.style.as_deref().unwrap_or("").to_lowercase().contains(t);
-                    if !matches {
-                        return false;
-                    }
+            if let Some(t) = search_term {
+                let matches = contains_ci(&f.name, t, is_ascii_search)
+                    || contains_ci(f.display_name.as_deref().unwrap_or(""), t, is_ascii_search)
+                    || contains_ci(f.family.as_deref().unwrap_or(""), t, is_ascii_search)
+                    || contains_ci(&f.category, t, is_ascii_search)
+                    || contains_ci(f.style.as_deref().unwrap_or(""), t, is_ascii_search);
+                if !matches {
+                    return false;
                 }
             }
 
             true
         })
-        .cloned()
         .collect();
 
     if is_recent {
@@ -214,7 +236,6 @@ pub fn filter_fonts(st: &AppState, q: &HashMap<String, String>) -> Vec<FontRecor
         filtered.truncate(100);
     }
 
-    // Apply server-side sort if requested via `sortBy` or `sort` query param
     let sort_by = q
         .get("sortBy")
         .or_else(|| q.get("sort"))
@@ -272,6 +293,10 @@ pub fn filter_fonts(st: &AppState, q: &HashMap<String, String>) -> Vec<FontRecor
     }
 
     filtered
+}
+
+pub fn filter_fonts(st: &AppState, q: &HashMap<String, String>) -> Vec<FontRecord> {
+    filter_font_refs(st, q).into_iter().cloned().collect()
 }
 
 pub fn handle_stats(
@@ -455,7 +480,7 @@ pub fn handle_fonts(
     json_header: Header,
 ) {
     let st = state.read().unwrap();
-    let filtered = filter_fonts(&st, query_params);
+    let filtered = filter_font_refs(&st, query_params);
     let total = filtered.len();
 
     let limit: usize = query_params
@@ -474,7 +499,12 @@ pub fn handle_fonts(
     let total_pages = if limit > 0 { total.div_ceil(limit) } else { 1 };
     let current_page = if limit > 0 { (offset / limit) + 1 } else { 1 };
 
-    let paged: Vec<FontRecord> = filtered.into_iter().skip(offset).take(limit).collect();
+    let paged: Vec<FontRecord> = filtered
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .cloned()
+        .collect();
 
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -538,48 +568,95 @@ pub fn handle_families(
     json_header: Header,
 ) {
     let st = state.read().unwrap();
-    let filtered = filter_fonts(&st, query_params);
+    let filtered = filter_font_refs(&st, query_params);
 
-    let mut map: HashMap<String, FamilyGroup> = HashMap::new();
+    struct FamBucket<'a> {
+        family: String,
+        source: String,
+        category: String,
+        sub_category: Option<String>,
+        fonts: Vec<&'a FontRecord>,
+    }
+
+    let mut map: HashMap<String, FamBucket<'_>> = HashMap::new();
     for f in filtered {
         let fam_display = f
             .family
-            .clone()
-            .unwrap_or_else(|| f.display_name.clone().unwrap_or_else(|| f.name.clone()));
+            .as_deref()
+            .or(f.display_name.as_deref())
+            .unwrap_or(&f.name);
         let fam_key = fam_display.trim().to_lowercase();
-        let font_src = if f.source.is_empty() {
-            crate::server::state::classify_font_source(&f.path, f.sub_category.as_deref())
-        } else {
-            f.source.clone()
-        };
-        let entry = map.entry(fam_key).or_insert_with(|| FamilyGroup {
-            family: fam_display,
-            is_arabic: f.is_arabic,
-            is_latin: f.is_latin,
-            is_bilingual: f.is_bilingual,
-            is_variable: f.is_variable,
-            source: font_src,
-            category: f.category.clone(),
-            sub_category: f.sub_category.clone(),
-            count: 0,
-            is_active: false,
-            is_all_active: false,
-            is_favorite: false,
-            fonts: Vec::new(),
-            has_tashkeel: false,
-            has_extended_arabic: false,
-            has_arabic_numerals: false,
-            has_western_numerals: false,
-            is_local: false,
+        let entry = map.entry(fam_key).or_insert_with(|| {
+            let font_src = if f.source.is_empty() {
+                crate::server::state::classify_font_source(&f.path, f.sub_category.as_deref())
+            } else {
+                f.source.clone()
+            };
+            FamBucket {
+                family: fam_display.to_string(),
+                source: font_src,
+                category: f.category.clone(),
+                sub_category: f.sub_category.clone(),
+                fonts: Vec::new(),
+            }
         });
         entry.fonts.push(f);
     }
 
-    let mut families: Vec<FamilyGroup> = map
-        .into_values()
-        .map(|mut fam| {
-            // Sort variants by numeric weight ascending, Regular before Italic
-            fam.fonts.sort_by(|a, b| {
+    let mut buckets: Vec<FamBucket<'_>> = map.into_values().collect();
+    let sort_param = query_params
+        .get("sortBy")
+        .or_else(|| query_params.get("sort"))
+        .map(|s| s.trim().to_ascii_lowercase());
+    match sort_param.as_deref() {
+        Some("name-desc") => {
+            buckets.sort_by(|a, b| b.family.to_lowercase().cmp(&a.family.to_lowercase()));
+        }
+        Some("styles-desc") | Some("count-desc") => {
+            buckets.sort_by(|a, b| {
+                b.fonts
+                    .len()
+                    .cmp(&a.fonts.len())
+                    .then_with(|| a.family.to_lowercase().cmp(&b.family.to_lowercase()))
+            });
+        }
+        Some("styles-asc") | Some("count-asc") => {
+            buckets.sort_by(|a, b| {
+                a.fonts
+                    .len()
+                    .cmp(&b.fonts.len())
+                    .then_with(|| a.family.to_lowercase().cmp(&b.family.to_lowercase()))
+            });
+        }
+        _ => {
+            buckets.sort_by(|a, b| a.family.to_lowercase().cmp(&b.family.to_lowercase()));
+        }
+    }
+
+    let total = buckets.len();
+    let limit: usize = query_params
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(40);
+    let page: usize = query_params
+        .get("page")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let offset: usize = query_params
+        .get("offset")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| if page > 0 { (page - 1) * limit } else { 0 });
+
+    let total_pages = if limit > 0 { total.div_ceil(limit) } else { 1 };
+    let current_page = if limit > 0 { (offset / limit) + 1 } else { 1 };
+
+    let paged: Vec<FamilyGroup> = buckets
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|bucket| {
+            let mut fam_fonts: Vec<FontRecord> = bucket.fonts.into_iter().cloned().collect();
+            fam_fonts.sort_by(|a, b| {
                 let wa = if a.weight > 0 {
                     a.weight
                 } else {
@@ -609,51 +686,41 @@ pub fn handle_families(
                         .cmp(b.style.as_deref().unwrap_or(""))
                 })
             });
-            fam.count = fam.fonts.len();
-            let act_count = fam.fonts.iter().filter(|f| f.is_active).count();
-            let fav_count = fam.fonts.iter().filter(|f| f.is_favorite).count();
-            fam.is_active = act_count > 0;
-            fam.is_all_active = act_count == fam.count && fam.count > 0;
-            fam.is_favorite = fav_count > 0;
-            fam.is_arabic = fam.fonts.iter().any(|f| f.is_arabic);
-            fam.is_latin = fam.fonts.iter().any(|f| f.is_latin);
-            fam.is_bilingual =
-                fam.fonts.iter().any(|f| f.is_bilingual) || (fam.is_arabic && fam.is_latin);
-            fam.is_variable = fam.fonts.iter().any(|f| f.is_variable);
-            fam.has_tashkeel = fam.fonts.iter().any(|f| f.has_tashkeel);
-            fam.has_extended_arabic = fam.fonts.iter().any(|f| f.has_extended_arabic);
-            fam.has_arabic_numerals = fam.fonts.iter().any(|f| f.has_arabic_numerals);
-            fam.has_western_numerals = fam.fonts.iter().any(|f| f.has_western_numerals);
-            fam.is_local = fam.fonts.iter().any(|f| f.is_local);
-            fam
+            let count = fam_fonts.len();
+            let act_count = fam_fonts.iter().filter(|f| f.is_active).count();
+            let fav_count = fam_fonts.iter().filter(|f| f.is_favorite).count();
+            let is_arabic = fam_fonts.iter().any(|f| f.is_arabic);
+            let is_latin = fam_fonts.iter().any(|f| f.is_latin);
+            let is_bilingual = fam_fonts.iter().any(|f| f.is_bilingual) || (is_arabic && is_latin);
+            let is_variable = fam_fonts.iter().any(|f| f.is_variable);
+            let has_tashkeel = fam_fonts.iter().any(|f| f.has_tashkeel);
+            let has_extended_arabic = fam_fonts.iter().any(|f| f.has_extended_arabic);
+            let has_arabic_numerals = fam_fonts.iter().any(|f| f.has_arabic_numerals);
+            let has_western_numerals = fam_fonts.iter().any(|f| f.has_western_numerals);
+            let is_local = fam_fonts.iter().any(|f| f.is_local);
+
+            FamilyGroup {
+                family: bucket.family,
+                is_arabic,
+                is_latin,
+                is_bilingual,
+                is_variable,
+                source: bucket.source,
+                category: bucket.category,
+                sub_category: bucket.sub_category,
+                count,
+                is_active: act_count > 0,
+                is_all_active: act_count == count && count > 0,
+                is_favorite: fav_count > 0,
+                fonts: fam_fonts,
+                has_tashkeel,
+                has_extended_arabic,
+                has_arabic_numerals,
+                has_western_numerals,
+                is_local,
+            }
         })
         .collect();
-
-    let sort_param = query_params
-        .get("sortBy")
-        .or_else(|| query_params.get("sort"))
-        .map(|s| s.as_str());
-    sort_families(&mut families, sort_param);
-
-    let total = families.len();
-
-    let limit: usize = query_params
-        .get("limit")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(40);
-    let page: usize = query_params
-        .get("page")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1);
-    let offset: usize = query_params
-        .get("offset")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| if page > 0 { (page - 1) * limit } else { 0 });
-
-    let total_pages = if limit > 0 { total.div_ceil(limit) } else { 1 };
-    let current_page = if limit > 0 { (offset / limit) + 1 } else { 1 };
-
-    let paged: Vec<FamilyGroup> = families.into_iter().skip(offset).take(limit).collect();
 
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]

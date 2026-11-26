@@ -562,6 +562,11 @@ impl DownloadManager {
             }
         }
 
+        // Remove temporary compressed ZIP archive once extracted & verified cleanly
+        // so the user isn't storing both 864 MB of ZIPs and 1.68 GB of extracted fonts.
+        let _ = fs::remove_file(&final_zip);
+        let _ = fs::remove_file(&part_file);
+
         // Phase 5: Completed
         {
             let mut p = progress.write().unwrap();

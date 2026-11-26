@@ -92,13 +92,13 @@ pub type UpdateCheckResult = UpdateStatus;
 pub struct AutoUpdater;
 
 impl AutoUpdater {
-    pub const CURRENT_VERSION: &'static str = "1.0.2";
+    pub const CURRENT_VERSION: &'static str = "1.0.3";
     pub const DEFAULT_MANIFEST_URL: &'static str =
         "https://api.github.com/repos/Ahmedfahmy8308/Fontivo/releases/latest";
 
     fn expected_release_asset_name() -> &'static str {
         if cfg!(windows) {
-            "Fontivo-v1.0-Setup.exe"
+            "Fontivo-Setup.exe"
         } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
             "Fontivo-macos-arm64.tar.gz"
         } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {

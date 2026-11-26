@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Briefcase,
   Plus,
@@ -15,10 +15,19 @@ import {
   FileCode,
   Type,
   FolderOpen,
+  FolderPlus,
   FolderSearch,
   RefreshCw,
   FileCheck,
   HardDrive,
+  Upload,
+  Image as ImageIcon,
+  ChevronRight,
+  ChevronLeft,
+  Pencil,
+  Sparkles,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import {
   getContrastRatio,
@@ -30,16 +39,85 @@ import {
   exportToCssVariables,
   exportToTailwindConfig,
 } from "../../utils/aseParser";
-import { safeFetchJson } from "../../utils/safeFetch";
+import { safeFetch, safeFetchJson } from "../../utils/safeFetch";
 import { upsertLiveOperation } from "../../utils/operationsBus";
+
+export const WORKSPACE_CATEGORIES = [
+  {
+    id: "Branding & Visual Identity",
+    en: "Branding & Visual Identity",
+    ar: "الهوية البصرية والعلامات التجارية",
+  },
+  {
+    id: "Design Agency / Studio",
+    en: "Design Agency / Studio",
+    ar: "استوديو تصميم / وكالة إبداعية",
+  },
+  {
+    id: "Fintech / SaaS",
+    en: "Fintech / SaaS",
+    ar: "التقنية المالية والبرمجيات (SaaS)",
+  },
+  {
+    id: "Social Media Campaigns",
+    en: "Social Media Campaigns",
+    ar: "حملات التسويق والسوشيال ميديا",
+  },
+  {
+    id: "Editorial & Publishing",
+    en: "Editorial & Publishing",
+    ar: "النشر والمجلات والمحتوى التحريري",
+  },
+  {
+    id: "E-Commerce / Retail",
+    en: "E-Commerce / Retail",
+    ar: "التجارة الإلكترونية والتجزئة",
+  },
+  {
+    id: "Packaging & Print",
+    en: "Packaging & Print",
+    ar: "التغليف والمطبوعات التجارية",
+  },
+  {
+    id: "Architecture & Real Estate",
+    en: "Architecture & Real Estate",
+    ar: "العمارة والتطوير العقاري",
+  },
+  {
+    id: "Education & Media",
+    en: "Education & Media",
+    ar: "التعليم والإعلام الرقمي",
+  },
+];
+
+export function localizeWorkspaceCategory(
+  raw: string | undefined,
+  isRtl: boolean,
+): string {
+  if (!raw) return isRtl ? "الهوية البصرية" : "Brand System";
+  const found = WORKSPACE_CATEGORIES.find(
+    (c) =>
+      c.id.toLowerCase() === raw.trim().toLowerCase() ||
+      c.en.toLowerCase() === raw.trim().toLowerCase(),
+  );
+  if (found) return isRtl ? found.ar : found.en;
+  return raw;
+}
 
 export const getFontDisplayName = (font: any): string => {
   if (!font) return "";
   if (typeof font === "string") return font;
   if (typeof font === "object") {
-    return (
-      font.name || font.family || (font.fontId ? `Font #${font.fontId}` : "")
-    );
+    const base =
+      font.name || font.family || (font.fontId ? `Font #${font.fontId}` : "");
+    if (
+      base &&
+      font.style &&
+      !base.toLowerCase().includes(String(font.style).toLowerCase())
+    ) {
+      return `${base} — ${font.style}`;
+    }
+    return base;
   }
   return String(font);
 };
@@ -374,14 +452,31 @@ export default function WorkspacesView({
   const [newSwatchHex, setNewSwatchHex] = useState("#F16B50");
   const [newSwatchName, setNewSwatchName] = useState("");
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
+  const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(
+    null,
+  );
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [currentFolderPath, setCurrentFolderPath] = useState<string>("Designs");
+  const [newSubfolderName, setNewSubfolderName] = useState("");
+  const [creatingSubfolder, setCreatingSubfolder] = useState(false);
+  const [uploadingDesign, setUploadingDesign] = useState(false);
+  const designInputRef = useRef<HTMLInputElement | null>(null);
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
 
-  // New Workspace form state
+  // Create / Edit Workspace form state
   const [formName, setFormName] = useState("");
   const [formClient, setFormClient] = useState("");
-  const [formCategory, setFormCategory] = useState("Fintech / SaaS");
+  const [formCategory, setFormCategory] = useState(
+    "Branding & Visual Identity",
+  );
+  const [formCampaign, setFormCampaign] = useState("");
   const [formHeadingFont, setFormHeadingFont] = useState("");
   const [formBodyFont, setFormBodyFont] = useState("");
+  const [formAccentFont, setFormAccentFont] = useState("");
   const [formDescription, setFormDescription] = useState("");
+  const [formNotes, setFormNotes] = useState("");
+  const [formLogoDataUrl, setFormLogoDataUrl] = useState<string>("");
+  const [formPalettePreset, setFormPalettePreset] = useState<string>("plum");
 
   useEffect(() => {
     try {
@@ -405,7 +500,37 @@ export default function WorkspacesView({
   const physicalPath =
     activeWorkspace.folderPath ||
     activeWorkspace.path ||
-    `C:\\Users\\Public\\Documents\\Fontivo\\Workspaces\\${activeWorkspace.id}`;
+    `%LOCALAPPDATA%\\Fontivo\\Workspaces\\${activeWorkspace.id}`;
+
+  const workspaceFoldersList: string[] = React.useMemo(() => {
+    const base = ["Fonts", "Designs", "Palettes", "Guidelines"];
+    const custom = Array.isArray(activeWorkspace.folders)
+      ? activeWorkspace.folders
+      : [];
+    const merged = new Set<string>(base);
+    for (const f of custom) {
+      const clean = String(f || "")
+        .replace(/\\/g, "/")
+        .replace(/^\/+|\/+$/g, "");
+      if (clean) merged.add(clean);
+    }
+    return Array.from(merged);
+  }, [activeWorkspace.folders]);
+
+  const childFoldersInCurrentPath = React.useMemo(() => {
+    const prefix = currentFolderPath ? `${currentFolderPath}/` : "";
+    const direct = new Set<string>();
+    for (const full of workspaceFoldersList) {
+      if (!currentFolderPath) {
+        direct.add(full.split("/")[0]);
+      } else if (full.toLowerCase().startsWith(prefix.toLowerCase())) {
+        const rest = full.slice(prefix.length);
+        const seg = rest.split("/")[0];
+        if (seg) direct.add(`${currentFolderPath}/${seg}`);
+      }
+    }
+    return Array.from(direct);
+  }, [workspaceFoldersList, currentFolderPath]);
 
   const subfolders = activeWorkspace.subfolders || {
     fonts: [
@@ -855,9 +980,253 @@ export default function WorkspacesView({
     );
   };
 
-  const handleCreateWorkspace = (e: any) => {
+  const openCreateModal = () => {
+    setEditingWorkspaceId(null);
+    setFormName("");
+    setFormClient("");
+    setFormCategory("Branding & Visual Identity");
+    setFormCampaign("");
+    setFormHeadingFont("");
+    setFormBodyFont("");
+    setFormAccentFont("");
+    setFormDescription("");
+    setFormNotes("");
+    setFormLogoDataUrl("");
+    setFormPalettePreset("plum");
+    setIsCreatingWorkspace(true);
+  };
+
+  const openEditModal = () => {
+    if (!activeWorkspace) return;
+    setEditingWorkspaceId(activeWorkspace.id);
+    setFormName(activeWorkspace.name || "");
+    setFormClient(activeWorkspace.client || "");
+    setFormCategory(activeWorkspace.category || "Branding & Visual Identity");
+    setFormCampaign(activeWorkspace.campaignName || "");
+    setFormHeadingFont(
+      getFontDisplayName(activeWorkspace.typography?.headingFont),
+    );
+    setFormBodyFont(getFontDisplayName(activeWorkspace.typography?.bodyFont));
+    setFormAccentFont(
+      getFontDisplayName(activeWorkspace.typography?.accentFont),
+    );
+    setFormDescription(activeWorkspace.description || "");
+    setFormNotes(activeWorkspace.notes || "");
+    setFormLogoDataUrl(activeWorkspace.logoDataUrl || "");
+    setIsCreatingWorkspace(true);
+  };
+
+  const handleLogoFileSelected = (file?: File | null) => {
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setNotification({
+        type: "error",
+        text: isRtl
+          ? "حجم الشعار يجب أن لا يتجاوز 2 ميجابايت"
+          : "Logo file must be under 2 MB",
+      });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setFormLogoDataUrl(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleCreateNestedFolder = async () => {
+    if (!activeWorkspace || !newSubfolderName.trim()) return;
+    const cleanSeg = newSubfolderName.trim().replace(/[/\\:*?"<>|]/g, "-");
+    const relativePath = currentFolderPath
+      ? `${currentFolderPath}/${cleanSeg}`
+      : cleanSeg;
+    setCreatingSubfolder(true);
+    try {
+      await safeFetchJson<any>(
+        `/api/workspaces/${activeWorkspace.id}/folders`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            parentPath: currentFolderPath,
+            folderName: cleanSeg,
+            relativePath,
+          }),
+          timeoutMs: 5000,
+        },
+      );
+      setWorkspaces((prev) =>
+        prev.map((w) => {
+          if (w.id !== activeWorkspace.id) return w;
+          const nextFolders = Array.from(
+            new Set([...(w.folders || []), relativePath]),
+          );
+          return { ...w, folders: nextFolders };
+        }),
+      );
+      setNewSubfolderName("");
+      setCurrentFolderPath(relativePath);
+      setNotification({
+        type: "success",
+        text: isRtl
+          ? `تم إنشاء المجلد الفرعي "${relativePath}"`
+          : `Created subfolder "${relativePath}"`,
+      });
+    } finally {
+      setCreatingSubfolder(false);
+    }
+  };
+
+  const handleUploadDesigns = async (fileList?: FileList | File[] | null) => {
+    if (!activeWorkspace || !fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
+    setUploadingDesign(true);
+    const uploadedDesigns: any[] = [];
+    try {
+      for (const file of files) {
+        const res = await safeFetch(
+          `/api/workspaces/${activeWorkspace.id}/upload-design?fileName=${encodeURIComponent(file.name)}&subfolder=${encodeURIComponent(currentFolderPath || "Designs")}`,
+          {
+            method: "POST",
+            body: file,
+            timeoutMs: 20000,
+          },
+        );
+        if (res && res.ok) {
+          const data = await res.json();
+          if (data?.success && data.design) {
+            uploadedDesigns.push(data.design);
+          }
+        }
+      }
+      if (uploadedDesigns.length > 0) {
+        setWorkspaces((prev) =>
+          prev.map((w) => {
+            if (w.id !== activeWorkspace.id) return w;
+            const prevSub = w.subfolders || {
+              fonts: [],
+              designs: [],
+              palettes: [],
+              guidelines: [],
+            };
+            return {
+              ...w,
+              subfolders: {
+                ...prevSub,
+                designs: [...uploadedDesigns, ...(prevSub.designs || [])],
+              },
+            };
+          }),
+        );
+        setNotification({
+          type: "success",
+          text: isRtl
+            ? `تم رفع ${uploadedDesigns.length} ملف تصميم إلى مجلد "${currentFolderPath || "Designs"}" بنجاح!`
+            : `Uploaded ${uploadedDesigns.length} design file(s) to "${currentFolderPath || "Designs"}"!`,
+        });
+      }
+    } finally {
+      setUploadingDesign(false);
+    }
+  };
+
+  const resolveFontSelection = (inputVal: string, fallbackName: string) => {
+    const clean = (inputVal || "").trim();
+    if (!clean) return { name: fallbackName, family: fallbackName };
+    const matched = (fonts || []).find((f: any) => {
+      const label = `${f.family || f.name} — ${f.style || "Regular"}`;
+      return (
+        String(f.id) === clean ||
+        label.toLowerCase() === clean.toLowerCase() ||
+        (f.family || "").toLowerCase() === clean.toLowerCase() ||
+        (f.displayName || "").toLowerCase() === clean.toLowerCase() ||
+        (f.name || "").toLowerCase() === clean.toLowerCase()
+      );
+    });
+    if (matched) {
+      return {
+        name: matched.displayName || matched.name || matched.family,
+        fontId: Number(matched.id) || undefined,
+        family: matched.family || matched.name,
+        style: matched.style || "Regular",
+        path: matched.path,
+      };
+    }
+    return { name: clean, family: clean };
+  };
+
+  const handleCreateWorkspace = async (e: any) => {
     e.preventDefault();
     if (!formName.trim()) return;
+
+    const palettePresets: Record<string, any[]> = {
+      plum: [
+        { name: "Primary Coral", hex: "#F16B50", role: "primary" },
+        { name: "Secondary Lavender", hex: "#B7A1D9", role: "secondary" },
+        { name: "Surface Plum", hex: "#291C2E", role: "surface" },
+        { name: "Deep Plum Canvas", hex: "#140D18", role: "background" },
+      ],
+      gold: [
+        { name: "Royal Gold Leaf", hex: "#C5A059", role: "primary" },
+        { name: "Midnight Onyx", hex: "#111215", role: "background" },
+        { name: "Chalk Vellum", hex: "#F7F6F2", role: "surface" },
+        { name: "Platinum Slate", hex: "#8E9096", role: "accent" },
+      ],
+      fintech: [
+        { name: "Electric Cobalt", hex: "#2563EB", role: "primary" },
+        { name: "Success Mint", hex: "#10B981", role: "accent" },
+        { name: "Dark Surface", hex: "#0B0F19", role: "background" },
+        { name: "Card Slate", hex: "#1F2937", role: "surface" },
+      ],
+    };
+
+    const headingSlot = resolveFontSelection(formHeadingFont, "Inter Display");
+    const bodySlot = resolveFontSelection(formBodyFont, "Tajawal");
+    const accentSlot = resolveFontSelection(formAccentFont, "JetBrains Mono");
+
+    if (editingWorkspaceId) {
+      const target = workspaces.find((w) => w.id === editingWorkspaceId);
+      const updated = {
+        ...(target || {}),
+        id: editingWorkspaceId,
+        name: formName.trim(),
+        client: formClient.trim() || "Internal Project",
+        category: formCategory,
+        business: formCategory,
+        campaignName: formCampaign.trim() || undefined,
+        logoDataUrl: formLogoDataUrl || undefined,
+        description:
+          formDescription.trim() ||
+          target?.description ||
+          "Designer project workspace.",
+        notes: formNotes.trim() || target?.notes || "",
+        typography: {
+          ...(target?.typography || {}),
+          headingFont: headingSlot,
+          bodyFont: bodySlot,
+          accentFont: accentSlot,
+        },
+      };
+      const saved = await safeFetchJson<any>(
+        `/api/workspaces/${editingWorkspaceId}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updated),
+          timeoutMs: 6000,
+        },
+      );
+      const finalWs = saved && saved.id ? { ...updated, ...saved } : updated;
+      setWorkspaces((prev) =>
+        prev.map((w) => (w.id === editingWorkspaceId ? finalWs : w)),
+      );
+      setIsCreatingWorkspace(false);
+      setEditingWorkspaceId(null);
+      return;
+    }
+
     const newId =
       formName
         .toLowerCase()
@@ -868,23 +1237,23 @@ export default function WorkspacesView({
       name: formName.trim(),
       client: formClient.trim() || "Internal Project",
       category: formCategory,
-      folderPath: `C:\\Users\\Public\\Documents\\Fontivo\\Workspaces\\${newId}`,
+      business: formCategory,
+      campaignName: formCampaign.trim() || undefined,
+      logoDataUrl: formLogoDataUrl || undefined,
       description: formDescription.trim() || "Designer project workspace.",
+      folders: ["Fonts", "Designs", "Palettes", "Guidelines"],
       typography: {
-        headingFont: formHeadingFont.trim() || "Inter Display",
-        bodyFont: formBodyFont.trim() || "Inter",
-        accentFont: "JetBrains Mono",
+        headingFont: headingSlot,
+        bodyFont: bodySlot,
+        accentFont: accentSlot,
         previewHeading: "Design Systems & Typographic Hierarchy",
         previewBody:
           "Consistent font pairings and harmonic color palettes create intuitive, beautiful user experiences.",
       },
-      palette: [
-        { name: "Primary Brand", hex: "#F16B50", role: "primary" },
-        { name: "Secondary Accent", hex: "#B7A1D9", role: "secondary" },
-        { name: "Surface Neutral", hex: "#291C2E", role: "surface" },
-        { name: "Deep Background", hex: "#140D18", role: "background" },
-      ],
-      notes: "Initial creative direction notes and project deliverables.",
+      palette: palettePresets[formPalettePreset] || palettePresets.plum,
+      notes:
+        formNotes.trim() ||
+        "Initial creative direction notes and project deliverables.",
       tasks: [
         {
           id: "t1",
@@ -907,14 +1276,17 @@ export default function WorkspacesView({
       ],
     };
 
-    setWorkspaces((prev) => [newWs, ...prev]);
-    setSelectedId(newWs.id);
+    const saved = await safeFetchJson<any>("/api/workspaces", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newWs),
+      timeoutMs: 6000,
+    });
+    const finalWs = saved && saved.id ? { ...newWs, ...saved } : newWs;
+    setWorkspaces((prev) => [finalWs, ...prev]);
+    setSelectedId(finalWs.id);
+    setCurrentFolderPath("Designs");
     setIsCreatingWorkspace(false);
-    setFormName("");
-    setFormClient("");
-    setFormHeadingFont("");
-    setFormBodyFont("");
-    setFormDescription("");
   };
 
   const handleDeleteWorkspace = (id: string) => {
@@ -946,22 +1318,49 @@ export default function WorkspacesView({
       className="flex-1 flex overflow-hidden bg-[var(--color-back-main)] text-[var(--color-text-main)] select-none"
       dir={isRtl ? "rtl" : "ltr"}
     >
-      {/* 1. Left Workspace Sidebar Selector */}
-      <aside className="w-64 lg:w-72 shrink-0 border-r rtl:border-l rtl:border-r-0 border-[var(--color-border)] flex flex-col bg-[var(--color-back-side)]/50">
-        <div className="p-4 border-b border-[var(--color-border)] flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Briefcase className="w-4 h-4 text-[var(--color-action)]" />
-            <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-header)]">
-              {isRtl ? "مشاريع واستوديوهات العمل" : "Project Workspaces"}
-            </h2>
+      {/* 1. Collapsible Left Workspace Sidebar Selector */}
+      <aside
+        className={`${
+          sidebarCollapsed ? "w-16" : "w-64 lg:w-72"
+        } shrink-0 border-r rtl:border-l rtl:border-r-0 border-[var(--color-border)] flex flex-col bg-[var(--color-back-side)]/50 transition-all duration-200`}
+      >
+        <div className="p-3.5 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
+          {!sidebarCollapsed && (
+            <div className="flex items-center gap-2 min-w-0">
+              <Briefcase className="w-4 h-4 text-[var(--color-action)] shrink-0" />
+              <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-header)] truncate">
+                {isRtl ? "مشاريع واستوديوهات العمل" : "Project Workspaces"}
+              </h2>
+            </div>
+          )}
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={openCreateModal}
+              className="h-7 w-7 flex items-center justify-center rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white transition cursor-pointer shadow-2xs"
+              title={isRtl ? "مشروع جديد" : "New Project"}
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setSidebarCollapsed((p) => !p)}
+              className="h-7 w-7 flex items-center justify-center rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] border border-[var(--color-border)] transition cursor-pointer"
+              title={
+                sidebarCollapsed
+                  ? isRtl
+                    ? "توسيع القائمة"
+                    : "Expand sidebar"
+                  : isRtl
+                    ? "تصغير القائمة لمساحة أكبر"
+                    : "Collapse sidebar"
+              }
+            >
+              {sidebarCollapsed ? (
+                <PanelLeftOpen className="w-3.5 h-3.5" />
+              ) : (
+                <PanelLeftClose className="w-3.5 h-3.5" />
+              )}
+            </button>
           </div>
-          <button
-            onClick={() => setIsCreatingWorkspace(true)}
-            className="p-1 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-header)] border border-[var(--color-border)] transition cursor-pointer"
-            title={isRtl ? "مشروع جديد" : "New Project"}
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </button>
         </div>
 
         {/* Workspaces List */}
@@ -972,43 +1371,101 @@ export default function WorkspacesView({
             const doneCount =
               ws.tasks?.filter((task: any) => task.status === "done").length ||
               0;
+            const primaryHex = ws.palette?.[0]?.hex || "#F16B50";
+            const initials = (ws.name || "WS")
+              .split(/\s+/)
+              .slice(0, 2)
+              .map((s: string) => s[0])
+              .join("")
+              .toUpperCase();
 
             return (
               <div
                 key={ws.id}
-                onClick={() => setSelectedId(ws.id)}
-                className={`p-3 rounded-xl border transition cursor-pointer flex flex-col gap-1.5 ${
+                onClick={() => {
+                  setSelectedId(ws.id);
+                  setCurrentFolderPath("Designs");
+                }}
+                className={`${
+                  sidebarCollapsed
+                    ? "p-2 flex items-center justify-center"
+                    : "p-3 flex flex-col gap-1.5"
+                } rounded-xl border transition cursor-pointer ${
                   isSelected
                     ? "bg-[var(--color-control)] border-[var(--color-action)] shadow-xs"
                     : "bg-transparent border-transparent hover:border-[var(--color-border)] hover:bg-[var(--color-control)]/40"
                 }`}
+                title={ws.name}
               >
-                <div className="flex items-center justify-between">
-                  <span
-                    className={`text-xs font-bold truncate ${isSelected ? "text-[var(--color-text-header)]" : "text-[var(--color-text-main)]"}`}
-                  >
-                    {ws.name}
-                  </span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-control)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
-                    {doneCount}/{taskCount}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-                  <span className="truncate max-w-[140px]">{ws.client}</span>
-                  <span className="text-[10px] opacity-70 truncate">
-                    {ws.category?.split("/")[0]}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 mt-1">
-                  {(ws.palette || []).slice(0, 5).map((c: any, i: number) => (
-                    <div
-                      key={i}
-                      className="w-3.5 h-1.5 rounded-xs"
-                      style={{ backgroundColor: c.hex }}
-                      title={`${c.name} (${c.hex})`}
+                {sidebarCollapsed ? (
+                  ws.logoDataUrl ? (
+                    <img
+                      src={ws.logoDataUrl}
+                      alt={ws.name}
+                      className="w-8 h-8 rounded-lg object-cover border border-[var(--color-border)]"
                     />
-                  ))}
-                </div>
+                  ) : (
+                    <div
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-black text-white shadow-2xs"
+                      style={{ backgroundColor: primaryHex }}
+                    >
+                      {initials}
+                    </div>
+                  )
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {ws.logoDataUrl ? (
+                          <img
+                            src={ws.logoDataUrl}
+                            alt={ws.name}
+                            className="w-6 h-6 rounded-md object-cover border border-[var(--color-border)] shrink-0"
+                          />
+                        ) : (
+                          <div
+                            className="w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-black text-white shrink-0"
+                            style={{ backgroundColor: primaryHex }}
+                          >
+                            {initials}
+                          </div>
+                        )}
+                        <span
+                          className={`text-xs font-bold truncate ${isSelected ? "text-[var(--color-text-header)]" : "text-[var(--color-text-main)]"}`}
+                        >
+                          {ws.name}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-control)] text-[var(--color-text-muted)] border border-[var(--color-border)] shrink-0">
+                        {doneCount}/{taskCount}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+                      <span className="truncate max-w-[125px]">
+                        {ws.client}
+                      </span>
+                      <span className="text-[10px] opacity-80 truncate">
+                        {
+                          localizeWorkspaceCategory(ws.category, isRtl).split(
+                            "/",
+                          )[0]
+                        }
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      {(ws.palette || [])
+                        .slice(0, 5)
+                        .map((c: any, i: number) => (
+                          <div
+                            key={i}
+                            className="w-3.5 h-1.5 rounded-xs"
+                            style={{ backgroundColor: c.hex }}
+                            title={`${c.name} (${c.hex})`}
+                          />
+                        ))}
+                    </div>
+                  </>
+                )}
               </div>
             );
           })}
@@ -1016,7 +1473,7 @@ export default function WorkspacesView({
       </aside>
 
       {/* 2. Main Workspace Detail Area */}
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 min-w-0">
+      <main className="flex-1 overflow-y-auto p-5 sm:p-7 space-y-6 min-w-0">
         {notification && (
           <div className="p-3 rounded-xl bg-[var(--color-action)]/15 border border-[var(--color-action)] text-[var(--color-text-header)] text-xs flex items-center justify-between animate-in fade-in">
             <div className="flex items-center gap-2">
@@ -1032,28 +1489,68 @@ export default function WorkspacesView({
           </div>
         )}
 
-        {/* Workspace Hero Header + Physical Disk Path & Explorer/Scanner Actions */}
-        <div className="p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--color-control)] border border-[var(--color-border)] text-[var(--color-action)] font-bold uppercase tracking-wider">
-                  {activeWorkspace.category}
-                </span>
-                <span className="text-xs text-[var(--color-text-muted)]">
-                  • {activeWorkspace.client}
-                </span>
+        {/* Workspace Hero Header + Project Logo + Physical Disk Path & Actions */}
+        <div className="p-6 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-5 shadow-xs">
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-5">
+            <div className="flex items-start gap-4 min-w-0">
+              <div className="relative group shrink-0">
+                {activeWorkspace.logoDataUrl ? (
+                  <img
+                    src={activeWorkspace.logoDataUrl}
+                    alt={activeWorkspace.name}
+                    className="w-16 h-16 rounded-2xl object-cover border border-[var(--color-border)] shadow-sm bg-[var(--color-back-main)]"
+                  />
+                ) : (
+                  <div
+                    className="w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-black text-white shadow-sm border border-white/10"
+                    style={{ backgroundColor: primarySwatchHex }}
+                  >
+                    {(activeWorkspace.name || "WS")
+                      .split(/\s+/)
+                      .slice(0, 2)
+                      .map((s: string) => s[0])
+                      .join("")
+                      .toUpperCase()}
+                  </div>
+                )}
               </div>
-              <h1 className="text-2xl font-black text-[var(--color-text-header)] mt-1 tracking-tight">
-                {activeWorkspace.name}
-              </h1>
-              <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-2xl leading-relaxed">
-                {activeWorkspace.description}
-              </p>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-md bg-[var(--color-control)] border border-[var(--color-border)] text-[var(--color-action)] font-bold uppercase tracking-wider">
+                    {localizeWorkspaceCategory(activeWorkspace.category, isRtl)}
+                  </span>
+                  {activeWorkspace.campaignName && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-[#B7A1D9]/15 text-[#B7A1D9] border border-[#B7A1D9]/30 font-semibold">
+                      {activeWorkspace.campaignName}
+                    </span>
+                  )}
+                  <span className="text-xs text-[var(--color-text-muted)]">
+                    • {activeWorkspace.client}
+                  </span>
+                </div>
+                <h1 className="text-2xl sm:text-3xl font-black text-[var(--color-text-header)] mt-1 tracking-tight truncate">
+                  {activeWorkspace.name}
+                </h1>
+                <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-3xl leading-relaxed">
+                  {activeWorkspace.description}
+                </p>
+              </div>
             </div>
 
             {/* 1-Click Action Buttons */}
             <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                onClick={openEditModal}
+                className="h-9 px-3.5 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-header)] border border-[var(--color-border)] text-xs font-bold flex items-center gap-2 transition cursor-pointer whitespace-nowrap shrink-0"
+                title={
+                  isRtl
+                    ? "تعديل بيانات وشعار المشروع"
+                    : "Edit Project Details & Logo"
+                }
+              >
+                <Pencil className="w-3.5 h-3.5 text-[#B7A1D9] shrink-0" />
+                <span>{isRtl ? "تعديل المشروع" : "Edit Project"}</span>
+              </button>
               <button
                 onClick={handleScanProjectFolder}
                 disabled={scanningFolder}
@@ -1253,77 +1750,229 @@ export default function WorkspacesView({
           activeSubfolderTab === "Designs" ||
           activeSubfolderTab === "Fonts") && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Designs/ Subfolder Discovered Files (.PSD, .AI, .INDD, .PDF, .SVG) */}
-            <div className="p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-3 shadow-xs">
+            {/* Designs/ Subfolder Discovered Files, Nested Folders ("Folder inside Folder"), & Design Uploader */}
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                handleUploadDesigns(e.dataTransfer.files);
+              }}
+              className="p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs"
+            >
+              <input
+                ref={designInputRef}
+                type="file"
+                multiple
+                accept=".psd,.ai,.indd,.pdf,.svg,.png,.jpg,.jpeg,.webp,.fig,.xd"
+                onChange={(e) => {
+                  if (e.target.files?.length) {
+                    handleUploadDesigns(e.target.files);
+                    e.target.value = "";
+                  }
+                }}
+                className="hidden"
+              />
+
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
                   <FileCheck className="w-4 h-4 text-[var(--color-action)] shrink-0" />
                   <span className="truncate">
                     {isRtl ? (
                       <>
-                        ملفات التصميم المكتشفة (<bdi dir="ltr">Designs/</bdi>)
+                        ملفات التصميم والمجلدات المتداخلة (
+                        <bdi dir="ltr">Designs/</bdi>)
                       </>
                     ) : (
-                      "Discovered Design Files (Designs/ & Subfolders)"
+                      "Discovered Design Files & Nested Folders (Designs/)"
                     )}
                   </span>
                 </h3>
-                <button
-                  onClick={() => handleOpenInExplorer("Designs")}
-                  className="text-[11px] text-[var(--color-action)] hover:underline font-semibold cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  {isRtl ? (
-                    <>
-                      فتح <bdi dir="ltr">Designs/</bdi>
-                    </>
-                  ) : (
-                    "Open Designs/"
-                  )}
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => designInputRef.current?.click()}
+                    disabled={uploadingDesign}
+                    className="h-7 px-2.5 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  >
+                    <Upload className="w-3 h-3 shrink-0" />
+                    <span>
+                      {uploadingDesign
+                        ? isRtl
+                          ? "جاري الرفع..."
+                          : "Uploading..."
+                        : isRtl
+                          ? "رفع تصميم"
+                          : "Upload Design"}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() =>
+                      handleOpenInExplorer(
+                        (currentFolderPath || "Designs") as any,
+                      )
+                    }
+                    className="text-[11px] text-[var(--color-action)] hover:underline font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    {isRtl ? (
+                      <>
+                        فتح{" "}
+                        <bdi dir="ltr">{currentFolderPath || "Designs"}/</bdi>
+                      </>
+                    ) : (
+                      `Open ${currentFolderPath || "Designs"}/`
+                    )}
+                  </button>
+                </div>
               </div>
 
-              <div className="space-y-2.5">
-                {(subfolders.designs || []).map((design: any, idx: number) => (
-                  <div
-                    key={idx}
-                    className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
-                  >
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-action)]/15 text-[var(--color-action)]">
-                          {design.format}
-                        </span>
-                        <span className="text-xs font-bold text-[var(--color-text-header)] truncate">
-                          {design.name}
-                        </span>
-                      </div>
-                      <div className="text-[10px] font-mono text-[var(--color-text-dim)] truncate">
-                        {design.path} • {isRtl ? "الخطوط:" : "Used Fonts:"}{" "}
-                        {(design.usedFonts || []).join(", ")}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      {design.allActive ? (
-                        <span className="h-7 px-2.5 inline-flex items-center rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold whitespace-nowrap shrink-0">
-                          {isRtl ? "كافة الخطوط مفعلة ✓" : "Fonts Active ✓"}
-                        </span>
-                      ) : (
-                        <button
-                          onClick={handleActivateRam}
-                          className="h-7 px-2.5 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-[10px] font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0"
-                        >
-                          <Zap className="w-3 h-3 fill-current shrink-0" />
-                          <span>
-                            {isRtl
-                              ? "تفعيل الخطوط المفقودة"
-                              : "Activate Missing Fonts"}
-                          </span>
-                        </button>
-                      )}
-                    </div>
+              {/* Breadcrumb Nested Folder Navigator + Create Folder Inside Folder */}
+              <div className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-1 text-[11px] font-mono">
+                    <button
+                      type="button"
+                      onClick={() => setCurrentFolderPath("")}
+                      className={`px-2 py-0.5 rounded-md cursor-pointer transition ${
+                        currentFolderPath === ""
+                          ? "bg-[var(--color-action)]/15 text-[var(--color-action)] font-bold"
+                          : "hover:bg-[var(--color-control)] text-[var(--color-text-muted)]"
+                      }`}
+                    >
+                      {activeWorkspace.id}
+                    </button>
+                    {currentFolderPath
+                      .split("/")
+                      .filter(Boolean)
+                      .map((seg, idx, arr) => {
+                        const targetRel = arr.slice(0, idx + 1).join("/");
+                        return (
+                          <React.Fragment key={targetRel}>
+                            {isRtl ? (
+                              <ChevronLeft className="w-3 h-3 text-[var(--color-text-dim)]" />
+                            ) : (
+                              <ChevronRight className="w-3 h-3 text-[var(--color-text-dim)]" />
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setCurrentFolderPath(targetRel)}
+                              className={`px-2 py-0.5 rounded-md cursor-pointer transition ${
+                                targetRel === currentFolderPath
+                                  ? "bg-[var(--color-action)]/15 text-[var(--color-action)] font-bold"
+                                  : "hover:bg-[var(--color-control)] text-[var(--color-text-muted)]"
+                              }`}
+                            >
+                              {seg}
+                            </button>
+                          </React.Fragment>
+                        );
+                      })}
                   </div>
-                ))}
+
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={newSubfolderName}
+                      onChange={(e) => setNewSubfolderName(e.target.value)}
+                      placeholder={
+                        isRtl
+                          ? "اسم مجلد فرعي جديد..."
+                          : "New subfolder name..."
+                      }
+                      className="h-7 w-40 bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-lg px-2 text-[11px] text-[var(--color-text-header)] outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCreateNestedFolder}
+                      disabled={creatingSubfolder || !newSubfolderName.trim()}
+                      className="h-7 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-bold flex items-center gap-1 text-[var(--color-text-header)] cursor-pointer disabled:opacity-40 whitespace-nowrap"
+                    >
+                      <FolderPlus className="w-3 h-3 text-[var(--color-action)] shrink-0" />
+                      <span>{isRtl ? "مجلد داخلي" : "Add Subfolder"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {childFoldersInCurrentPath.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {childFoldersInCurrentPath.map((relFolder) => {
+                      const label = relFolder.split("/").pop() || relFolder;
+                      return (
+                        <button
+                          key={relFolder}
+                          type="button"
+                          onClick={() => setCurrentFolderPath(relFolder)}
+                          className="h-7 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-action)]/15 border border-[var(--color-border)] hover:border-[var(--color-action)]/50 text-[11px] font-mono text-[var(--color-text-header)] flex items-center gap-1.5 cursor-pointer transition"
+                        >
+                          <FolderOpen className="w-3 h-3 text-amber-400 shrink-0" />
+                          <span>{label}/</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                {(subfolders.designs || [])
+                  .filter((d: any) => {
+                    if (!currentFolderPath) return true;
+                    const sub = String(d.subfolder || d.path || "")
+                      .replace(/\\/g, "/")
+                      .toLowerCase();
+                    return sub.includes(currentFolderPath.toLowerCase());
+                  })
+                  .map((design: any, idx: number) => (
+                    <div
+                      key={`${design.path}-${idx}`}
+                      className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        {design.previewUrl && (
+                          <img
+                            src={design.previewUrl}
+                            alt={design.name}
+                            className="w-10 h-10 rounded-lg object-cover border border-[var(--color-border)] shrink-0"
+                          />
+                        )}
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-action)]/15 text-[var(--color-action)]">
+                              {design.format}
+                            </span>
+                            <span className="text-xs font-bold text-[var(--color-text-header)] truncate">
+                              {design.name}
+                            </span>
+                          </div>
+                          <div className="text-[10px] font-mono text-[var(--color-text-dim)] truncate">
+                            {design.relativePath || design.path}
+                            {(design.usedFonts || []).length > 0
+                              ? ` • ${isRtl ? "الخطوط:" : "Used Fonts:"} ${design.usedFonts.join(", ")}`
+                              : ""}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {design.allActive ? (
+                          <span className="h-7 px-2.5 inline-flex items-center rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold whitespace-nowrap shrink-0">
+                            {isRtl ? "كافة الخطوط مفعلة ✓" : "Fonts Active ✓"}
+                          </span>
+                        ) : (
+                          <button
+                            onClick={handleActivateRam}
+                            className="h-7 px-2.5 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-[10px] font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0"
+                          >
+                            <Zap className="w-3 h-3 fill-current shrink-0" />
+                            <span>
+                              {isRtl
+                                ? "تفعيل الخطوط المفقودة"
+                                : "Activate Missing Fonts"}
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
               </div>
             </div>
 
@@ -1849,22 +2498,39 @@ export default function WorkspacesView({
         </div>
       </main>
 
-      {/* Modal: Create New Project Workspace */}
+      {/* Modal: Spacious Create or Edit Project Workspace */}
       {isCreatingWorkspace && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-2xl p-6 shadow-2xl space-y-4 animate-in zoom-in-95">
-            <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-bold text-[var(--color-text-header)] flex items-center gap-2">
-                <Briefcase className="w-4 h-4 text-[var(--color-action)]" />
-                <span>
-                  {isRtl
-                    ? "إنشاء مشروع عمل جديد"
-                    : "Create New Project Workspace"}
-                </span>
-              </h3>
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4 sm:p-6">
+          <div className="w-full max-w-3xl max-h-[90vh] bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95">
+            <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-back-side)] shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-[var(--color-action)]/15 border border-[var(--color-action)]/30 flex items-center justify-center text-[var(--color-action)]">
+                  <Briefcase className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[var(--color-text-header)]">
+                    {editingWorkspaceId
+                      ? isRtl
+                        ? "تعديل بيانات مشروع العمل"
+                        : "Edit Project Workspace"
+                      : isRtl
+                        ? "إنشاء مشروع وهوية عمل جديدة"
+                        : "Create New Project Workspace"}
+                  </h3>
+                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                    {isRtl
+                      ? "ارفع شعار المشروع وحدد الفئة، العميل، الحملة الإعلانية، والخطوط الأساسية"
+                      : "Upload brand logo, assign category, client, campaign metadata & real font pairings"}
+                  </p>
+                </div>
+              </div>
               <button
-                onClick={() => setIsCreatingWorkspace(false)}
-                className="text-[var(--color-text-dim)] hover:text-[var(--color-text-header)] text-xs"
+                type="button"
+                onClick={() => {
+                  setIsCreatingWorkspace(false);
+                  setEditingWorkspaceId(null);
+                }}
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-[var(--color-text-dim)] hover:text-[var(--color-text-header)] hover:bg-[var(--color-control)] text-sm cursor-pointer"
               >
                 ✕
               </button>
@@ -1872,115 +2538,305 @@ export default function WorkspacesView({
 
             <form
               onSubmit={handleCreateWorkspace}
-              className="space-y-3.5 text-xs"
+              className="p-6 space-y-5 text-xs overflow-y-auto flex-1"
             >
-              <div>
-                <label className="block font-medium text-[var(--color-text-muted)] mb-1">
-                  {isRtl
-                    ? "اسم المشروع / العلامة التجارية"
-                    : "Brand / Project Name"}
-                </label>
+              {/* Project Logo + Basic Identity */}
+              <div className="flex flex-col sm:flex-row gap-5 items-start p-4 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border)]">
                 <input
-                  type="text"
-                  required
-                  value={formName}
-                  onChange={(e: any) => setFormName(e.target.value)}
-                  placeholder="e.g. Acme Studio Redesign"
-                  className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none"
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                  onChange={(e) => {
+                    handleLogoFileSelected(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                  className="hidden"
                 />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-medium text-[var(--color-text-muted)] mb-1">
-                    {isRtl ? "العميل" : "Client Name"}
-                  </label>
-                  <input
-                    type="text"
-                    value={formClient}
-                    onChange={(e: any) => setFormClient(e.target.value)}
-                    placeholder="e.g. Acme Corp"
-                    className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-medium text-[var(--color-text-muted)] mb-1">
-                    {isRtl ? "التصنيف" : "Category"}
-                  </label>
-                  <select
-                    value={formCategory}
-                    onChange={(e: any) => setFormCategory(e.target.value)}
-                    className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none"
+                <div className="flex flex-col items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => logoInputRef.current?.click()}
+                    className="w-24 h-24 rounded-2xl border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-action)] bg-[var(--color-back-card)] flex flex-col items-center justify-center overflow-hidden cursor-pointer transition group"
                   >
-                    <option value="Fintech / SaaS">Fintech / SaaS</option>
-                    <option value="Editorial & Publishing">
-                      Editorial & Publishing
-                    </option>
-                    <option value="Design Agency / Studio">
-                      Design Agency / Studio
-                    </option>
-                    <option value="E-Commerce / Retail">
-                      E-Commerce / Retail
-                    </option>
-                  </select>
+                    {formLogoDataUrl ? (
+                      <img
+                        src={formLogoDataUrl}
+                        alt="Project Logo"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center gap-1 text-[var(--color-text-muted)] group-hover:text-[var(--color-action)] p-2 text-center">
+                        <ImageIcon className="w-6 h-6" />
+                        <span className="text-[10px] font-semibold">
+                          {isRtl ? "رفع شعار" : "Upload Logo"}
+                        </span>
+                      </div>
+                    )}
+                  </button>
+                  {formLogoDataUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setFormLogoDataUrl("")}
+                      className="text-[10px] text-rose-400 hover:underline cursor-pointer"
+                    >
+                      {isRtl ? "إزالة الشعار" : "Remove Logo"}
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3.5 w-full">
+                  <div className="sm:col-span-2">
+                    <label className="block font-semibold text-[var(--color-text-muted)] mb-1">
+                      {isRtl
+                        ? "اسم المشروع / العلامة التجارية *"
+                        : "Brand / Project Name *"}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={formName}
+                      onChange={(e: any) => setFormName(e.target.value)}
+                      placeholder={
+                        isRtl
+                          ? "مثال: حملة إطلاق الهوية الجديدة"
+                          : "e.g. Acme Studio Redesign"
+                      }
+                      className="w-full bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-[var(--color-text-muted)] mb-1">
+                      {isRtl ? "اسم العميل / الجهة" : "Client / Organization"}
+                    </label>
+                    <input
+                      type="text"
+                      value={formClient}
+                      onChange={(e: any) => setFormClient(e.target.value)}
+                      placeholder={
+                        isRtl ? "مثال: شركة أفق للتقنية" : "e.g. Horizon Tech"
+                      }
+                      className="w-full bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-[var(--color-text-muted)] mb-1">
+                      {isRtl ? "التصنيف / المجال" : "Category"}
+                    </label>
+                    <select
+                      value={formCategory}
+                      onChange={(e: any) => setFormCategory(e.target.value)}
+                      className="w-full bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none cursor-pointer"
+                    >
+                      {WORKSPACE_CATEGORIES.map((cat) => (
+                        <option key={cat.id} value={cat.id}>
+                          {isRtl ? cat.ar : cat.en}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="block font-semibold text-[var(--color-text-muted)] mb-1">
+                      {isRtl
+                        ? "اسم الحملة / الموسم / الإصدار"
+                        : "Campaign / Season / Deliverable"}
+                    </label>
+                    <input
+                      type="text"
+                      value={formCampaign}
+                      onChange={(e: any) => setFormCampaign(e.target.value)}
+                      placeholder={
+                        isRtl
+                          ? "مثال: حملة الربع الأول ٢٠٢٦ • مطبوعات وسوشيال"
+                          : "e.g. Q1 2026 Rebrand Campaign"
+                      }
+                      className="w-full bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none"
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Real Library Typography Selectors */}
+              <datalist id="workspace-library-fonts-list">
+                {(fonts || [])
+                  .filter(
+                    (f: any) =>
+                      String(f.source || "").toLowerCase() !== "system",
+                  )
+                  .slice(0, 200)
+                  .map((f: any) => (
+                    <option
+                      key={f.id}
+                      value={`${f.family || f.name} — ${f.style || "Regular"}`}
+                    />
+                  ))}
+              </datalist>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
                 <div>
-                  <label className="block font-medium text-[var(--color-text-muted)] mb-1">
-                    {isRtl ? "خط العناوين" : "Heading Font"}
+                  <label className="block font-semibold text-[var(--color-text-muted)] mb-1">
+                    {isRtl ? "خط العناوين (Heading)" : "Heading Font"}
                   </label>
                   <input
                     type="text"
+                    list="workspace-library-fonts-list"
                     value={formHeadingFont}
                     onChange={(e: any) => setFormHeadingFont(e.target.value)}
-                    placeholder="e.g. Inter Display"
+                    placeholder="e.g. Cairo Bold / Inter"
                     className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-medium text-[var(--color-text-muted)] mb-1">
-                    {isRtl ? "خط النصوص" : "Body Font"}
+                  <label className="block font-semibold text-[var(--color-text-muted)] mb-1">
+                    {isRtl ? "خط النصوص (Body)" : "Body Font"}
                   </label>
                   <input
                     type="text"
+                    list="workspace-library-fonts-list"
                     value={formBodyFont}
                     onChange={(e: any) => setFormBodyFont(e.target.value)}
-                    placeholder="e.g. Tajawal"
+                    placeholder="e.g. Tajawal Regular"
+                    className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-[var(--color-text-muted)] mb-1">
+                    {isRtl ? "الخط المساعد / الأرقام" : "Accent / Mono Font"}
+                  </label>
+                  <input
+                    type="text"
+                    list="workspace-library-fonts-list"
+                    value={formAccentFont}
+                    onChange={(e: any) => setFormAccentFont(e.target.value)}
+                    placeholder="e.g. JetBrains Mono"
                     className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block font-medium text-[var(--color-text-muted)] mb-1">
-                  {isRtl ? "وصف المشروع" : "Project Description"}
-                </label>
-                <textarea
-                  rows={2}
-                  value={formDescription}
-                  onChange={(e: any) => setFormDescription(e.target.value)}
-                  placeholder="Brief summary of the project..."
-                  className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none resize-none"
-                />
+              {!editingWorkspaceId && (
+                <div>
+                  <label className="block font-semibold text-[var(--color-text-muted)] mb-1.5">
+                    {isRtl
+                      ? "بداية لوحة الألوان (Brand Palette Preset)"
+                      : "Initial Color Palette Preset"}
+                  </label>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {[
+                      {
+                        id: "plum",
+                        label: isRtl
+                          ? "مرجاني وبنفسجي (Fontivo)"
+                          : "Coral & Plum Studio",
+                        colors: ["#F16B50", "#B7A1D9", "#291C2E"],
+                      },
+                      {
+                        id: "gold",
+                        label: isRtl ? "ذهبي ملكي وأسود" : "Luxury Gold & Onyx",
+                        colors: ["#C5A059", "#111215", "#F7F6F2"],
+                      },
+                      {
+                        id: "fintech",
+                        label: isRtl
+                          ? "أزرق تقني ونعناعي"
+                          : "Fintech Cobalt & Mint",
+                        colors: ["#2563EB", "#10B981", "#0B0F19"],
+                      },
+                    ].map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => setFormPalettePreset(preset.id)}
+                        className={`p-2.5 rounded-xl border text-left rtl:text-right transition cursor-pointer ${
+                          formPalettePreset === preset.id
+                            ? "border-[var(--color-action)] bg-[var(--color-action)]/10"
+                            : "border-[var(--color-border)] bg-[var(--color-back-main)]"
+                        }`}
+                      >
+                        <div className="flex items-center gap-1 mb-1">
+                          {preset.colors.map((c) => (
+                            <span
+                              key={c}
+                              className="w-4 h-2.5 rounded-xs border border-black/15"
+                              style={{ backgroundColor: c }}
+                            />
+                          ))}
+                        </div>
+                        <div className="text-[11px] font-bold text-[var(--color-text-header)] truncate">
+                          {preset.label}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div>
+                  <label className="block font-semibold text-[var(--color-text-muted)] mb-1">
+                    {isRtl ? "وصف المشروع والأهداف" : "Project Description"}
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={formDescription}
+                    onChange={(e: any) => setFormDescription(e.target.value)}
+                    placeholder={
+                      isRtl
+                        ? "ملخص المشروع، القنوات المستهدفة..."
+                        : "Brief summary of the brand project..."
+                    }
+                    className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none resize-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-[var(--color-text-muted)] mb-1">
+                    {isRtl
+                      ? "ملاحظات التوجيه الفني (Guidelines)"
+                      : "Art Direction & Brand Notes"}
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={formNotes}
+                    onChange={(e: any) => setFormNotes(e.target.value)}
+                    placeholder={
+                      isRtl
+                        ? "قواعد الاستخدام والتباين والأحجام..."
+                        : "Typography hierarchy & spacing guidelines..."
+                    }
+                    className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-[var(--color-text-header)] outline-none resize-none"
+                  />
+                </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2">
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--color-border)]">
                 <button
                   type="button"
-                  onClick={() => setIsCreatingWorkspace(false)}
-                  className="px-4 py-2 rounded-xl bg-[var(--color-control)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] cursor-pointer"
+                  onClick={() => {
+                    setIsCreatingWorkspace(false);
+                    setEditingWorkspaceId(null);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-[var(--color-control)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] cursor-pointer font-semibold"
                 >
                   {isRtl ? "إلغاء" : "Cancel"}
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white font-semibold cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white font-bold cursor-pointer flex items-center gap-1.5"
                 >
-                  {isRtl ? "إنشاء المشروع" : "Create Project"}
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>
+                    {editingWorkspaceId
+                      ? isRtl
+                        ? "حفظ التعديلات"
+                        : "Save Changes"
+                      : isRtl
+                        ? "إنشاء المشروع"
+                        : "Create Project"}
+                  </span>
                 </button>
               </div>
             </form>

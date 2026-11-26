@@ -380,10 +380,14 @@ fn real_main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Cross-platform webview storage directory:
-    // Windows: %APPDATA%\Fontivo\webview_data
-    // macOS: ~/Library/Application Support/Fontivo/webview_data
-    // Linux: ~/.local/share/Fontivo/webview_data
-    let webview_data_dir = get_app_data_dir().join("webview_data");
+    // Windows: %LOCALAPPDATA%\Fontivo\WebView2
+    // macOS: ~/Library/Application Support/Fontivo/WebView2
+    // Linux: ~/.local/share/Fontivo/WebView2
+    let legacy_webview_dir = get_app_data_dir().join("webview_data");
+    if legacy_webview_dir.exists() {
+        let _ = std::fs::remove_dir(&legacy_webview_dir);
+    }
+    let webview_data_dir = get_app_data_dir().join("WebView2");
     let _ = std::fs::create_dir_all(&webview_data_dir);
     let mut web_context = wry::WebContext::new(Some(webview_data_dir));
 

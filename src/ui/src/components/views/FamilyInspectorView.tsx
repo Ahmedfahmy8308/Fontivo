@@ -327,16 +327,34 @@ export default function FamilyInspectorView({
               )}
             </div>
 
-            {/* 5. Delete / Remove Font */}
-            {onDeleteFont && (
-              <button
-                onClick={handleDelete}
-                className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/25 transition cursor-pointer"
-                title={isRtl ? "حذف / إزالة الخط" : "Delete / Remove Font"}
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            )}
+            {/* 5. Delete Single Weight or Whole Family */}
+            {onDeleteFont &&
+              String(activeFont.source || "").toLowerCase() !== "system" && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={handleDelete}
+                    className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/25 transition cursor-pointer"
+                    title={isRtl ? "حذف هذا الوزن" : "Delete This Style"}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                  {family.fonts.length > 1 && (
+                    <button
+                      onClick={async () => {
+                        const ok = await onDeleteFont(family);
+                        if (ok) onBack();
+                      }}
+                      className="h-8 px-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-[11px] font-bold flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
+                      title={
+                        isRtl ? "حذف العائلة بالكامل" : "Delete Entire Family"
+                      }
+                    >
+                      <Trash2 className="w-3 h-3 shrink-0" />
+                      <span>{isRtl ? "حذف العائلة" : "Delete Family"}</span>
+                    </button>
+                  )}
+                </div>
+              )}
 
             {/* Weight selector */}
             {family.fonts.length > 1 && (

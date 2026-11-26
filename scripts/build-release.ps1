@@ -89,9 +89,9 @@ $issFile = if (Test-Path "$installerDir\Setup_Fontivo.iss") { "$installerDir\Set
 if ($iscc -and (Test-Path $issFile)) {
   Write-Host "Compiling with Inno Setup: $iscc" -ForegroundColor DarkGray
   & $iscc $issFile
-  if ($LASTEXITCODE -eq 0 -and (Test-Path "$releaseDir\Fontivo-v1.0-Setup.exe")) {
+  if ($LASTEXITCODE -eq 0 -and (Test-Path "$releaseDir\Fontivo-Setup.exe")) {
     $installerCompiled = $true
-    Write-Host "[ok] Inno Setup installer created: Fontivo-v1.0-Setup.exe" -ForegroundColor Green
+    Write-Host "[ok] Inno Setup installer created: Fontivo-Setup.exe" -ForegroundColor Green
   }
 }
 
@@ -124,7 +124,7 @@ try {
 
 # 7. Checksum Generation
 Write-Host "`n[5/5] Calculating SHA-256 Checksums..." -ForegroundColor Yellow
-$releaseArtifacts = @("Fontivo.exe", "Fontivo-v1.0-Setup.exe", $zipName)
+$releaseArtifacts = @("Fontivo.exe", "Fontivo-Setup.exe", $zipName)
 $manifestLines = @()
 $summaryRows = @()
 

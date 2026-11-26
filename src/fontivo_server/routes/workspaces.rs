@@ -190,7 +190,7 @@ fn default_task_status() -> String {
     "todo".to_string()
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Workspace {
     pub id: String,
@@ -199,6 +199,22 @@ pub struct Workspace {
     pub client: Option<String>,
     #[serde(default)]
     pub business: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub campaign_name: Option<String>,
+    #[serde(default)]
+    pub brand_tagline: Option<String>,
+    #[serde(default)]
+    pub target_audience: Option<String>,
+    #[serde(default)]
+    pub logo_data_url: Option<String>,
+    #[serde(default)]
+    pub logo_path: Option<String>,
+    #[serde(default)]
+    pub folder_path: Option<String>,
+    #[serde(default)]
+    pub folders: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default = "current_timestamp", alias = "updatedAt")]
@@ -740,7 +756,7 @@ pub fn workspace_to_yaml(ws: &Workspace) -> String {
 }
 
 fn get_workspaces_dir(data_dir: &Path) -> PathBuf {
-    let dir = data_dir.join("workspaces");
+    let dir = data_dir.join("Workspaces");
     let _ = fs::create_dir_all(&dir);
     dir
 }
@@ -770,15 +786,9 @@ pub fn ensure_workspace_physical_dir(
         }
         PathBuf::from(custom)
     } else {
-        let base = env::var("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| crate::engine::lifecycle::get_app_data_dir());
-        let fontivo_base = if base.ends_with("Fontivo") {
-            base
-        } else {
-            base.join("Fontivo")
-        };
-        fontivo_base.join("Workspaces").join(safe_id)
+        crate::engine::lifecycle::get_app_data_dir()
+            .join("Workspaces")
+            .join(safe_id)
     };
 
     fs::create_dir_all(project_root.join("Fonts"))
@@ -1017,6 +1027,14 @@ fn load_workspace_from_disk(dir: &Path, id: &str) -> Option<Workspace> {
                 name,
                 client: None,
                 business: None,
+                category: None,
+                campaign_name: None,
+                brand_tagline: None,
+                target_audience: None,
+                logo_data_url: None,
+                logo_path: None,
+                folder_path: None,
+                folders: Vec::new(),
                 description: None,
                 updated_at: current_timestamp(),
                 typography: WorkspaceTypography::default(),
@@ -1062,6 +1080,19 @@ fn get_default_workspace() -> Workspace {
         name: "Fontivo Design System".to_string(),
         client: Some("Fontivo Labs".to_string()),
         business: Some("Design Systems & Typography Tools".to_string()),
+        category: Some("Branding & Visual Identity".to_string()),
+        campaign_name: None,
+        brand_tagline: None,
+        target_audience: None,
+        logo_data_url: None,
+        logo_path: None,
+        folder_path: None,
+        folders: vec![
+            "Fonts".to_string(),
+            "Designs".to_string(),
+            "Palettes".to_string(),
+            "Guidelines".to_string(),
+        ],
         description: Some("Production brand workspace for Fontivo desktop application, typography tokens, and high-contrast color palette.".to_string()),
         updated_at: current_timestamp(),
         typography: WorkspaceTypography {
@@ -1626,6 +1657,104 @@ pub fn get_workspace_by_id(
     );
 }
 
+fn resolve_single_typography_slot(
+    slot: &mut Option<TypographyFont>,
+    fonts_snapshot: &[crate::server::state::FontRecord],
+) {
+    let Some(item) = slot.as_mut() else { return };
+    let mut found = item
+        .font_id
+        .and_then(|fid| fonts_snapshot.iter().find(|f| f.id == fid));
+    if found.is_none() {
+        if let Some(ref p) = item.path {
+            found = fonts_snapshot
+                .iter()
+                .find(|f| f.path.eq_ignore_ascii_case(p));
+        }
+    }
+    if found.is_none() {
+        let query = item
+            .family
+            .as_deref()
+            .or(item.name.as_deref())
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        if !query.is_empty() {
+            found = fonts_snapshot
+                .iter()
+                .find(|f| {
+                    f.family
+                        .as_deref()
+                        .map(|fam| fam.eq_ignore_ascii_case(&query))
+                        .unwrap_or(false)
+                        || f.display_name
+                            .as_deref()
+                            .map(|d| d.eq_ignore_ascii_case(&query))
+                            .unwrap_or(false)
+                        || f.name.eq_ignore_ascii_case(&query)
+                })
+                .or_else(|| {
+                    fonts_snapshot.iter().find(|f| {
+                        f.family
+                            .as_deref()
+                            .map(|fam| fam.to_ascii_lowercase().contains(&query))
+                            .unwrap_or(false)
+                            || f.name.to_ascii_lowercase().contains(&query)
+                    })
+                });
+        }
+    }
+    if let Some(font) = found {
+        item.font_id = Some(font.id);
+        item.family = font.family.clone().or_else(|| Some(font.name.clone()));
+        item.name = font
+            .display_name
+            .clone()
+            .or_else(|| Some(font.name.clone()));
+        item.style = font.style.clone();
+        item.path = Some(font.path.clone());
+    }
+}
+
+/// Validates a relative subfolder path inside a workspace (`Designs/Campaigns/Social`),
+/// preventing traversal, drive prefixes, nulls, and excessive depth.
+pub fn validate_relative_subfolder(raw: &str) -> Result<String, String> {
+    let normalized = raw.trim().replace('\\', "/");
+    let clean = normalized.trim_matches('/');
+    if clean.is_empty() {
+        return Ok(String::new());
+    }
+    if clean.contains("..") || clean.contains('\0') || clean.contains(':') {
+        return Err(
+            "Security violation: invalid characters in workspace subfolder path".to_string(),
+        );
+    }
+    let segments: Vec<&str> = clean
+        .split('/')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if segments.len() > 8 {
+        return Err("Subfolder nesting exceeds maximum depth of 8 levels".to_string());
+    }
+    for seg in &segments {
+        if *seg == "." || *seg == ".." || seg.len() > 80 {
+            return Err("Invalid subfolder name".to_string());
+        }
+        if !seg
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.'))
+        {
+            return Err(
+                "Subfolder names may only contain letters, numbers, spaces, '-', '_', and '.'"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(segments.join("/"))
+}
+
 /// POST /api/workspaces: save or update a workspace
 pub fn save_workspace(
     mut req: Request,
@@ -1662,6 +1791,23 @@ pub fn save_workspace(
             (st.data_dir.clone(), st.fonts.clone())
         };
 
+        resolve_single_typography_slot(&mut ws.typography.heading_font, &fonts_snapshot);
+        resolve_single_typography_slot(&mut ws.typography.body_font, &fonts_snapshot);
+        resolve_single_typography_slot(&mut ws.typography.accent_font, &fonts_snapshot);
+        resolve_single_typography_slot(&mut ws.typography.code_font, &fonts_snapshot);
+
+        // Ensure valid physical path and nested custom folders exist on disk
+        if let Ok(phys) = ensure_workspace_physical_dir(&ws.id, ws.folder_path.as_deref()) {
+            ws.folder_path = Some(phys.to_string_lossy().to_string());
+            for rel in &ws.folders {
+                if let Ok(safe_rel) = validate_relative_subfolder(rel) {
+                    if !safe_rel.is_empty() {
+                        let _ = fs::create_dir_all(phys.join(safe_rel));
+                    }
+                }
+            }
+        }
+
         let dir = get_workspaces_dir(&data_dir);
         if let Err(e) = save_workspace_to_disk(&dir, &ws) {
             respond_json(
@@ -1673,7 +1819,7 @@ pub fn save_workspace(
             );
             return;
         }
-        let _ = sync_workspace_physical_files(&ws, &fonts_snapshot, None);
+        let _ = sync_workspace_physical_files(&ws, &fonts_snapshot, ws.folder_path.as_deref());
 
         respond_json_str(
             req,
@@ -1807,6 +1953,7 @@ pub fn delete_workspace(
     let dir = get_workspaces_dir(&data_dir);
     let json_path = dir.join(format!("{}.json", safe_id));
     let yaml_path = dir.join(format!("{}.yaml", safe_id));
+    let folder_dir = dir.join(safe_id);
 
     let mut removed = false;
     if json_path.exists() {
@@ -1815,6 +1962,10 @@ pub fn delete_workspace(
     }
     if yaml_path.exists() {
         let _ = fs::remove_file(yaml_path);
+        removed = true;
+    }
+    if folder_dir.exists() && folder_dir.is_dir() {
+        let _ = fs::remove_dir_all(folder_dir);
         removed = true;
     }
 
@@ -2397,20 +2548,20 @@ pub fn open_workspace_folder(
     };
 
     let sub_raw = parsed.subfolder.as_deref().unwrap_or("").trim();
-    let target_dir = match sub_raw.to_ascii_lowercase().as_str() {
-        "" => base_dir.clone(),
-        "fonts" => base_dir.join("Fonts"),
-        "designs" => base_dir.join("Designs"),
-        "palettes" => base_dir.join("Palettes"),
-        "guidelines" => base_dir.join("Guidelines"),
-        _ => {
+    let target_dir = match validate_relative_subfolder(sub_raw) {
+        Ok(rel) if rel.is_empty() => base_dir.clone(),
+        Ok(rel) => {
+            let mut p = base_dir.clone();
+            for seg in rel.split('/') {
+                p = p.join(seg);
+            }
+            p
+        }
+        Err(err) => {
             respond_json(
                 req,
                 400,
-                serde_json::json!({
-                    "success": false,
-                    "error": "Invalid subfolder: allowed values are 'Fonts', 'Designs', 'Palettes', 'Guidelines', or ''"
-                }),
+                serde_json::json!({ "success": false, "error": err }),
                 cors_origin,
                 json_header,
             );
@@ -2733,4 +2884,448 @@ pub fn scan_workspace_folder(
         cors_origin,
         json_header,
     );
+}
+
+/// POST /api/workspaces/:id/folders: create a nested folder (Folder inside Folder) on disk cleanly
+pub fn create_workspace_folder(
+    mut req: Request,
+    state: &Arc<RwLock<AppState>>,
+    id: &str,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let safe_id = match validate_workspace_id(id) {
+        Ok(valid) => valid,
+        Err(err) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": err }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let body = read_body(&mut req);
+    #[derive(Deserialize, Default)]
+    #[serde(rename_all = "camelCase")]
+    struct CreateFolderReq {
+        #[serde(default)]
+        parent_path: Option<String>,
+        #[serde(default)]
+        folder_name: Option<String>,
+        #[serde(default)]
+        relative_path: Option<String>,
+    }
+
+    let parsed = serde_json::from_str::<CreateFolderReq>(&body).unwrap_or_default();
+    let combined = if let Some(ref rel) = parsed.relative_path {
+        rel.clone()
+    } else {
+        let parent = parsed.parent_path.as_deref().unwrap_or("").trim();
+        let name = parsed.folder_name.as_deref().unwrap_or("").trim();
+        if parent.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{}", parent.trim_end_matches(['/', '\\']), name)
+        }
+    };
+
+    let clean_rel = match validate_relative_subfolder(&combined) {
+        Ok(r) if !r.is_empty() => r,
+        Ok(_) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": "Folder name cannot be empty" }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+        Err(e) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": e }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let data_dir = {
+        let st = state.read().unwrap();
+        st.data_dir.clone()
+    };
+    let ws_dir = get_workspaces_dir(&data_dir);
+    let mut ws_opt = load_workspace_from_disk(&ws_dir, safe_id);
+    let custom_root = ws_opt.as_ref().and_then(|w| w.folder_path.as_deref());
+
+    let phys_root = match ensure_workspace_physical_dir(safe_id, custom_root) {
+        Ok(d) => d,
+        Err(e) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": e }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let mut target_path = phys_root.clone();
+    for seg in clean_rel.split('/') {
+        target_path = target_path.join(seg);
+    }
+
+    if let Err(e) = fs::create_dir_all(&target_path) {
+        respond_json(
+            req,
+            500,
+            serde_json::json!({ "success": false, "error": format!("Failed to create folder: {}", e) }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    if let Some(ref mut ws) = ws_opt {
+        if !ws
+            .folders
+            .iter()
+            .any(|f| f.eq_ignore_ascii_case(&clean_rel))
+        {
+            ws.folders.push(clean_rel.clone());
+            let _ = save_workspace_to_disk(&ws_dir, ws);
+        }
+    }
+
+    respond_json(
+        req,
+        200,
+        serde_json::json!({
+            "success": true,
+            "id": safe_id,
+            "relativePath": clean_rel,
+            "folderPath": target_path.to_string_lossy().to_string()
+        }),
+        cors_origin,
+        json_header,
+    );
+}
+
+/// POST /api/workspaces/:id/upload-design?fileName=...&subfolder=...
+pub fn upload_workspace_design(
+    mut req: Request,
+    state: &Arc<RwLock<AppState>>,
+    id: &str,
+    query_params: &std::collections::HashMap<String, String>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let safe_id = match validate_workspace_id(id) {
+        Ok(valid) => valid,
+        Err(err) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": err }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let raw_name = query_params
+        .get("fileName")
+        .or_else(|| query_params.get("filename"))
+        .cloned()
+        .unwrap_or_else(|| "Design.png".to_string());
+    let clean_name = Path::new(&raw_name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Design.png")
+        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'], "_");
+    let ext = Path::new(&clean_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    if !matches!(
+        ext.as_str(),
+        "psd" | "ai" | "indd" | "pdf" | "svg" | "png" | "jpg" | "jpeg" | "webp" | "fig" | "xd"
+    ) {
+        respond_json(
+            req,
+            400,
+            serde_json::json!({
+                "success": false,
+                "error": "Unsupported design format. Allowed: psd, ai, indd, pdf, svg, png, jpg, jpeg, webp, fig, xd"
+            }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let sub_raw = query_params
+        .get("subfolder")
+        .map(|s| s.as_str())
+        .unwrap_or("Designs");
+    let clean_sub = match validate_relative_subfolder(sub_raw) {
+        Ok(r) if !r.is_empty() => r,
+        Ok(_) => "Designs".to_string(),
+        Err(e) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": e }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let mut bytes = Vec::new();
+    let cap = 64 * 1024 * 1024 + 1;
+    if req
+        .as_reader()
+        .take(cap as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.is_empty()
+    {
+        respond_json(
+            req,
+            400,
+            serde_json::json!({ "success": false, "error": "Empty or unreadable design upload" }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+    if bytes.len() > 64 * 1024 * 1024 {
+        respond_json(
+            req,
+            413,
+            serde_json::json!({ "success": false, "error": "Design file exceeds 64 MB limit" }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let (data_dir, fonts_snapshot) = {
+        let st = state.read().unwrap();
+        (st.data_dir.clone(), st.fonts.clone())
+    };
+    let ws_dir = get_workspaces_dir(&data_dir);
+    let mut ws_opt = load_workspace_from_disk(&ws_dir, safe_id);
+    let phys_root = match ensure_workspace_physical_dir(
+        safe_id,
+        ws_opt.as_ref().and_then(|w| w.folder_path.as_deref()),
+    ) {
+        Ok(d) => d,
+        Err(e) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": e }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let mut target_dir = phys_root.clone();
+    for seg in clean_sub.split('/') {
+        target_dir = target_dir.join(seg);
+    }
+    if let Err(e) = fs::create_dir_all(&target_dir) {
+        respond_json(
+            req,
+            500,
+            serde_json::json!({ "success": false, "error": format!("Failed to create target folder: {}", e) }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let dest_path = target_dir.join(&clean_name);
+    if let Err(e) = fs::write(&dest_path, &bytes) {
+        respond_json(
+            req,
+            500,
+            serde_json::json!({ "success": false, "error": format!("Failed to save design file: {}", e) }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let used_fonts = if matches!(ext.as_str(), "psd" | "ai" | "indd" | "pdf" | "svg") {
+        crate::scanner::AdobeScanner::extract_font_names(&dest_path).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let mut missing_fonts = Vec::new();
+    for ufont in &used_fonts {
+        let ulow = ufont.to_ascii_lowercase();
+        let active_match = fonts_snapshot.iter().any(|f| {
+            f.is_active
+                && (f.name.to_ascii_lowercase().contains(&ulow)
+                    || f.family
+                        .as_deref()
+                        .map(|fam| fam.to_ascii_lowercase().contains(&ulow))
+                        .unwrap_or(false))
+        });
+        if !active_match {
+            missing_fonts.push(ufont.clone());
+        }
+    }
+
+    let rel_file = format!("{}/{}", clean_sub, clean_name);
+    if let Some(ref mut ws) = ws_opt {
+        if !ws
+            .folders
+            .iter()
+            .any(|f| f.eq_ignore_ascii_case(&clean_sub))
+        {
+            ws.folders.push(clean_sub.clone());
+            let _ = save_workspace_to_disk(&ws_dir, ws);
+        }
+    }
+
+    let is_image = matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "svg");
+    let preview_url = if is_image {
+        Some(format!(
+            "/api/workspaces/{}/asset?path={}",
+            safe_id,
+            super::common::urlencoding_decode(&rel_file).replace(' ', "%20")
+        ))
+    } else {
+        None
+    };
+
+    respond_json(
+        req,
+        200,
+        serde_json::json!({
+            "success": true,
+            "design": {
+                "name": clean_name,
+                "path": dest_path.to_string_lossy().to_string(),
+                "relativePath": rel_file,
+                "subfolder": clean_sub,
+                "format": ext.to_uppercase(),
+                "size": bytes.len(),
+                "usedFonts": used_fonts,
+                "missingFonts": missing_fonts,
+                "allActive": missing_fonts.is_empty(),
+                "previewUrl": preview_url
+            }
+        }),
+        cors_origin,
+        json_header,
+    );
+}
+
+/// GET /api/workspaces/:id/asset?path=...: serves safe image thumbnails / project logos inside a workspace
+pub fn serve_workspace_asset(
+    req: Request,
+    state: &Arc<RwLock<AppState>>,
+    id: &str,
+    query_params: &std::collections::HashMap<String, String>,
+    cors_origin: Header,
+) {
+    let safe_id = match validate_workspace_id(id) {
+        Ok(v) => v,
+        Err(_) => {
+            let mut res = tiny_http::Response::from_string("Invalid ID")
+                .with_status_code(tiny_http::StatusCode(400));
+            res.add_header(cors_origin);
+            let _ = req.respond(res);
+            return;
+        }
+    };
+    let rel_raw = query_params.get("path").map(|s| s.as_str()).unwrap_or("");
+    let clean_rel = match validate_relative_subfolder(rel_raw) {
+        Ok(r) if !r.is_empty() => r,
+        _ => {
+            let mut res = tiny_http::Response::from_string("Invalid asset path")
+                .with_status_code(tiny_http::StatusCode(400));
+            res.add_header(cors_origin);
+            let _ = req.respond(res);
+            return;
+        }
+    };
+
+    let data_dir = {
+        let st = state.read().unwrap();
+        st.data_dir.clone()
+    };
+    let ws_dir = get_workspaces_dir(&data_dir);
+    let custom_root = load_workspace_from_disk(&ws_dir, safe_id).and_then(|w| w.folder_path);
+    let root = match ensure_workspace_physical_dir(safe_id, custom_root.as_deref()) {
+        Ok(d) => d,
+        Err(_) => {
+            let mut res = tiny_http::Response::from_string("Workspace not found")
+                .with_status_code(tiny_http::StatusCode(404));
+            res.add_header(cors_origin);
+            let _ = req.respond(res);
+            return;
+        }
+    };
+
+    let mut target = root.clone();
+    for seg in clean_rel.split('/') {
+        target = target.join(seg);
+    }
+
+    let ok_contained = match (root.canonicalize(), target.canonicalize()) {
+        (Ok(cr), Ok(ct)) => ct.starts_with(cr) && ct.is_file(),
+        _ => false,
+    };
+
+    if !ok_contained {
+        let mut res = tiny_http::Response::from_string("Asset not found")
+            .with_status_code(tiny_http::StatusCode(404));
+        res.add_header(cors_origin);
+        let _ = req.respond(res);
+        return;
+    }
+
+    if let Ok(bytes) = fs::read(&target) {
+        let ext = target
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let mime = match ext.as_str() {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "svg" => "image/svg+xml",
+            "webp" => "image/webp",
+            "pdf" => "application/pdf",
+            _ => "application/octet-stream",
+        };
+        let mime_h = Header::from_bytes(&b"Content-Type"[..], mime.as_bytes()).unwrap();
+        let mut res = tiny_http::Response::from_data(bytes);
+        res.add_header(cors_origin);
+        res.add_header(mime_h);
+        super::common::add_security_headers(&mut res);
+        let _ = req.respond(res);
+    }
 }

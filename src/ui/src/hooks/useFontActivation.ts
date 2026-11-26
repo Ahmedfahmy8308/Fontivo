@@ -8,12 +8,14 @@ export interface UseFontActivationProps {
   setFonts: React.Dispatch<React.SetStateAction<FontItem[]>>;
   setFamilies: React.Dispatch<React.SetStateAction<FontFamily[]>>;
   fetchStats: () => Promise<void> | void;
+  fetchCollections?: () => Promise<void> | void;
 }
 
 export function useFontActivation({
   setFonts,
   setFamilies,
   fetchStats,
+  fetchCollections,
 }: UseFontActivationProps) {
   const handleToggleActive = async (
     id: string | number,
@@ -281,6 +283,14 @@ export function useFontActivation({
     if (isFamilyObj && familyName) {
       setFamilies((prev) => prev.filter((fam) => fam.family !== familyName));
       setFonts((prev) => prev.filter((f) => f.family !== familyName));
+      await safeFetchJson<any>(`${API_BASE}/fonts/delete-family`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          family: familyName,
+        }),
+        timeoutMs: 8000,
+      });
     } else {
       setFonts((prev) => prev.filter((f) => f.id !== id));
       setFamilies((prev) =>
@@ -297,20 +307,21 @@ export function useFontActivation({
           })
           .filter((fam) => fam.fonts.length > 0),
       );
+
+      await safeFetchJson<any>(`${API_BASE}/fonts/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id,
+          family: familyName,
+          path: isFontObj ? (target as FontItem).path : undefined,
+        }),
+        timeoutMs: 8000,
+      });
     }
 
-    await safeFetchJson<any>(`${API_BASE}/fonts/delete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id,
-        family: familyName,
-        path: isFontObj ? (target as FontItem).path : undefined,
-      }),
-      timeoutMs: 6000,
-    });
-
     fetchStats();
+    fetchCollections?.();
     return true;
   };
 
