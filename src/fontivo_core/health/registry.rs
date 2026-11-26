@@ -578,6 +578,7 @@ pub fn enumerate_windows_fonts() -> Vec<WindowsFontItem> {
             hive: "HKLM".to_string(),
             is_system_core: true,
             is_uninstallable: false,
+            pending_reboot_delete: false,
         });
         results.push(WindowsFontItem {
             id: String::new(),
@@ -588,6 +589,7 @@ pub fn enumerate_windows_fonts() -> Vec<WindowsFontItem> {
             hive: "HKLM".to_string(),
             is_system_core: true,
             is_uninstallable: false,
+            pending_reboot_delete: false,
         });
         results.push(WindowsFontItem {
             id: String::new(),
@@ -598,6 +600,7 @@ pub fn enumerate_windows_fonts() -> Vec<WindowsFontItem> {
             hive: "HKLM".to_string(),
             is_system_core: true,
             is_uninstallable: false,
+            pending_reboot_delete: false,
         });
         results.push(WindowsFontItem {
             id: String::new(),
@@ -608,6 +611,7 @@ pub fn enumerate_windows_fonts() -> Vec<WindowsFontItem> {
             hive: "HKCU".to_string(),
             is_system_core: false,
             is_uninstallable: true,
+            pending_reboot_delete: false,
         });
     }
 
