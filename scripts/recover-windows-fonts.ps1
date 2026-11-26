@@ -16,7 +16,7 @@
     Safety Guarantees:
       - Never permanently deletes any font file (moves to Quarantine with restoration_manifest.json).
       - Never touches FontSubstitutes or FontLink\SystemLink.
-      - Never touches 'Confirmed Windows system font' or 'Unknown — requires manual review' entries.
+      - Never touches 'Confirmed Windows system font' or 'Unknown -- requires manual review' entries.
       - Creates full .reg backups, JSON Registry snapshots, and SHA-256 file manifest before changes.
       - Moves font file BEFORE unregistering its Registry value; skips unregistration if locked.
       - Transactional error handling with automatic rollback on failure.
@@ -63,7 +63,7 @@ $FontCacheDir           = Join-Path $env:WINDIR 'ServiceProfiles\LocalService\Ap
 $FontivoLocalDir        = Join-Path $env:LOCALAPPDATA 'Fontivo'
 
 # ============================================================================
-# Verified Forensic Data (from forensic_data.md — Windows 11 26H2 Build 26300)
+# Verified Forensic Data (from forensic_data.md -- Windows 11 26H2 Build 26300)
 # ============================================================================
 
 # 57 Confirmed Missing Windows System Font Registrations (27 Primary Core + 30 Additional)
@@ -190,7 +190,7 @@ $QuarantineCoreFonts = @(
     @{ ValueName = 'WINGDING_3 (TrueType)'; FileName = 'WINGDING_3.TTF'; Classification = 'Conflicting third-party/older font' }
 )
 
-# 8 Unknown — Requires Manual Review (NEVER auto-quarantined)
+# 8 Unknown -- Requires Manual Review (NEVER auto-quarantined)
 $SkippedUnknownFonts = @(
     @{ ValueName = 'ARIALN_2 (TrueType)'; FileName = 'ARIALN_2.TTF'; Reason = 'Unknown - Office/legacy Arial Narrow; verify canonical copy first' },
     @{ ValueName = 'ARIALNB_2 (TrueType)'; FileName = 'ARIALNB_2.TTF'; Reason = 'Unknown - Office/legacy Arial Narrow Bold; verify canonical copy first' },

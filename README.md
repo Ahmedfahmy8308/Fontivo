@@ -65,26 +65,45 @@
 
 Download the official Windows installer packaged with Inno Setup 6:
 
-- **[Download Fontivo-v1.0-Setup.exe](https://github.com/Ahmedfahmy8308/Fontivo/releases/latest/download/Fontivo-v1.0-Setup.exe)** (`3.74 MB`)
+- **[Download Fontivo-v1.0-Setup.exe](https://github.com/Ahmedfahmy8308/Fontivo/releases/latest/download/Fontivo-v1.0-Setup.exe)** (`4.30 MB`)
 - Non-elevated least-privilege installation into `{autopf}\Fontivo` with zero UAC administrative prompts.
-- Desktop shortcut, start menu entry, and uninstaller included.
+- Desktop shortcut, Start Menu entry, full PE VersionInfo metadata, and uninstaller included.
 
-### 2. Standalone Portable Distribution (.zip)
+### 2. macOS & Linux One-Line Installer (Verified Raw Channel)
 
-Prefer a zero-install portable executable you can run from a USB drive or project folder?
+macOS (Apple Silicon & Intel) and Linux (`x86_64`) install cleanly via our standalone `raw.githubusercontent.com` installer, which downloads the matching release tarball, verifies its `.sha256` signature, and configures your `PATH` (or compiles natively from source via `--from-source`):
 
-- **[Download Fontivo-windows-x86_64.zip](https://github.com/Ahmedfahmy8308/Fontivo/releases/latest/download/Fontivo-windows-x86_64.zip)** (`2.67 MB`)
-- Extract and run `Fontivo.exe` immediately without writing anything to the Windows registry.
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ahmedfahmy8308/Fontivo/main/scripts/install.sh | bash
+```
 
-### 3. Optional One-Liner PowerShell Install (CLI)
+Prefer compiling directly on your own machine (zero third-party binary trust required)?
 
-For command-line automation and package scripts:
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ahmedfahmy8308/Fontivo/main/scripts/install.sh | bash -s -- --from-source
+```
+
+### 3. Cryptographic Verification (Zero-Cost SLSA Provenance & SHA-256)
+
+Every official release asset includes `SHA256SUMS` and free GitHub SLSA Build Provenance attestations (`actions/attest-build-provenance`):
+
+```powershell
+# Verify official GitHub build provenance without paid certificates:
+gh attestation verify .\Fontivo-v1.0-Setup.exe --owner Ahmedfahmy8308
+
+# Or check local SHA-256 digest against SHA256SUMS:
+Get-FileHash .\Fontivo-v1.0-Setup.exe -Algorithm SHA256
+```
+
+### 4. Optional One-Liner PowerShell Install (CLI)
+
+For command-line automation on Windows:
 
 ```powershell
 irm https://raw.githubusercontent.com/Ahmedfahmy8308/Fontivo/main/scripts/install.ps1 | iex
 ```
 
-*Note: This command downloads the verified release from GitHub Releases, checks SHA-256 integrity, and adds Fontivo to your user path.*
+*Note: This script verifies the `.sha256` sidecar digest before installing and adds Fontivo to your user `PATH`.*
 
 > [!TIP]
 > Want to build from source or customize the Rust backend? See [Building from Source](#building-from-source).

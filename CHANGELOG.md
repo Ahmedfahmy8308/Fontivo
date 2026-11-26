@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Adobe CC Socket Server**: Asynchronous loopback listener on `127.0.0.1:27715` communicating with Adobe CEP extensions and ExtendScript automation.
 - **Design File Inspector**: Integrated parser extracting text layers and font metadata from `.psd`, `.ai`, `.indd`, and `.pdf` files without buffering heavy raster layers.
 - **Binary Adobe Swatch Exchange Generator**: Native Rust `.ASE` generator creating Big-Endian IEEE 754 floating-point RGB palettes compatible with Photoshop, Illustrator, and InDesign.
-- **Pre-Indexed Font Database**: Embedded database indexing **11,207 fonts** across **4,438 families** with balanced Arabic and Latin scripts.
+- **Pre-Indexed Font Database**: Synchronized with `Fontivo-Fonts v1.0.3` indexing **10,939 unique fonts** across **4,430 families** in **15 SHA-256 verified packs**.
 - **Asynchronous Downloader & Safe Extractor**: Multi-threaded HTTP Range resumption engine coupled with `SafeZipExtractor` featuring Zip Slip protection, 200:1 compression ratio limits, 4 GB size ceilings, and font binary signature validation.
 - **System Health & Registry Optimizer**: Audits and purges orphaned font registry keys in `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts`, creates automatic timestamped `.reg` backups in `%APPDATA%\Fontivo\Backups\`, and executes working set RAM trimming (`EmptyWorkingSet`).
 
@@ -34,14 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Virtualized Specimen Artboard**: Ultra-fast React 19 canvas rendering thousands of font cards with zero UI stutter.
 - **4 Distinct View Modes**: Family Grouped, Masonry Grid, Compact List, and Editorial Specimen.
 - **Bilingual Internationalization (i18n)**: Seamless English and Arabic localization with comprehensive RTL/LTR layout transitions.
-- **Color Studio & Screen Eyedropper**: System-wide Win32 crosshair eyedropper (`/api/color/pick-screen`) with a live 5x5 pixel Loupe, WCAG 2.1 contrast calculations (AAA/AA ratings), and six mathematical color harmonies.
-- **UI/UX Typography Laboratory**: Interactive component testing (buttons, form fields, user cards, pricing tiers) paired with **Tabular Figures & Accounting Numerals Verification** and geometric **Type Scale Generator**.
+- **Color Studio & Screen Eyedropper**: System-wide Win32 crosshair eyedropper (`/api/color/pick-screen`) with circular lens feedback, WCAG 2.1 contrast calculations (AAA/AA ratings), and six mathematical color harmonies.
+- **UI/UX Typography Laboratory**: Interactive component testing paired with **Tabular Figures verification** and geometric **Type Scale Generator**.
 - **Real-Time 2-Second Telemetry**: Live RAM and CPU streaming monitor with active working set memory optimization.
 
 #### Packaging & Distribution
-- **Inno Setup 6 Installer (`Fontivo-v1.0-Setup.exe`)**: Non-elevated least-privilege installation (`PrivilegesRequired=lowest`) into `{autopf}\Fontivo` with `fontivo://` protocol handler registration (~3.89 MB).
-- **Standalone Portable Binary (`Fontivo.exe`)**: Self-contained executable requiring zero installation (~6.94 MB).
-- **1-Click PowerShell Installer**: Automated download and installation script (`iwr ... | iex`).
+- **Inno Setup 6 Installer (`Fontivo-v1.0-Setup.exe`)**: Non-elevated least-privilege installation (`PrivilegesRequired=lowest`) into `{autopf}\Fontivo` with complete PE VersionInfo metadata and `SHA256SUMS` verification (`4.30 MB`).
+- **macOS & Linux Release Channels**: Precompiled SHA-256 verified release tarballs (`Fontivo-macos-arm64.tar.gz`, `Fontivo-macos-x86_64.tar.gz`, `Fontivo-linux-x86_64.tar.gz`) installed safely via `raw.githubusercontent.com/.../scripts/install.sh` with `--from-source` compilation support.
+- **GitHub Artifact Attestations**: Free cryptographic SLSA build provenance (`actions/attest-build-provenance`) generated for every official release asset.
 
 ---
 

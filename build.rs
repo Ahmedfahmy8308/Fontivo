@@ -203,8 +203,11 @@ fn configure_windows_resources(manifest_dir: &Path, pkg_version: &str) {
         "FileDescription",
         "Fontivo — Next-Gen Desktop Font & Color Manager",
     );
-    res.set("CompanyName", "Fontivo Team");
-    res.set("LegalCopyright", "Copyright (c) 2026 Fontivo Team");
+    res.set("CompanyName", "Eng. Ahmed Fahmy (Fontivo Open Source)");
+    res.set(
+        "LegalCopyright",
+        "Copyright (c) 2026 Eng. Ahmed Fahmy & Eng. Mohamed Elashwah (MIT)",
+    );
     res.set("OriginalFilename", "Fontivo.exe");
     res.set("ProductVersion", pkg_version);
     res.set("FileVersion", pkg_version);

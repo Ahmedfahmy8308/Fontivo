@@ -1,5 +1,5 @@
 # =========================================================================
-# Fontivo — Windows Default Fonts Factory Restorer
+# Fontivo -- Windows Default Fonts Factory Restorer
 # Safely removes non-core third-party fonts from C:\Windows\Fonts & Registry
 # =========================================================================
 
@@ -12,7 +12,7 @@ if (-not $isAdmin) {
 
 Clear-Host
 Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "  Fontivo — Windows Default Fonts Restore Utility (Admin)" -ForegroundColor Cyan
+Write-Host "  Fontivo -- Windows Default Fonts Restore Utility (Admin)" -ForegroundColor Cyan
 Write-Host "=================================================================" -ForegroundColor Cyan
 Write-Host ""
 

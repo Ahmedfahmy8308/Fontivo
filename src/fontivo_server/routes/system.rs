@@ -1196,15 +1196,11 @@ pub fn handle_pin_taskbar_picker(req: Request, cors_origin: Header, json_header:
             esc(&exe_str),
         );
 
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         let _ = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-WindowStyle",
-                "Hidden",
-                "-Command",
-                &ps_script,
-            ])
+            .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
     }
 

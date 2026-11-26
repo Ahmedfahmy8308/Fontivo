@@ -98,30 +98,37 @@ function Invoke-FontivoInstall {
         & git clone --depth 1 "https://github.com/$Repo.git" $sourceDir
         if ($LASTEXITCODE -ne 0) { Stop-FontivoInstall "Failed to clone repository from GitHub." }
 
-        Push-Location (Join-Path $sourceDir "Fontivo-App\src\ui")
-        if (Get-Command npm -ErrorAction SilentlyContinue) {
-          & npm install --no-audit --no-fund
-          & npm run build
-        }
-        Pop-Location
+        $appRoot = if (Test-Path (Join-Path $sourceDir "Cargo.toml")) { $sourceDir } elseif (Test-Path (Join-Path $sourceDir "Fontivo-App\Cargo.toml")) { Join-Path $sourceDir "Fontivo-App" } else { Stop-FontivoInstall "Cargo.toml not found in cloned repository." }
+        $srcUiDir = Join-Path $appRoot "src\ui"
 
-        Push-Location (Join-Path $sourceDir "Fontivo-App")
-        & cargo build --release
-        if ($LASTEXITCODE -ne 0) { Stop-FontivoInstall "Cargo build failed." }
-        Pop-Location
-
-        Copy-Item (Join-Path $sourceDir "Fontivo-App\target\release\Fontivo.exe") (Join-Path $targetDir "Fontivo.exe") -Force
-        if (Test-Path (Join-Path $sourceDir "Fontivo-App\src\ui\dist")) {
-          Copy-Item (Join-Path $sourceDir "Fontivo-App\src\ui\dist") (Join-Path $targetDir "dist") -Recurse -Force
+        if ((Test-Path $srcUiDir) -and (Get-Command npm -ErrorAction SilentlyContinue)) {
+          Push-Location $srcUiDir
+          try {
+            & npm ci --no-audit --no-fund
+            & npm run build
+          } finally { Pop-Location }
         }
-        if (Test-Path (Join-Path $sourceDir "Fontivo-App\icon.ico")) {
-          Copy-Item (Join-Path $sourceDir "Fontivo-App\icon.ico") (Join-Path $targetDir "icon.ico") -Force
+
+        Push-Location $appRoot
+        try {
+          $env:FONTIVO_RELEASE_BUILD = "1"
+          & cargo build --release --locked --bin Fontivo
+          if ($LASTEXITCODE -ne 0) { Stop-FontivoInstall "Cargo build failed." }
+        } finally { Pop-Location }
+
+        Copy-Item (Join-Path $appRoot "target\release\Fontivo.exe") (Join-Path $targetDir "Fontivo.exe") -Force
+        if (Test-Path (Join-Path $srcUiDir "dist")) {
+          Copy-Item (Join-Path $srcUiDir "dist") (Join-Path $targetDir "dist") -Recurse -Force
+        }
+        if (Test-Path (Join-Path $appRoot "icon.ico")) {
+          Copy-Item (Join-Path $appRoot "icon.ico") (Join-Path $targetDir "icon.ico") -Force
         }
       } else {
         # Determine download URL
         $releaseTag = $Version
         $zipAssetUrl = ""
         $exeAssetUrl = ""
+        $exeShaUrl = ""
 
         if ($releaseTag -eq 'latest') {
           Write-FontivoInfo "Querying latest release from https://api.github.com/repos/$Repo/releases/latest ..."
@@ -132,6 +139,7 @@ function Invoke-FontivoInstall {
             foreach ($asset in $apiResp.assets) {
               if ($asset.name -like "*windows-x86_64.zip") { $zipAssetUrl = $asset.browser_download_url }
               if ($asset.name -eq "Fontivo.exe") { $exeAssetUrl = $asset.browser_download_url }
+              if ($asset.name -eq "Fontivo.exe.sha256") { $exeShaUrl = $asset.browser_download_url }
             }
           } catch {
             Write-FontivoWarn "GitHub API lookup failed or rate-limited; falling back to direct release URLs."
@@ -139,24 +147,26 @@ function Invoke-FontivoInstall {
           }
         }
 
-        if ([string]::IsNullOrWhiteSpace($zipAssetUrl)) {
-          $zipAssetUrl = "https://github.com/$Repo/releases/download/$releaseTag/Fontivo-windows-x86_64.zip"
-        }
         if ([string]::IsNullOrWhiteSpace($exeAssetUrl)) {
           $exeAssetUrl = "https://github.com/$Repo/releases/download/$releaseTag/Fontivo.exe"
+        }
+        if ([string]::IsNullOrWhiteSpace($exeShaUrl)) {
+          $exeShaUrl = "$exeAssetUrl.sha256"
         }
 
         $zipLocalPath = Join-Path $tempDir "Fontivo-windows-x86_64.zip"
         $downloadSuccess = $false
 
-        Write-FontivoInfo "Attempting to download release package: $zipAssetUrl"
-        try {
-          Invoke-WebRequest -Uri $zipAssetUrl -OutFile $zipLocalPath -UseBasicParsing
-          if ((Test-Path $zipLocalPath) -and (Get-Item $zipLocalPath).Length -gt 1000) {
-            $downloadSuccess = $true
+        if (-not [string]::IsNullOrWhiteSpace($zipAssetUrl)) {
+          Write-FontivoInfo "Attempting to download release package: $zipAssetUrl"
+          try {
+            Invoke-WebRequest -Uri $zipAssetUrl -OutFile $zipLocalPath -UseBasicParsing
+            if ((Test-Path $zipLocalPath) -and (Get-Item $zipLocalPath).Length -gt 1000) {
+              $downloadSuccess = $true
+            }
+          } catch {
+            Write-FontivoWarn "ZIP archive unavailable; using verified Fontivo.exe binary."
           }
-        } catch {
-          Write-FontivoWarn "ZIP package download failed; attempting direct executable download: $exeAssetUrl"
         }
 
         if ($downloadSuccess) {
@@ -166,10 +176,24 @@ function Invoke-FontivoInstall {
           Copy-Item -Path "$extractDir\*" -Destination $targetDir -Recurse -Force
         } else {
           $exeLocalPath = Join-Path $targetDir "Fontivo.exe"
-          Write-FontivoInfo "Downloading standalone executable: $exeAssetUrl"
+          $shaLocalPath = Join-Path $tempDir "Fontivo.exe.sha256"
+          Write-FontivoInfo "Downloading executable: $exeAssetUrl"
           Invoke-WebRequest -Uri $exeAssetUrl -OutFile $exeLocalPath -UseBasicParsing
           if (-not (Test-Path $exeLocalPath) -or (Get-Item $exeLocalPath).Length -lt 1000) {
             Stop-FontivoInstall "Failed to download Fontivo release asset."
+          }
+          try {
+            Invoke-WebRequest -Uri $exeShaUrl -OutFile $shaLocalPath -UseBasicParsing
+            $expectedHash = ((Get-Content $shaLocalPath -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+            $actualHash = (Get-FileHash -Path $exeLocalPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($expectedHash -and ($expectedHash -ne $actualHash)) {
+              Remove-Item $exeLocalPath -Force -ErrorAction SilentlyContinue
+              Stop-FontivoInstall "SHA-256 verification failed for Fontivo.exe (expected $expectedHash, got $actualHash)"
+            }
+            Write-FontivoOk "Verified SHA-256 checksum: $actualHash"
+          } catch {
+            if ($_.Exception.Message -like "SHA-256 verification failed*") { throw }
+            Write-FontivoWarn "Could not fetch Fontivo.exe.sha256 sidecar; continuing without sidecar match."
           }
         }
       }

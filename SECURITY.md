@@ -40,6 +40,24 @@ The font downloader uses `SafeZipExtractor` with strict defensive thresholds:
 
 ---
 
+## Supply Chain Security, Zero-Cost Trust & Antivirus Verification
+
+Because Fontivo is 100% free and open-source software compiled directly from public source on GitHub-hosted runners without commercial EV code-signing paywalls, we protect users with verifiable open-source trust controls:
+
+1. **Cryptographic SLSA Build Provenance (`gh attestation verify`)**: Every GitHub Release binary (`Fontivo-v1.0-Setup.exe`, `Fontivo.exe`, macOS `.tar.gz`, Linux `.tar.gz`) includes a free GitHub Artifact Attestation generated via `actions/attest-build-provenance` proving it was compiled directly from `Ahmedfahmy8308/Fontivo` without tampering:
+   ```powershell
+   gh attestation verify Fontivo-v1.0-Setup.exe --owner Ahmedfahmy8308
+   ```
+2. **SHA-256 Verification (`SHA256SUMS`)**:
+   ```powershell
+   Get-FileHash .\Fontivo-v1.0-Setup.exe -Algorithm SHA256
+   ```
+3. **False-Positive Hardening & Transparency**:
+   - Releases never use UPX packers or solid high-entropy wrappers (`Compression=lzma2/normal`, `SolidCompression=no`), include full PE VersionInfo resources (`build.rs` & `Setup_Fontivo.iss`), and avoid flagged `-WindowStyle Hidden` PowerShell invocations.
+   - macOS and Linux users can verify prebuilt tarballs via `SHA256SUMS` or compile natively from source via `curl -fsSL https://raw.githubusercontent.com/Ahmedfahmy8308/Fontivo/main/scripts/install.sh | bash -s -- --from-source`.
+
+---
+
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability or security bug in Fontivo, please report it responsibly:
