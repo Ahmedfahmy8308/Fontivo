@@ -95,6 +95,50 @@ pub fn move_font_file_to_backup(src_path: &Path, dest_path: &Path) -> Result<boo
     Ok(true)
 }
 
+#[cfg(windows)]
+fn schedule_locked_font_deletion_and_backup(
+    src_path: &Path,
+    dest_path: &Path,
+) -> Result<(), String> {
+    use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT};
+
+    if !src_path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = dest_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create backup font directory: {}", e))?;
+    }
+    fs::copy(src_path, dest_path).map_err(|e| {
+        format!(
+            "Failed to back up locked font '{}': {}",
+            src_path.display(),
+            e
+        )
+    })?;
+    let wide_src: Vec<u16> = src_path
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let res = unsafe {
+        MoveFileExW(
+            PCWSTR(wide_src.as_ptr()),
+            PCWSTR::null(),
+            MOVEFILE_DELAY_UNTIL_REBOOT,
+        )
+    };
+    if let Err(e) = res {
+        let _ = fs::remove_file(dest_path);
+        return Err(format!(
+            "Failed to schedule reboot removal for '{}': {}",
+            src_path.display(),
+            e
+        ));
+    }
+    Ok(())
+}
+
 /// Captures a full snapshot of HKCU and HKLM Fonts registry entries (exact name, type, and data).
 pub fn snapshot_fonts_registry() -> Vec<RegistrySnapshotEntry> {
     #[allow(unused_mut)]
@@ -322,9 +366,63 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
         }
 
         let mut removed_count = 0;
+        let mut scheduled_reboot_count = 0;
+        let mut skipped_count = 0;
+        let mut skipped_fonts: Vec<String> = Vec::new();
         let mut backed_up_entries: Vec<serde_json::Value> = Vec::new();
         let mut rollback_records: Vec<(PathBuf, PathBuf, bool, Vec<RegistrySnapshotEntry>)> =
             Vec::new();
+
+        // Stop Windows FontCache service BEFORE attempting file moves so cached system/user handles release
+        if is_admin && !to_remove.is_empty() {
+            match super::cache::stop_font_cache_service() {
+                Ok(_) => append_transaction_log(
+                    &mut tx_log,
+                    "stop_font_cache",
+                    "ok",
+                    "*",
+                    "SYSTEM",
+                    "Stopped FontCache service prior to moving font files",
+                ),
+                Err(err) => append_transaction_log(
+                    &mut tx_log,
+                    "stop_font_cache",
+                    "skipped",
+                    "*",
+                    "SYSTEM",
+                    err,
+                ),
+            }
+        }
+
+        // Unregister removable fonts from active GDI session and notify shell before moving files
+        if !to_remove.is_empty() {
+            for font in &to_remove {
+                let wide_path: Vec<u16> =
+                    font.path.encode_utf16().chain(std::iter::once(0)).collect();
+                unsafe {
+                    let _ = windows::Win32::Graphics::Gdi::RemoveFontResourceW(PCWSTR(
+                        wide_path.as_ptr(),
+                    ));
+                }
+            }
+            use windows::Win32::Foundation::{LPARAM, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_FONTCHANGE,
+            };
+            let mut result_lparam = 0usize;
+            unsafe {
+                let _ = SendMessageTimeoutW(
+                    HWND_BROADCAST,
+                    WM_FONTCHANGE,
+                    WPARAM(0),
+                    LPARAM(0),
+                    SMTO_ABORTIFHUNG,
+                    1000,
+                    Some(&mut result_lparam),
+                );
+            }
+        }
 
         unsafe {
             let mut hkey_cu = HKEY::default();
@@ -392,29 +490,62 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
                     .cloned()
                     .collect();
 
-                // 1. Unregister from GDI RAM before moving/removing file
+                // 1. Ensure unregistered from GDI RAM before moving/removing file
                 let wide_path: Vec<u16> =
                     font.path.encode_utf16().chain(std::iter::once(0)).collect();
                 let _ =
                     windows::Win32::Graphics::Gdi::RemoveFontResourceW(PCWSTR(wide_path.as_ptr()));
 
                 // 2. Move font file to backup folder FIRST.
-                //    NEVER delete a font's Registry value before confirming its file move/removal succeeded!
+                //    If locked by an active OS process (sharing violation / os error 32) and elevated as Admin,
+                //    back up cleanly and schedule Windows boot-time deletion via MoveFileExW(MOVEFILE_DELAY_UNTIL_REBOOT).
+                let mut scheduled_reboot = false;
                 let file_deleted = match move_font_file_to_backup(path, &dest) {
                     Ok(deleted) => deleted,
                     Err(err_msg) => {
-                        let _ = windows::Win32::Graphics::Gdi::AddFontResourceW(PCWSTR(
-                            wide_path.as_ptr(),
-                        ));
-                        append_transaction_log(
-                            &mut tx_log,
-                            "move_file",
-                            "skipped",
-                            &font.name,
-                            &font.hive,
-                            err_msg,
-                        );
-                        continue;
+                        let is_sharing_lock = err_msg.contains("os error 32")
+                            || err_msg
+                                .to_ascii_lowercase()
+                                .contains("being used by another process");
+                        if is_admin && is_sharing_lock && path.exists() {
+                            match schedule_locked_font_deletion_and_backup(path, &dest) {
+                                Ok(_) => {
+                                    scheduled_reboot = true;
+                                    true
+                                }
+                                Err(sched_err) => {
+                                    let _ = windows::Win32::Graphics::Gdi::AddFontResourceW(
+                                        PCWSTR(wide_path.as_ptr()),
+                                    );
+                                    skipped_count += 1;
+                                    skipped_fonts.push(font.name.clone());
+                                    append_transaction_log(
+                                        &mut tx_log,
+                                        "move_file",
+                                        "skipped",
+                                        &font.name,
+                                        &font.hive,
+                                        sched_err,
+                                    );
+                                    continue;
+                                }
+                            }
+                        } else {
+                            let _ = windows::Win32::Graphics::Gdi::AddFontResourceW(PCWSTR(
+                                wide_path.as_ptr(),
+                            ));
+                            skipped_count += 1;
+                            skipped_fonts.push(font.name.clone());
+                            append_transaction_log(
+                                &mut tx_log,
+                                "move_file",
+                                "skipped",
+                                &font.name,
+                                &font.hive,
+                                err_msg,
+                            );
+                            continue;
+                        }
                     }
                 };
 
@@ -489,11 +620,15 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
                     .map(|r| r.value_data.clone())
                     .unwrap_or_else(|| font.path.clone());
 
-                removed_count += 1;
+                if scheduled_reboot {
+                    scheduled_reboot_count += 1;
+                } else {
+                    removed_count += 1;
+                }
                 rollback_records.push((
                     dest.clone(),
                     path.to_path_buf(),
-                    file_deleted,
+                    file_deleted && !scheduled_reboot,
                     deleted_reg_entries.clone(),
                 ));
                 backed_up_entries.push(serde_json::json!({
@@ -504,6 +639,7 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
                     "hive": font.hive,
                     "size": font.size,
                     "fileDeleted": file_deleted,
+                    "scheduledReboot": scheduled_reboot,
                     "registryValueName": reg_val_name,
                     "registryValueType": reg_val_type,
                     "registryValueData": reg_val_data,
@@ -511,13 +647,18 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
                 }));
                 append_transaction_log(
                     &mut tx_log,
-                    "remove_font",
+                    if scheduled_reboot {
+                        "schedule_reboot_delete"
+                    } else {
+                        "remove_font"
+                    },
                     "ok",
                     &font.name,
                     &font.hive,
                     format!(
-                        "fileDeleted={}, regEntriesDeleted={}",
+                        "fileDeleted={}, scheduledReboot={}, regEntriesDeleted={}",
                         file_deleted,
+                        scheduled_reboot,
                         deleted_reg_entries.len()
                     ),
                 );
@@ -650,10 +791,39 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
         }
         let _ = write_transaction_log_jsonl(&tx_log_path, &tx_log);
 
-        let msg = if clean_profile == "essential_creative" {
-            format!("تم بنجاح الاحتفاظ بخطوط ويندوز الأصلية وأكثر من {} خط أساسي للتصميم، ونقل {} خطاً إلى مجلد النسخ الاحتياطي.", retained_count, removed_count)
+        let reboot_note = if scheduled_reboot_count > 0 {
+            format!(
+                " وتمت جدولة حذف {} خطاً محجوزاً في الذاكرة تلقائياً عند إعادة تشغيل ويندوز.",
+                scheduled_reboot_count
+            )
         } else {
-            format!("تمت استعادة خطوط ويندوز الأصلية (ضبط المصنع) بنجاح! تم نقل {} خطاً إلى مجلد النسخ الاحتياطي.", removed_count)
+            String::new()
+        };
+        let skipped_note = if skipped_count > 0 {
+            format!(
+                " (تعذر نقل {} خطاً لمحجوزيتها أو حمايتها من النظام: {}).",
+                skipped_count,
+                skipped_fonts
+                    .iter()
+                    .take(4)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("، ")
+            )
+        } else {
+            String::new()
+        };
+
+        let msg = if clean_profile == "essential_creative" {
+            format!(
+                "تم بنجاح الاحتفاظ بخطوط ويندوز الأصلية وأكثر من {} خط أساسي للتصميم، ونقل {} خطاً إلى مجلد النسخ الاحتياطي.{}{}",
+                retained_count, removed_count, reboot_note, skipped_note
+            )
+        } else {
+            format!(
+                "تمت استعادة خطوط ويندوز الأصلية (ضبط المصنع): تم نقل {} خطاً إلى مجلد النسخ الاحتياطي.{}{}",
+                removed_count, reboot_note, skipped_note
+            )
         };
 
         Ok(RestoreProfileResult {
@@ -661,6 +831,9 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
             profile: clean_profile.to_string(),
             removed_count,
             retained_count,
+            scheduled_reboot_count,
+            skipped_count,
+            skipped_fonts,
             backup_path: backup_dir.to_string_lossy().to_string(),
             backup_id,
             is_admin,
@@ -674,6 +847,9 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
             profile: profile.to_string(),
             removed_count: 0,
             retained_count: 350,
+            scheduled_reboot_count: 0,
+            skipped_count: 0,
+            skipped_fonts: Vec::new(),
             backup_path: "/tmp/backup".to_string(),
             backup_id: "mock_backup".to_string(),
             is_admin: true,

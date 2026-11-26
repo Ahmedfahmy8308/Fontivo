@@ -59,7 +59,11 @@ const CORE_WINDOWS_FONT_FAMILIES = new Set([
   "microsoft jhenghei",
   "microsoft yahei",
   "ms gothic",
+  "ms gothic & ms ui gothic & ms pgothic",
+  "ms mincho",
+  "ms mincho & ms pmincho",
   "simsun",
+  "simsun-extg",
   "yu gothic",
   "bahnschrift",
   "gabriola",
@@ -74,6 +78,28 @@ const CORE_WINDOWS_FONT_FAMILIES = new Set([
   "sakkal majalla",
   "urdu typesetting",
   "holomdl2 assets",
+  "segoe mdl2 assets",
+  "segoe fluent icons",
+  "segoe ui emoji",
+  "segoe ui historic",
+  "segoe ui symbol",
+  "microsoft sans serif",
+  "sansserifcollection",
+  "sans serif collection",
+  "cascadia code",
+  "cascadia mono",
+  "leelauib",
+  "courier 10,12,15",
+  "courier 10,12,15 (120)",
+  "ms serif 8,10,12,14,18,24",
+  "ms serif 8,10,12,14,18,24 (120)",
+  "ms sans serif 8,10,12,14,18,24",
+  "small fonts",
+  "terminal",
+  "fixedsys",
+  "modern",
+  "roman",
+  "script",
   "mv boli",
   "myanmar text",
   "mongolian baiti",
@@ -402,8 +428,12 @@ export default function WindowsFontsView({
             ? " (تمت الترقية المؤقتة عبر UAC بنجاح)"
             : " (completed via on-demand UAC elevation)"
           : "";
+        const feedbackType =
+          (data.removedCount ?? 0) === 0 && (data.skippedCount ?? 0) > 0
+            ? "warning"
+            : "success";
         setFeedback({
-          type: "success",
+          type: feedbackType,
           text:
             (data.message ||
               (isRtl
@@ -577,11 +607,19 @@ export default function WindowsFontsView({
             ? " (عبر UAC)"
             : " (via UAC elevation)"
           : "";
+        const customMessage =
+          typeof data.message === "string" &&
+          (data.message.includes("جدولة") || data.message.includes("scheduled"))
+            ? data.message
+            : null;
         setFeedback({
-          type: "success",
-          text: isRtl
-            ? `تم إلغاء تثبيت الخط "${font.name || font.family}" من نظام ويندوز بنجاح${elevatedSuffix}.`
-            : `Successfully uninstalled "${font.name || font.family}" from Windows${elevatedSuffix}.`,
+          type: customMessage ? "warning" : "success",
+          text:
+            (customMessage ||
+              (isRtl
+                ? `تم إلغاء تثبيت الخط "${font.name || font.family}" من نظام ويندوز بنجاح`
+                : `Successfully uninstalled "${font.name || font.family}" from Windows`)) +
+            elevatedSuffix,
         });
         setFonts((prev) => prev.filter((f) => f.id !== font.id));
         if (onRefreshStats) onRefreshStats();
@@ -1107,8 +1145,8 @@ export default function WindowsFontsView({
 
                   <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
                     {isRtl
-                      ? "استعادة خطوط ويندوز الرسمية فقط (~360 خطًا) مع نقل الخطوط الإضافية إلى النسخ الاحتياطي."
-                      : "Restores standard Windows core fonts (~360 OS fonts) and backs up extra fonts safely."}
+                      ? "استعادة خطوط ويندوز الرسمية فقط مع نقل الخطوط الإضافية بأمان إلى مجلد النسخ الاحتياطي."
+                      : "Restores standard Windows OS core fonts only and backs up extra fonts safely."}
                   </p>
                 </div>
 

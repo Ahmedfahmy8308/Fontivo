@@ -3,8 +3,78 @@ use std::env;
 #[cfg(windows)]
 use std::fs;
 #[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
 use std::path::PathBuf;
 use std::process::Command;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(windows)]
+pub fn stop_font_cache_service() -> Result<(), String> {
+    if !super::elevation::is_running_as_admin() {
+        return Err(
+            "Administrator privileges are required to stop Windows Font Cache service".to_string(),
+        );
+    }
+    let stop_out = Command::new("net")
+        .args(["stop", "FontCache"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("Failed to execute 'net stop FontCache': {}", e))?;
+
+    if !stop_out.status.success() {
+        let stderr = String::from_utf8_lossy(&stop_out.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&stop_out.stdout).trim().to_string();
+        let combined = format!("{} {}", stdout, stderr).to_ascii_lowercase();
+        let already_stopped = combined.contains("not started") || combined.contains("3521");
+        if !already_stopped {
+            let detail = if !stderr.is_empty() { stderr } else { stdout };
+            return Err(format!(
+                "Failed to stop FontCache service (exit {:?}): {}",
+                stop_out.status.code(),
+                detail
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn start_font_cache_service() -> Result<(), String> {
+    if !super::elevation::is_running_as_admin() {
+        return Err(
+            "Administrator privileges are required to start Windows Font Cache service".to_string(),
+        );
+    }
+    let start_out = Command::new("net")
+        .args(["start", "FontCache"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("Failed to execute 'net start FontCache': {}", e))?;
+
+    if !start_out.status.success() {
+        let stderr = String::from_utf8_lossy(&start_out.stderr)
+            .trim()
+            .to_string();
+        let stdout = String::from_utf8_lossy(&start_out.stdout)
+            .trim()
+            .to_string();
+        let combined = format!("{} {}", stdout, stderr).to_ascii_lowercase();
+        let already_started =
+            combined.contains("already been started") || combined.contains("2182");
+        if !already_started {
+            let detail = if !stderr.is_empty() { stderr } else { stdout };
+            return Err(format!(
+                "Failed to start FontCache service (exit {:?}): {}",
+                start_out.status.code(),
+                detail
+            ));
+        }
+    }
+    Ok(())
+}
 
 pub fn rebuild_font_cache() -> Result<String, String> {
     #[cfg(windows)]
@@ -14,33 +84,7 @@ pub fn rebuild_font_cache() -> Result<String, String> {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        if !super::elevation::is_running_as_admin() {
-            return Err(
-                "Administrator privileges are required to stop and rebuild the Windows Font Cache service"
-                    .to_string(),
-            );
-        }
-
-        // Execute net stop FontCache and verify exit status
-        let stop_out = Command::new("net")
-            .args(["stop", "FontCache"])
-            .output()
-            .map_err(|e| format!("Failed to execute 'net stop FontCache': {}", e))?;
-
-        if !stop_out.status.success() {
-            let stderr = String::from_utf8_lossy(&stop_out.stderr).trim().to_string();
-            let stdout = String::from_utf8_lossy(&stop_out.stdout).trim().to_string();
-            let combined = format!("{} {}", stdout, stderr).to_ascii_lowercase();
-            let already_stopped = combined.contains("not started") || combined.contains("3521");
-            if !already_stopped {
-                let detail = if !stderr.is_empty() { stderr } else { stdout };
-                return Err(format!(
-                    "Failed to stop FontCache service (exit {:?}): {}",
-                    stop_out.status.code(),
-                    detail
-                ));
-            }
-        }
+        stop_font_cache_service()?;
 
         // Locate cache files in LocalService\AppData\Local\FontCache
         let win_dir = env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
@@ -64,31 +108,7 @@ pub fn rebuild_font_cache() -> Result<String, String> {
             }
         }
 
-        // Execute net start FontCache and verify exit status
-        let start_out = Command::new("net")
-            .args(["start", "FontCache"])
-            .output()
-            .map_err(|e| format!("Failed to execute 'net start FontCache': {}", e))?;
-
-        if !start_out.status.success() {
-            let stderr = String::from_utf8_lossy(&start_out.stderr)
-                .trim()
-                .to_string();
-            let stdout = String::from_utf8_lossy(&start_out.stdout)
-                .trim()
-                .to_string();
-            let combined = format!("{} {}", stdout, stderr).to_ascii_lowercase();
-            let already_started =
-                combined.contains("already been started") || combined.contains("2182");
-            if !already_started {
-                let detail = if !stderr.is_empty() { stderr } else { stdout };
-                return Err(format!(
-                    "Failed to start FontCache service (exit {:?}): {}",
-                    start_out.status.code(),
-                    detail
-                ));
-            }
-        }
+        start_font_cache_service()?;
 
         Ok("Windows Font Cache rebuilt successfully".to_string())
     }

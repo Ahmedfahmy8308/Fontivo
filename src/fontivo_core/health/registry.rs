@@ -698,22 +698,45 @@ pub fn uninstall_windows_font(name: Option<&str>, path_str: &str) -> Result<Stri
         }
 
         // 2. Delete font file from disk FIRST (already verified inside allowed Windows Fonts dirs)
-        //    Never delete the Registry value if the file cannot be removed.
+        //    If locked by an active OS process (os error 32) and elevated as Admin, schedule reboot deletion.
+        let mut scheduled_on_reboot = false;
         if path.exists() {
             if let Err(e) = fs::remove_file(path) {
-                unsafe {
-                    let _ = AddFontResourceW(PCWSTR(wide_path.as_ptr()));
+                let err_str = e.to_string();
+                let is_sharing_lock = err_str.contains("os error 32")
+                    || err_str
+                        .to_ascii_lowercase()
+                        .contains("being used by another process");
+                if is_sharing_lock && super::elevation::is_running_as_admin() {
+                    use windows::Win32::Storage::FileSystem::{
+                        MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT,
+                    };
+                    let sched_res = unsafe {
+                        MoveFileExW(
+                            PCWSTR(wide_path.as_ptr()),
+                            PCWSTR::null(),
+                            MOVEFILE_DELAY_UNTIL_REBOOT,
+                        )
+                    };
+                    if sched_res.is_ok() {
+                        scheduled_on_reboot = true;
+                    }
                 }
-                if is_system_windows_fonts_path(clean_path_str) {
-                    return Err(format!(
-                        "يتطلب حذف هذا الخط من مجلد نظام ويندوز تشغيل البرنامج كمسؤول (Run as administrator): {}",
-                        e
-                    ));
-                } else {
-                    return Err(format!(
-                        "Failed to delete font file '{}': {}",
-                        clean_path_str, e
-                    ));
+                if !scheduled_on_reboot {
+                    unsafe {
+                        let _ = AddFontResourceW(PCWSTR(wide_path.as_ptr()));
+                    }
+                    if is_system_windows_fonts_path(clean_path_str) {
+                        return Err(format!(
+                            "تعذر حذف هذا الخط حالياً إما لقفل الملف من برنامج آخر أو حاجته لصلاحيات المسؤول (UAC): {}",
+                            e
+                        ));
+                    } else {
+                        return Err(format!(
+                            "Failed to delete font file '{}': {}",
+                            clean_path_str, e
+                        ));
+                    }
                 }
             }
         }
@@ -767,7 +790,14 @@ pub fn uninstall_windows_font(name: Option<&str>, path_str: &str) -> Result<Stri
             );
         }
 
-        Ok(format!("Successfully uninstalled font '{}'", query_name))
+        if scheduled_on_reboot {
+            Ok(format!(
+                "تمت إزالة تسجيل '{}' وجدولة حذف ملفه المحجوز تلقائياً عند إعادة تشغيل ويندوز.",
+                query_name
+            ))
+        } else {
+            Ok(format!("Successfully uninstalled font '{}'", query_name))
+        }
     }
 
     #[cfg(not(windows))]
@@ -775,7 +805,14 @@ pub fn uninstall_windows_font(name: Option<&str>, path_str: &str) -> Result<Stri
         if path.exists() {
             let _ = fs::remove_file(path);
         }
-        Ok(format!("Successfully uninstalled font '{}'", query_name))
+        if scheduled_on_reboot {
+            Ok(format!(
+                "تمت إزالة تسجيل '{}' وجدولة حذف ملفه المحجوز تلقائياً عند إعادة تشغيل ويندوز.",
+                query_name
+            ))
+        } else {
+            Ok(format!("Successfully uninstalled font '{}'", query_name))
+        }
     }
 }
 

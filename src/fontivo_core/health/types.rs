@@ -180,6 +180,12 @@ pub struct RestoreProfileResult {
     pub profile: String,
     pub removed_count: usize,
     pub retained_count: usize,
+    #[serde(default)]
+    pub scheduled_reboot_count: usize,
+    #[serde(default)]
+    pub skipped_count: usize,
+    #[serde(default)]
+    pub skipped_fonts: Vec<String>,
     pub backup_path: String,
     pub backup_id: String,
     pub is_admin: bool,

@@ -462,6 +462,47 @@ fn test_is_protected_system_font_exact_protection_and_no_false_positives() {
             "Bahnschrift",
             "C:\\Windows\\Fonts\\bahnschrift.ttf",
         ),
+        (
+            "MS Gothic & MS UI Gothic & MS PGothic",
+            "MS Gothic & MS UI Gothic & MS PGothic",
+            "C:\\WINDOWS\\Fonts\\msgothic.ttc",
+        ),
+        (
+            "SimSun-ExtG",
+            "SimSun-ExtG",
+            "C:\\WINDOWS\\Fonts\\SimsunExtG.ttf",
+        ),
+        ("LeelaUIb", "LeelaUIb", "C:\\WINDOWS\\Fonts\\LeelaUIb.ttf"),
+        (
+            "SansSerifCollection",
+            "SansSerifCollection",
+            "C:\\WINDOWS\\Fonts\\SansSerifCollection.ttf",
+        ),
+        (
+            "Courier 10,12,15",
+            "Courier 10,12,15",
+            "C:\\WINDOWS\\Fonts\\COUE1256.FON",
+        ),
+        (
+            "Courier 10,12,15 (120)",
+            "Courier 10,12,15 (120)",
+            "C:\\WINDOWS\\Fonts\\COUF1256.FON",
+        ),
+        (
+            "MS Serif 8,10,12,14,18,24",
+            "MS Serif 8,10,12,14,18,24",
+            "C:\\WINDOWS\\Fonts\\SERE1256.FON",
+        ),
+        (
+            "MS Serif 8,10,12,14,18,24 (120)",
+            "MS Serif 8,10,12,14,18,24 (120)",
+            "C:\\WINDOWS\\Fonts\\SERF1256.FON",
+        ),
+        (
+            "Cascadia Code",
+            "Cascadia Code",
+            "C:\\WINDOWS\\Fonts\\CascadiaCode.ttf",
+        ),
     ];
 
     for (name, family, path) in &must_protect {
@@ -492,6 +533,22 @@ fn test_is_protected_system_font_exact_protection_and_no_false_positives() {
             "C:\\Windows\\Fonts\\103 Tahoma.ttf",
         ),
         ("Arial_0", "Arial_0", "C:\\Windows\\Fonts\\Arial_0.ttf"),
+        ("ARIALN_2", "ARIALN_2", "C:\\WINDOWS\\Fonts\\ARIALN_2.TTF"),
+        (
+            "ARIALNBI_3",
+            "ARIALNBI_3",
+            "C:\\WINDOWS\\Fonts\\ARIALNBI_3.TTF",
+        ),
+        (
+            "Lucida Bright",
+            "Lucida Bright",
+            "C:\\WINDOWS\\Fonts\\LBRITE.TTF",
+        ),
+        (
+            "Lucida Fax Regular",
+            "Lucida Fax Regular",
+            "C:\\WINDOWS\\Fonts\\LFAX.TTF",
+        ),
         (
             "Segoe UI Copy",
             "Segoe UI Copy",
