@@ -95,6 +95,8 @@ gh attestation verify .\Fontivo-v1.0-Setup.exe --owner Ahmedfahmy8308
 Get-FileHash .\Fontivo-v1.0-Setup.exe -Algorithm SHA256
 ```
 
+Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
 ### 4. Optional One-Liner PowerShell Install (CLI)
 
 For command-line automation on Windows:
