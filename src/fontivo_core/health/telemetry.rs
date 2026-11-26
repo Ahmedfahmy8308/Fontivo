@@ -11,6 +11,7 @@ use windows::Win32::System::Registry::{
 
 use super::types::*;
 
+#[cfg(windows)]
 pub fn get_current_process_ram_mb() -> f64 {
     #[repr(C)]
     struct PROCESS_MEMORY_COUNTERS {
@@ -346,8 +347,10 @@ fn get_cpu_usage_percent() -> f64 {
 /// `OpenProcess` + `K32GetProcessMemoryInfo` (zero PowerShell, < 5ms).
 /// Returns `(top_processes, total_working_sets_mb)`.
 pub fn enumerate_top_processes(limit: usize) -> (Vec<ProcessTelemetryItem>, f64) {
-    let mut processes = Vec::new();
-    let mut total_ws_mb = 0.0;
+    #[allow(unused_mut)]
+    let mut processes: Vec<ProcessTelemetryItem> = Vec::new();
+    #[allow(unused_mut)]
+    let mut total_ws_mb: f64 = 0.0;
 
     #[cfg(windows)]
     {

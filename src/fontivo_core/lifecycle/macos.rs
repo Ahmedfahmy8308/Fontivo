@@ -236,11 +236,11 @@ impl FontLifecycleBackend for MacosBackend {
             }
 
             // 2. CoreFoundation Distributed Notification Center for Cocoa/CoreText apps
+            type CFStringRef = *const std::os::raw::c_void;
+            type CFNotificationCenterRef = *const std::os::raw::c_void;
+            type CFDictionaryRef = *const std::os::raw::c_void;
             #[link(name = "CoreFoundation", kind = "framework")]
             extern "C" {
-                type CFStringRef;
-                type CFNotificationCenterRef;
-                type CFDictionaryRef;
                 fn CFNotificationCenterGetDistributedCenter() -> CFNotificationCenterRef;
                 fn CFNotificationCenterPostNotification(
                     center: CFNotificationCenterRef,

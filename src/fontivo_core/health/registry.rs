@@ -213,9 +213,10 @@ pub fn registry_value_matches_font(
     false
 }
 
-#[cfg(windows)]
 pub fn scan_registry_fonts() -> (usize, Vec<DeadFontEntry>) {
+    #[allow(unused_mut)]
     let mut total_registered = 0;
+    #[allow(unused_mut)]
     let mut dead_entries = Vec::new();
 
     #[cfg(windows)]
@@ -333,6 +334,7 @@ fn scan_hive(
 
 /// Clean dead entries from HKCU
 pub fn clean_dead_registry_fonts() -> usize {
+    #[allow(unused_mut)]
     let mut cleaned = 0;
 
     #[cfg(windows)]
@@ -375,8 +377,10 @@ pub fn clean_dead_registry_fonts() -> usize {
 
 /// Rebuild Windows Font Cache service safely
 pub fn enumerate_windows_fonts() -> Vec<WindowsFontItem> {
-    let mut results = Vec::new();
-    let mut seen_paths = std::collections::HashSet::new();
+    #[allow(unused_mut)]
+    let mut results: Vec<WindowsFontItem> = Vec::new();
+    #[allow(unused_mut)]
+    let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     #[cfg(windows)]
     {

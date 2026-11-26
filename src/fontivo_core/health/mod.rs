@@ -42,7 +42,6 @@ pub fn get_report(library_total: usize) -> SystemHealthReport {
 }
 
 /// Unified facade providing zero-breaking-change static diagnostic & health APIs.
-#[cfg(windows)]
 pub struct SystemHealthChecker;
 
 impl SystemHealthChecker {
