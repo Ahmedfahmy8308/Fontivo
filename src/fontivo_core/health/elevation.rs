@@ -1,4 +1,3 @@
-#[cfg(windows)]
 use std::env;
 #[cfg(windows)]
 use std::fs;
