@@ -2,13 +2,13 @@
 
 <div align="center">
 
-<a href="https://github.com/Ahmedfahmy8308/Fontivo">
- <img src="assets/app-icons/fontivo-icon.png" alt="Fontivo Logo: Next-Gen Native Typography & Creative Asset Suite" width="140" height="140">
+<a href="https://ahmedfahmy8308.github.io/Fontivo-Site/">
+  <img src="assets/social/og-image.svg" alt="Fontivo — Type. Design. Deliver. Native Desktop Font & Color Manager" width="900">
 </a>
 
-<br>
+<br><br>
 
-# Fontivo (Next-Gen Native Typography & Creative Asset Suite)
+# Fontivo — Native Desktop Font, Brand Identity & Color Suite
 
 **The Ultimate High-Performance Font Management, Brand Identity & Creative Asset Suite for Windows, macOS, and Linux — 100% Free & Open-Source.**
 
@@ -16,29 +16,29 @@
 
 <br>
 
-[![Release](https://img.shields.io/badge/Release-v1.0.0-6366f1?style=for-the-badge&logo=github&labelColor=0b1020)](https://github.com/Ahmedfahmy8308/Fontivo/releases/latest)
-[![Rust](https://img.shields.io/badge/Rust-2021%2F2024_Native-DEA584?style=for-the-badge&logo=rust&logoColor=white&labelColor=0b1020)](src/)
-[![React 19](https://img.shields.io/badge/React-19_Tailwind-61DAFB?style=for-the-badge&logo=react&logoColor=black&labelColor=0b1020)](src/ui/)
-[![Platform](https://img.shields.io/badge/Platform-Windows_%7C_macOS_%7C_Linux-06B6D4?style=for-the-badge&logo=windows&logoColor=white&labelColor=0b1020)](#installation)
-[![License: MIT](https://img.shields.io/badge/License-MIT-EC4899?style=for-the-badge&labelColor=0b1020)](LICENSE)
+[![Release](https://img.shields.io/badge/Release-v1.0.0-F16B50?style=for-the-badge&logo=github&labelColor=130C16)](https://github.com/Ahmedfahmy8308/Fontivo/releases/latest)
+[![Rust](https://img.shields.io/badge/Rust-Native_Core-291C2E?style=for-the-badge&logo=rust&logoColor=white&labelColor=130C16)](src/)
+[![React 19](https://img.shields.io/badge/React-19_Tailwind-F16B50?style=for-the-badge&logo=react&logoColor=130C16&labelColor=130C16)](src/ui/)
+[![Platform](https://img.shields.io/badge/Platform-Windows_%7C_macOS_%7C_Linux-B7A1D9?style=for-the-badge&labelColor=130C16)](#quick-start-install-in-30-seconds)
+[![License: MIT](https://img.shields.io/badge/License-MIT-FFF9F2?style=for-the-badge&labelColor=130C16)](LICENSE)
 
 <br>
 
-[![Memory Footprint](https://img.shields.io/badge/RAM_Footprint-~38.5_MB-10B981?style=flat-square&labelColor=0b1020)](#benchmarks)
-[![Fonts Indexed](https://img.shields.io/badge/Catalog-11%2C207_Fonts-7C3AED?style=flat-square&labelColor=0b1020)](#unified-typography-library)
-[![Adobe Bridge](https://img.shields.io/badge/Adobe_CC_Bridge-Port_27715-FF0000?style=flat-square&logo=adobe&logoColor=white&labelColor=0b1020)](#adobe-creative-cloud-real-time-bridge)
-[![Zero Registry Bloat](https://img.shields.io/badge/Registry_Bloat-Zero_Bytes_(FR__PRIVATE)-10B981?style=flat-square&labelColor=0b1020)](#in-memory-transient-font-virtualization)
-[![Privacy First](https://img.shields.io/badge/Telemetry-Zero_%2F_100%25_Local--First-06B6D4?style=flat-square&labelColor=0b1020)](#security-guarantees--privacy)
+[![Memory Footprint](https://img.shields.io/badge/RAM_Footprint-~38.5_MB-B7A1D9?style=flat-square&labelColor=130C16)](#benchmarks)
+[![Fonts Indexed](https://img.shields.io/badge/Catalog-10%2C939_Fonts-F16B50?style=flat-square&labelColor=130C16)](#unified-10939-typography-library)
+[![Adobe Bridge](https://img.shields.io/badge/Adobe_CC_Bridge-Port_27715-B7A1D9?style=flat-square&labelColor=130C16)](#adobe-creative-cloud-real-time-bridge)
+[![Zero Registry Bloat](https://img.shields.io/badge/Registry_Bloat-Zero_Bytes_(FR__PRIVATE)-F16B50?style=flat-square&labelColor=130C16)](#in-memory-transient-font-virtualization)
+[![Privacy First](https://img.shields.io/badge/Telemetry-Zero_%2F_100%25_Local--First-FFF9F2?style=flat-square&labelColor=130C16)](#security-guarantees--privacy)
 
 <br>
 
 <table align="center">
- <tr>
- <td align="center" width="200"><h3>~38.5 MB</h3><sub>Idle RAM footprint<br>(<a href="#benchmarks">see benchmarks</a>)</sub></td>
- <td align="center" width="200"><h3>11,207</h3><sub>Offline fonts indexed<br>(4,438 families)</sub></td>
- <td align="center" width="200"><h3>&lt; 10 ms</h3><sub>Adobe CC sync latency<br>(Photoshop / Illustrator)</sub></td>
- <td align="center" width="200"><h3>100% Free</h3><sub>Permanent Pro features<br>(zero paywalls)</sub></td>
- </tr>
+  <tr>
+    <td align="center" width="200"><h3>~38.5 MB</h3><sub>Idle RAM footprint<br>(<a href="#benchmarks">see benchmarks</a>)</sub></td>
+    <td align="center" width="200"><h3>10,939</h3><sub>Offline fonts indexed<br>(4,430 families / 15 packs)</sub></td>
+    <td align="center" width="200"><h3>&lt; 10 ms</h3><sub>Adobe CC sync latency<br>(Photoshop / Illustrator)</sub></td>
+    <td align="center" width="200"><h3>100% Free</h3><sub>Permanent Pro features<br>(zero paywalls)</sub></td>
+  </tr>
 </table>
 
 <br>
@@ -141,7 +141,7 @@ Legacy font managers (such as FontBase, Suitcase Fusion, and NexusFont) have rem
  </td>
  <td width="33%" valign="top">
  <h3>Native System Performance</h3>
- <p>Built in pure Rust 2021. Cold starts in <strong>0.35 seconds</strong>, idles at <strong>~38.5 MB RAM</strong>, and filters through 11,207 fonts in under 3 milliseconds.</p>
+ <p>Built in pure Rust 2021. Cold starts in <strong>0.35 seconds</strong>, idles at <strong>~38.5 MB RAM</strong>, and filters through 10,939 fonts in under 3 milliseconds.</p>
  </td>
  </tr>
  <tr>
@@ -215,7 +215,7 @@ Fontivo utilizes the native Win32 GDI subsystem:
 
 Fontivo runs an ultra-fast raw TCP socket listener on loopback port `27715`:
 - When you open any document in Adobe Photoshop, Illustrator, or InDesign that contains missing text layers, the Adobe CEP extension or ExtendScript queries `127.0.0.1:27715`.
-- Fontivo resolves the exact matching PostScript names from its pre-indexed catalog of 11,207 fonts in under 3 milliseconds.
+- Fontivo resolves the exact matching PostScript names from its pre-indexed catalog of 10,939 fonts in under 3 milliseconds.
 - Fonts are injected into RAM instantaneously (< 10ms total turnaround), resolving missing font warnings before you even begin editing.
 - Read the complete specification in [`docs/adobe-integration.md`](docs/adobe-integration.md).
 
@@ -257,9 +257,9 @@ Fontivo turns font management into a comprehensive brand engineering station:
 - **Tabular Figures & Accounting Numerals Verification**: Validates monospace numeric glyph widths across dynamic accounting data to ensure decimal points align perfectly in financial user interfaces.
 - **Geometric Type Scale Generator**: Minor Second (1.067), Major Second (1.125), Minor Third (1.200), Major Third (1.250), Perfect Fourth (1.333), and Golden Ratio (1.618).
 
-### 7. Unified 11,207 Typography Library
+### 7. Unified 10,939 Typography Library
 
-- Pre-indexed database of **11,207 fonts** across **4,438 families**, fully balanced between Arabic and Latin scripts.
+- Pre-indexed database of **10,939 fonts** across **4,430 families**, fully balanced between Arabic and Latin scripts.
 - **Arabic Diacritics (*Tashkeel*) & Numerals Coverage**: Automatically checks and tags font files with glyph badges for Arabic diacritics, Eastern Arabic numerals (`١٢٣`), and extended Perso-Arabic characters (`چ`, `پ`, `گ`, `ڤ`).
 - Asynchronous downloader with HTTP Range resumption, SHA-256 verification, and hardened `SafeZipExtractor` defenses against Zip-Slip and decompression bombs.
 
@@ -288,7 +288,7 @@ flowchart LR
  WIN_GDI["Win32 GDI32 / DirectWrite"]
  ADOBE_CC["Adobe Photoshop / Illustrator / InDesign"]
  REGISTRY["Windows Registry (HKLM/HKCU)"]
- DISK["Local Storage (11,207 Fonts Catalog)"]
+ DISK["Local Storage (10,939 Fonts Catalog)"]
  end
 
  subgraph Core["Native Rust Core Engine (src/ - Ports 3920 & 27715)"]
@@ -332,7 +332,7 @@ Setting up real-time font auto-activation with Adobe Photoshop, Illustrator, and
 
 1. **Launch Fontivo**: Keep Fontivo running in the background. The core socket listener automatically binds to `127.0.0.1:27715`.
 2. **Open Your Design Project**: Open any `.psd`, `.ai`, or `.indd` project in Adobe Photoshop or Illustrator.
-3. **Instant Resolution**: If the document references fonts in Fontivo's 11,207 library, Fontivo activates them into RAM within **< 10ms**.
+3. **Instant Resolution**: If the document references fonts in Fontivo's 10,939 library, Fontivo activates them into RAM within **< 10ms**.
 4. **Zero Missing Font Alerts**: Text layers render with 100% fidelity without restarting your Adobe application.
 
 ```javascript
@@ -368,7 +368,7 @@ Comprehensive performance audits conducted across Windows 11 workstations show F
 | **RAM with 100 Fonts Activated** | ~230 MB | ~315 MB | **~42.1 MB** | **82% lighter** |
 | **RAM with 500 Fonts Activated** | ~290 MB | ~380 MB | **~46.8 MB** | **84% lighter** |
 | **Cold Application Launch** | 4.82 s | 7.15 s | **0.35 s** | **13.7× faster** |
-| **Catalog Query (11,207 Fonts)** | 145 ms | 220 ms | **2.8 ms** | **51× faster** |
+| **Catalog Query (10,939 Fonts)** | 145 ms | 220 ms | **2.8 ms** | **51× faster** |
 | **Adobe CC Font Sync Turnaround** | ~450 ms | ~600 ms | **8.4 ms** | **53× faster** |
 | **Windows Registry Keys Written** | Hundreds | Variable | **0 (Zero)** | **100% Registry Safe** |
 | **Standalone Executable Size** | 104 MB | 240 MB | **6.94 MB** | **93% smaller** |
