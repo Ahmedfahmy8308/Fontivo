@@ -5,6 +5,7 @@ import { renderToString } from "react-dom/server";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import "./setup";
+import uiPkg from "../package.json";
 
 import App from "../src/App";
 import WindowsFontsView from "../src/components/views/WindowsFontsView";
@@ -382,7 +383,8 @@ describe("Fontivo App UI Audit Fixes Regression Suite", () => {
       expect(html).toContain("Start Automatically with Windows");
       expect(html).toContain("System Health &amp; Backup Center");
       expect(html).toContain("Windows Fonts &amp; Safe Reset");
-      expect(html).toContain("Fontivo v1.0.0");
+      expect(html).toContain(`Fontivo v${uiPkg.version}`);
+      expect(html).toContain("Check Fonts Updates");
     });
 
     it("renders dedicated Licenses & About screen with Team and Application Software License", () => {

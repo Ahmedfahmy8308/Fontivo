@@ -1565,6 +1565,9 @@ pub fn is_pack_downloaded(pack: &FontPackItem) -> bool {
 pub fn handle_catalog_packages(req: Request, cors_origin: Header, json_header: Header) {
     let (manifest, is_remote, source) = FontPackManifest::fetch_remote_or_default_cached();
     let library_version = manifest.library_version.clone();
+    let embedded_version = FontPackManifest::EMBEDDED_LIBRARY_VERSION;
+    let has_update =
+        crate::updater::AutoUpdater::compare_versions(&library_version, embedded_version) > 0;
     let schema_version = manifest.schema_version;
     let packages: Vec<CatalogPackageItem> = manifest
         .packs
@@ -1595,9 +1598,11 @@ pub fn handle_catalog_packages(req: Request, cors_origin: Header, json_header: H
             "isRemote": is_remote,
             "source": source,
             "schemaVersion": schema_version,
+            "embeddedVersion": embedded_version,
             "libraryVersion": library_version,
             "releaseTag": format!("v{}", library_version),
             "version": library_version,
+            "hasUpdate": has_update,
             "packCount": packages.len(),
             "packages": packages
         }),
@@ -2231,6 +2236,17 @@ pub fn handle_delete_font(
 
 pub fn handle_refresh_manifest(req: Request, cors_origin: Header, json_header: Header) {
     let (manifest, is_remote, source) = FontPackManifest::fetch_remote_or_default();
+    let latest_release_tag = FontPackManifest::fetch_latest_remote_release_tag();
+    let embedded_version = FontPackManifest::EMBEDDED_LIBRARY_VERSION;
+    let effective_latest = latest_release_tag
+        .as_deref()
+        .filter(|t| crate::updater::AutoUpdater::compare_versions(t, &manifest.library_version) > 0)
+        .unwrap_or(&manifest.library_version)
+        .to_string();
+    let has_update =
+        crate::updater::AutoUpdater::compare_versions(&effective_latest, embedded_version) > 0;
+    let (google_catalog, _) = GoogleFontsManager::get_full_catalog(true);
+    let google_fonts_count = google_catalog.len();
     let packages: Vec<CatalogPackageItem> = manifest
         .packs
         .iter()
@@ -2257,10 +2273,16 @@ pub fn handle_refresh_manifest(req: Request, cors_origin: Header, json_header: H
         200,
         serde_json::json!({
             "success": true,
-            "isRemote": is_remote,
+            "isRemote": is_remote || latest_release_tag.is_some(),
             "source": source,
             "schemaVersion": manifest.schema_version,
-            "libraryVersion": manifest.library_version,
+            "embeddedVersion": embedded_version,
+            "libraryVersion": effective_latest,
+            "releaseTag": format!("v{}", effective_latest),
+            "hasUpdate": has_update,
+            "googleFontsCount": google_fonts_count,
+            "totalFonts": manifest.total_fonts.unwrap_or(10939),
+            "totalFamilies": manifest.total_families.unwrap_or(4430),
             "packCount": manifest.packs.len(),
             "manifest": manifest,
             "packages": packages

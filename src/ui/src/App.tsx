@@ -449,16 +449,19 @@ export default function App({
         // offline safe
       }
       try {
-        const catalogRes = await safeFetchJson<any>("/api/catalog/packages", {
-          timeoutMs: 4500,
-          cache: "no-store",
-        });
+        const catalogRes = await safeFetchJson<any>(
+          "/api/catalog/refresh-manifest",
+          {
+            timeoutMs: 6000,
+            cache: "no-store",
+          },
+        );
         const remoteTag = String(
           catalogRes?.releaseTag ?? catalogRes?.version ?? "",
         ).trim();
         if (active && remoteTag && typeof window !== "undefined") {
           const seenTag = window.localStorage.getItem("fontivo_seen_fonts_tag");
-          if (seenTag && seenTag !== remoteTag) {
+          if (catalogRes?.hasUpdate || (seenTag && seenTag !== remoteTag)) {
             setPackUpdateTag(remoteTag);
           }
           window.localStorage.setItem("fontivo_seen_fonts_tag", remoteTag);
@@ -805,8 +808,8 @@ export default function App({
               <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 min-w-0">
                 <span className="font-bold truncate text-[13px]">
                   {isRtl
-                    ? `تم تنزيل تحديث Fontivo v${updateBanner.latestVersion || "1.0.1"} تلقائيًا وهو جاهز للتثبيت!`
-                    : `Fontivo v${updateBanner.latestVersion || "1.0.1"} is downloaded and ready to install!`}
+                    ? `تم تنزيل تحديث Fontivo v${updateBanner.latestVersion} تلقائيًا وهو جاهز للتثبيت!`
+                    : `Fontivo v${updateBanner.latestVersion} is downloaded and ready to install!`}
                 </span>
                 {updateBanner.releaseNotes && (
                   <span className="text-[#D8CEDF] text-[11px] truncate hidden md:inline max-w-md">

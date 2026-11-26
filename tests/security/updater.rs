@@ -158,3 +158,46 @@ fn test_download_checksum_mismatch_handling() {
 
     let _ = std::fs::remove_file(temp_payload);
 }
+
+#[test]
+fn test_parse_github_releases_api_payload_detects_newer_version_and_sha256() {
+    let gh_json = r#"{
+        "tag_name": "v9.9.9",
+        "published_at": "2026-12-01T10:00:00Z",
+        "body": "Major Fontivo release with new updater.",
+        "html_url": "https://github.com/Ahmedfahmy8308/Fontivo/releases/tag/v9.9.9",
+        "assets": [
+            {
+                "name": "Fontivo-v1.0-Setup.exe",
+                "size": 4520404,
+                "digest": "sha256:2ef8204cf4bca5fe3c137b22ac50117a2b0831900c7a0744d8835ce8715614d4",
+                "browser_download_url": "https://github.com/Ahmedfahmy8308/Fontivo/releases/download/v9.9.9/Fontivo-v1.0-Setup.exe"
+            },
+            {
+                "name": "Fontivo-macos-arm64.tar.gz",
+                "size": 2852782,
+                "digest": "sha256:c2394b3aa08a3d2ef9ca2bc45160b113048b5e4b7337f29e8552f87212dc7e9e",
+                "browser_download_url": "https://github.com/Ahmedfahmy8308/Fontivo/releases/download/v9.9.9/Fontivo-macos-arm64.tar.gz"
+            },
+            {
+                "name": "Fontivo-macos-x86_64.tar.gz",
+                "size": 2998357,
+                "digest": "sha256:b9e080db220b05517951a329b6058a033779cab36575face5e5db3d1a0cf33eb",
+                "browser_download_url": "https://github.com/Ahmedfahmy8308/Fontivo/releases/download/v9.9.9/Fontivo-macos-x86_64.tar.gz"
+            },
+            {
+                "name": "Fontivo-linux-x86_64.tar.gz",
+                "size": 3971862,
+                "digest": "sha256:488af635266119924f5649384a9a61085d1c39198c7f035ed0a65de863bc7932",
+                "browser_download_url": "https://github.com/Ahmedfahmy8308/Fontivo/releases/download/v9.9.9/Fontivo-linux-x86_64.tar.gz"
+            }
+        ]
+    }"#;
+
+    let parsed = AutoUpdater::parse_release_payload(gh_json).expect("Must parse GitHub release");
+    assert_eq!(parsed.latest_version, "9.9.9");
+    assert!(parsed.has_update);
+    assert_eq!(parsed.status, "downloading");
+    assert!(parsed.sha256_checksum.is_some());
+    assert!(parsed.download_url.contains("v9.9.9"));
+}

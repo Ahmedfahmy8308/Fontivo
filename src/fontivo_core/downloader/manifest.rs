@@ -254,8 +254,35 @@ fn pack_display_metadata(pack_id: &str, font_count: usize) -> (String, String, S
 }
 
 impl FontPackManifest {
+    pub const EMBEDDED_LIBRARY_VERSION: &'static str = "1.0.3";
     pub const REMOTE_MANIFEST_URL: &'static str =
         "https://raw.githubusercontent.com/Ahmedfahmy8308/Fontivo-Fonts/main/Manifests/manifest.json";
+    pub const REMOTE_RELEASES_API_URL: &'static str =
+        "https://api.github.com/repos/Ahmedfahmy8308/Fontivo-Fonts/releases/latest";
+
+    /// Checks live GitHub Releases API for the latest `Fontivo-Fonts` release tag (e.g. "1.0.3").
+    pub fn fetch_latest_remote_release_tag() -> Option<String> {
+        let agent = ureq::builder()
+            .timeout_connect(Duration::from_millis(2500))
+            .timeout_read(Duration::from_millis(3500))
+            .redirects(3)
+            .build();
+        let resp = agent
+            .get(Self::REMOTE_RELEASES_API_URL)
+            .set("User-Agent", "Fontivo-Fonts-Sync/1.0")
+            .set("Accept", "application/vnd.github+json")
+            .call()
+            .ok()?;
+        if resp.status() != 200 {
+            return None;
+        }
+        let body = resp.into_string().ok()?;
+        let val: serde_json::Value = serde_json::from_str(&body).ok()?;
+        val["tag_name"]
+            .as_str()
+            .map(|t| t.trim().trim_start_matches(['v', 'V']).to_string())
+            .filter(|s| !s.is_empty())
+    }
 
     /// Parses either the live GitHub `Manifests/manifest.json` wire schema (`packages` map)
     /// or the normalized `FontPackManifest` JSON schema.

@@ -69,11 +69,14 @@ impl Default for UpdateStatus {
             current_version: AutoUpdater::CURRENT_VERSION.to_string(),
             latest_version: AutoUpdater::CURRENT_VERSION.to_string(),
             has_update: false,
-            release_notes: "Fontivo v1.0.0 with v2.0 visual identity, 10,939-font typography engine, and live Adobe CC bridge.".to_string(),
-            published_at: "2026-11-25T00:00:00Z".to_string(),
+            release_notes: format!(
+                "Fontivo v{} — native Rust typography engine, cloud font packs, and live Adobe CC bridge.",
+                AutoUpdater::CURRENT_VERSION
+            ),
+            published_at: "2026-11-26T00:00:00Z".to_string(),
             download_url: "https://github.com/Ahmedfahmy8308/Fontivo/releases/latest".to_string(),
-            asset_size_bytes: 3922190,
-            sha256_checksum: Some("3aff84e91a087cf99a03f85bd9fa65710511516d02dd568b75d0b900a07a483d".to_string()),
+            asset_size_bytes: 4520404,
+            sha256_checksum: None,
             download_progress: 0,
             bytes_downloaded: 0,
             installer_path: None,
@@ -91,7 +94,191 @@ pub struct AutoUpdater;
 impl AutoUpdater {
     pub const CURRENT_VERSION: &'static str = "1.0.2";
     pub const DEFAULT_MANIFEST_URL: &'static str =
-        "https://raw.githubusercontent.com/Ahmedfahmy8308/Fontivo/main/release-manifest.json";
+        "https://api.github.com/repos/Ahmedfahmy8308/Fontivo/releases/latest";
+
+    fn expected_release_asset_name() -> &'static str {
+        if cfg!(windows) {
+            "Fontivo-v1.0-Setup.exe"
+        } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            "Fontivo-macos-arm64.tar.gz"
+        } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+            "Fontivo-macos-x86_64.tar.gz"
+        } else {
+            "Fontivo-linux-x86_64.tar.gz"
+        }
+    }
+
+    fn resolve_sha256_from_release_assets(
+        agent: &ureq::Agent,
+        assets: &[serde_json::Value],
+        preferred_asset_name: &str,
+    ) -> Option<String> {
+        let sha_asset_name = format!("{}.sha256", preferred_asset_name);
+        if let Some(sha_asset) = assets.iter().find(|a| {
+            a["name"]
+                .as_str()
+                .map(|n| n.eq_ignore_ascii_case(&sha_asset_name))
+                .unwrap_or(false)
+        }) {
+            if let Some(url) = sha_asset["browser_download_url"].as_str() {
+                if let Ok(resp) = agent
+                    .get(url)
+                    .set("User-Agent", "Fontivo-AutoUpdater/1.0")
+                    .call()
+                {
+                    if let Ok(body) = resp.into_string() {
+                        if let Some(hash) = body.split_whitespace().next() {
+                            if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                                return Some(hash.to_ascii_lowercase());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Parses either a GitHub Releases API JSON payload (`tag_name` + `assets[]`)
+    /// or a direct custom manifest JSON payload (`version` + `downloadUrl`).
+    pub fn parse_release_payload(raw_json: &str) -> Result<UpdateStatus, String> {
+        let json: serde_json::Value = serde_json::from_str(raw_json)
+            .map_err(|e| format!("Invalid release metadata JSON: {}", e))?;
+
+        let now_iso = Self::current_timestamp_iso();
+
+        // 1. GitHub Releases API schema (`tag_name`, `assets[]`)
+        if let Some(tag_raw) = json["tag_name"].as_str() {
+            let latest_version = tag_raw.trim().trim_start_matches(['v', 'V']).to_string();
+            if latest_version.is_empty() {
+                return Err("GitHub release payload missing version tag".to_string());
+            }
+
+            let notes = json["body"]
+                .as_str()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("Performance improvements, security updates, and bug fixes.")
+                .to_string();
+
+            let published_at = json["published_at"]
+                .as_str()
+                .unwrap_or("2026-11-26T00:00:00Z")
+                .to_string();
+
+            let target_name = Self::expected_release_asset_name();
+            let assets = json["assets"].as_array().cloned().unwrap_or_default();
+
+            let matched_asset = assets
+                .iter()
+                .find(|a| {
+                    a["name"]
+                        .as_str()
+                        .map(|n| n.eq_ignore_ascii_case(target_name))
+                        .unwrap_or(false)
+                })
+                .or_else(|| {
+                    assets.iter().find(|a| {
+                        a["name"]
+                            .as_str()
+                            .map(|n| n.ends_with("-Setup.exe"))
+                            .unwrap_or(false)
+                    })
+                });
+
+            let download_url = matched_asset
+                .and_then(|a| a["browser_download_url"].as_str())
+                .or_else(|| json["html_url"].as_str())
+                .unwrap_or("https://github.com/Ahmedfahmy8308/Fontivo/releases/latest")
+                .to_string();
+
+            let asset_size_bytes = matched_asset
+                .and_then(|a| a["size"].as_u64())
+                .unwrap_or(4520404);
+
+            let sha256_checksum = matched_asset
+                .and_then(|a| a["digest"].as_str())
+                .and_then(|d| {
+                    d.strip_prefix("sha256:")
+                        .or_else(|| d.strip_prefix("SHA256:"))
+                        .or(Some(d))
+                })
+                .map(|h| h.trim().to_ascii_lowercase())
+                .filter(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()));
+
+            let has_update = Self::compare_versions(&latest_version, Self::CURRENT_VERSION) > 0;
+
+            return Ok(UpdateStatus {
+                status: if has_update {
+                    "downloading".to_string()
+                } else {
+                    "idle".to_string()
+                },
+                current_version: Self::CURRENT_VERSION.to_string(),
+                latest_version,
+                has_update,
+                release_notes: notes,
+                published_at,
+                download_url,
+                asset_size_bytes,
+                sha256_checksum,
+                download_progress: 0,
+                bytes_downloaded: 0,
+                installer_path: None,
+                error: None,
+                last_checked: Some(now_iso),
+            });
+        }
+
+        // 2. Legacy custom manifest schema (`version`, `downloadUrl`)
+        let latest_version = json["version"]
+            .as_str()
+            .unwrap_or(Self::CURRENT_VERSION)
+            .trim()
+            .trim_start_matches(['v', 'V'])
+            .to_string();
+        let notes = json["releaseNotes"]
+            .as_str()
+            .or_else(|| json["notes"].as_str())
+            .unwrap_or("Performance improvements and bug fixes.")
+            .to_string();
+        let download_url = json["downloadUrl"].as_str().unwrap_or("").to_string();
+        let published_at = json["publishedAt"]
+            .as_str()
+            .unwrap_or("2026-11-26T00:00:00Z")
+            .to_string();
+        let asset_size_bytes = json["assetSizeBytes"]
+            .as_u64()
+            .or_else(|| json["sizeBytes"].as_u64())
+            .unwrap_or(4520404);
+        let sha256_checksum = json["sha256Checksum"]
+            .as_str()
+            .or_else(|| json["sha256"].as_str())
+            .map(|s| s.trim().to_ascii_lowercase());
+
+        let has_update = Self::compare_versions(&latest_version, Self::CURRENT_VERSION) > 0;
+
+        Ok(UpdateStatus {
+            status: if has_update {
+                "downloading".to_string()
+            } else {
+                "idle".to_string()
+            },
+            current_version: Self::CURRENT_VERSION.to_string(),
+            latest_version,
+            has_update,
+            release_notes: notes,
+            published_at,
+            download_url,
+            asset_size_bytes,
+            sha256_checksum,
+            download_progress: 0,
+            bytes_downloaded: 0,
+            installer_path: None,
+            error: None,
+            last_checked: Some(now_iso),
+        })
+    }
 
     /// Get a snapshot of the current updater state
     pub fn get_status() -> UpdateStatus {
@@ -211,68 +398,50 @@ impl AutoUpdater {
         let manifest_url = std::env::var("FONTIVO_UPDATE_URL")
             .unwrap_or_else(|_| Self::DEFAULT_MANIFEST_URL.to_string());
 
-        let mut discovered = UpdateStatus {
-            status: "idle".to_string(),
-            current_version: Self::CURRENT_VERSION.to_string(),
-            latest_version: Self::CURRENT_VERSION.to_string(),
-            has_update: false,
-            release_notes: "Fontivo is running the latest stable release.".to_string(),
-            published_at: "2026-11-20T00:00:00Z".to_string(),
-            download_url: "https://github.com/Ahmedfahmy8308/Fontivo/releases/latest".to_string(),
-            asset_size_bytes: 4122132,
-            sha256_checksum: Some(
-                "63a714ae312b5ee4bc45e58adc8c42e15637b1e553c0aee0815bb9c5a69b98b5".to_string(),
-            ),
-            download_progress: 0,
-            bytes_downloaded: 0,
-            installer_path: None,
-            error: None,
-            last_checked: Some(now_iso),
-        };
+        let mut discovered = UpdateStatus::default();
+        discovered.last_checked = Some(now_iso);
 
-        // Attempt live HTTP fetch with a 4-second timeout
-        if let Ok(resp) = ureq::get(&manifest_url)
-            .timeout(Duration::from_secs(4))
-            .call()
-        {
-            if resp.status() == 200 {
-                if let Ok(text) = resp.into_string() {
-                    if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&text) {
-                        let version = manifest["version"]
-                            .as_str()
-                            .unwrap_or(Self::CURRENT_VERSION)
-                            .to_string();
-                        let notes = manifest["releaseNotes"]
-                            .as_str()
-                            .or_else(|| manifest["notes"].as_str())
-                            .unwrap_or("Performance improvements and bug fixes.")
-                            .to_string();
-                        let download_url =
-                            manifest["downloadUrl"].as_str().unwrap_or("").to_string();
-                        let published_at = manifest["publishedAt"]
-                            .as_str()
-                            .unwrap_or("2026-11-24T00:00:00Z")
-                            .to_string();
-                        let asset_size = manifest["assetSizeBytes"]
-                            .as_u64()
-                            .or_else(|| manifest["sizeBytes"].as_u64())
-                            .unwrap_or(4122132);
-                        let checksum = manifest["sha256Checksum"]
-                            .as_str()
-                            .or_else(|| manifest["sha256"].as_str())
-                            .map(|s| s.to_string());
+        let agent = ureq::builder()
+            .timeout_connect(Duration::from_secs(4))
+            .timeout_read(Duration::from_secs(6))
+            .redirects(5)
+            .build();
 
-                        let has_update =
-                            Self::compare_versions(&version, Self::CURRENT_VERSION) > 0;
-
-                        discovered.latest_version = version;
-                        discovered.has_update = has_update;
-                        discovered.release_notes = notes;
-                        discovered.published_at = published_at;
-                        discovered.download_url = download_url;
-                        discovered.asset_size_bytes = asset_size;
-                        discovered.sha256_checksum = checksum;
+        // Attempt live HTTP fetch against GitHub Releases API (or FONTIVO_UPDATE_URL override)
+        if !Self::is_test_mode() || std::env::var("FONTIVO_UPDATE_URL").is_ok() {
+            match agent
+                .get(&manifest_url)
+                .set("User-Agent", "Fontivo-AutoUpdater/1.0")
+                .set("Accept", "application/vnd.github+json")
+                .call()
+            {
+                Ok(resp) if resp.status() == 200 => {
+                    if let Ok(text) = resp.into_string() {
+                        if let Ok(mut parsed) = Self::parse_release_payload(&text) {
+                            if parsed.sha256_checksum.is_none() {
+                                if let Ok(raw_json) =
+                                    serde_json::from_str::<serde_json::Value>(&text)
+                                {
+                                    if let Some(assets) = raw_json["assets"].as_array() {
+                                        parsed.sha256_checksum =
+                                            Self::resolve_sha256_from_release_assets(
+                                                &agent,
+                                                assets,
+                                                Self::expected_release_asset_name(),
+                                            );
+                                    }
+                                }
+                            }
+                            discovered = parsed;
+                        }
                     }
+                }
+                Ok(resp) => {
+                    discovered.error =
+                        Some(format!("Update server returned HTTP {}", resp.status()));
+                }
+                Err(err) => {
+                    discovered.error = Some(format!("Unable to check updates: {}", err));
                 }
             }
         }

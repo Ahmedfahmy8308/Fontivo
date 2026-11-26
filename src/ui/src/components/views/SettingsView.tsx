@@ -4,6 +4,7 @@ import {
   Activity,
   ArrowUpCircle,
   CheckCircle2,
+  AlertCircle,
   ShieldCheck,
   Trash2,
   RefreshCw,
@@ -18,10 +19,14 @@ import {
   Copy,
   Info,
   Download,
-  Users,
   FileText,
+  Package,
 } from "lucide-react";
 import { SUPPORTED_LANGUAGES } from "../../i18n/locales";
+import { CLOUD_MANIFEST_VERSION, CLOUD_TOTAL_FONTS } from "../../utils/cloudPackages";
+import uiPkg from "../../../package.json";
+
+const APP_VERSION = uiPkg.version || "1.0.2";
 
 export interface SettingsViewProps {
   onRefreshStats?: () => void;
@@ -49,6 +54,14 @@ export default function SettingsView({
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [isApplyingUpdate, setIsApplyingUpdate] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<any>(null);
+  const [fontsUpdateStatus, setFontsUpdateStatus] = useState<any>({
+    libraryVersion: CLOUD_MANIFEST_VERSION,
+    embeddedVersion: CLOUD_MANIFEST_VERSION,
+    hasUpdate: false,
+    totalFonts: CLOUD_TOTAL_FONTS,
+    packCount: 15,
+  });
+  const [checkingFontsUpdate, setCheckingFontsUpdate] = useState(false);
   const [storagePath, setStoragePath] = useState<string>(
     "%APPDATA%\\Fontivo\\Fonts",
   );
@@ -95,7 +108,42 @@ export default function SettingsView({
         }
       })
       .catch(() => {});
+
+    fetch("/api/updater", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) setUpdateStatus(data);
+      })
+      .catch(() => {});
+
+    fetch("/api/catalog/packages", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.libraryVersion) {
+          setFontsUpdateStatus((prev: any) => ({
+            ...prev,
+            ...data,
+          }));
+        }
+      })
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (updateStatus?.status !== "downloading") return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch("/api/updater", { cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json();
+          setUpdateStatus(data);
+        }
+      } catch {
+        // ignore network jitter while polling
+      }
+    }, 1200);
+    return () => clearInterval(timer);
+  }, [updateStatus?.status]);
 
   const handlePickDownloadsDir = async () => {
     setPickingDir(true);
@@ -174,11 +222,13 @@ export default function SettingsView({
 
   const handleCheckUpdate = async () => {
     setCheckingUpdate(true);
-    setUpdateStatus(null);
     try {
-      let res = await fetch("/api/updater/check", { method: "POST" });
+      let res = await fetch("/api/updater/check", {
+        method: "POST",
+        cache: "no-store",
+      });
       if (!res.ok) {
-        res = await fetch("/api/updater");
+        res = await fetch("/api/updater", { cache: "no-store" });
       }
       const data = await res.json();
       setUpdateStatus(data);
@@ -186,6 +236,27 @@ export default function SettingsView({
       setUpdateStatus({ error: e?.message || "Failed" });
     } finally {
       setCheckingUpdate(false);
+    }
+  };
+
+  const handleCheckFontsUpdate = async () => {
+    setCheckingFontsUpdate(true);
+    try {
+      const res = await fetch("/api/catalog/refresh-manifest", {
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFontsUpdateStatus((prev: any) => ({
+          ...prev,
+          ...data,
+          checkedNow: true,
+        }));
+      }
+    } catch {
+      // keep existing status cleanly
+    } finally {
+      setCheckingFontsUpdate(false);
     }
   };
 
@@ -235,8 +306,8 @@ export default function SettingsView({
                   : "Manage language, appearance, storage path, startup, backup & recovery, and system health.")}
             </p>
           </div>
-          <span className="px-3.5 py-1.5 rounded-full bg-[var(--color-control)] border border-[var(--color-border)] text-xs font-mono font-medium text-[var(--color-text-muted)] self-start md:self-center whitespace-nowrap shrink-0">
-            Fontivo v1.0.0
+          <span className="px-3.5 py-1.5 rounded-full bg-[var(--color-control)] border border-[var(--color-border)] text-xs font-mono font-medium text-[var(--color-text-muted)] self-start md:self-center whitespace-nowrap shrink-0" dir="ltr">
+            {`Fontivo v${updateStatus?.currentVersion || APP_VERSION}`}
           </span>
         </div>
 
@@ -593,20 +664,37 @@ export default function SettingsView({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div dir="auto">
                 <div className="font-bold text-[var(--color-text-header)] text-sm flex items-center gap-2">
-                  <Check className="w-4 h-4 text-[var(--color-action)]" />
+                  {updateStatus?.error ? (
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                  ) : updateStatus?.hasUpdate ? (
+                    <ArrowUpCircle className="w-4 h-4 text-[var(--color-action)] shrink-0" />
+                  ) : (
+                    <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                  )}
                   <span>
-                    {t.currentVersionInstalled ||
-                      (isRtl
-                        ? "الإصدار الحالي مثبت ومحدث"
-                        : "Current Version Installed & Up to Date")}
+                    {updateStatus?.status === "ready_to_install"
+                      ? isRtl
+                        ? `تحديث جديد جاهز للتثبيت (v${updateStatus.latestVersion})`
+                        : `Update Ready to Install (v${updateStatus.latestVersion})`
+                      : updateStatus?.hasUpdate
+                        ? isRtl
+                          ? `يتوفر إصدار جديد من Fontivo (v${updateStatus.latestVersion})`
+                          : `New Fontivo Update Available (v${updateStatus.latestVersion})`
+                        : t.currentVersionInstalled ||
+                          (isRtl
+                            ? "الإصدار الحالي مثبت ومحدث"
+                            : "Current Version Installed & Up to Date")}
                   </span>
                 </div>
                 <div className="text-[var(--color-text-muted)] text-xs mt-1">
-                  Fontivo v1.0.0 —{" "}
+                  <span dir="ltr" className="font-mono inline-block">
+                    {`Fontivo v${updateStatus?.currentVersion || APP_VERSION}`}
+                  </span>{" "}
+                  —{" "}
                   {t.releaseChannel ||
                     (isRtl
-                      ? "قناة الإصدارات المستقرة • محرك إدارة خطوط محلي سريع"
-                      : "Stable Release Channel • Local-First Font Engine")}
+                      ? "قناة الإصدارات المستقرة • التحقق المباشر عبر GitHub Releases"
+                      : "Stable Release Channel • Live GitHub Releases Check")}
                 </div>
               </div>
 
@@ -624,7 +712,7 @@ export default function SettingsView({
                       ? t.checkingUpdates ||
                         (isRtl ? "جاري التحقق..." : "Checking...")
                       : t.checkUpdatesNow ||
-                        (isRtl ? "التحقق السريع" : "Quick Check")}
+                        (isRtl ? "التحقق من التحديثات" : "Check Updates")}
                   </span>
                 </button>
 
@@ -670,45 +758,146 @@ export default function SettingsView({
 
             {updateStatus && (
               <div
-                className="p-3.5 rounded-xl border bg-[var(--color-back-subtle)] border-[var(--color-border)] text-[var(--color-text-main)] flex items-center justify-between gap-3"
+                className={`p-3.5 rounded-xl border flex flex-col gap-2.5 ${
+                  updateStatus.error
+                    ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                    : updateStatus.status === "ready_to_install"
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                      : updateStatus.hasUpdate
+                        ? "bg-[var(--color-action)]/10 border-[var(--color-action)]/30 text-[var(--color-text-header)]"
+                        : "bg-[var(--color-back-subtle)] border-[var(--color-border)] text-[var(--color-text-main)]"
+                }`}
                 dir="auto"
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <CheckCircle2 className="w-4 h-4 text-[var(--color-action)] shrink-0" />
-                  <span className="truncate">
-                    {updateStatus.status === "ready_to_install"
-                      ? isRtl
-                        ? `تم تنزيل تحديث Fontivo v${updateStatus.latestVersion || "1.0.1"} تلقائياً وهو جاهز للتثبيت.`
-                        : `Fontivo v${updateStatus.latestVersion || "1.0.1"} is downloaded and ready to install.`
-                      : updateStatus.message ||
-                        t.upToDate ||
-                        (isRtl
-                          ? "برنامج Fontivo محدث لأحدث إصدار."
-                          : "Fontivo is up to date.")}
-                  </span>
-                </div>
-                {updateStatus.status === "ready_to_install" && (
-                  <button
-                    onClick={handleApplyUpdate}
-                    disabled={isApplyingUpdate}
-                    className="px-3 py-1.5 rounded-lg bg-[var(--color-action)] text-[#130C16] font-bold text-xs flex items-center gap-1.5 shrink-0 transition cursor-pointer"
-                  >
-                    <RefreshCw
-                      className={`w-3.5 h-3.5 ${isApplyingUpdate ? "animate-spin" : ""}`}
-                    />
-                    <span>
-                      {isApplyingUpdate
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {updateStatus.error ? (
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                    ) : updateStatus.hasUpdate ? (
+                      <RefreshCw
+                        className={`w-4 h-4 text-[var(--color-action)] shrink-0 ${updateStatus.status === "downloading" ? "animate-spin" : ""}`}
+                      />
+                    ) : (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    )}
+                    <span className="truncate">
+                      {updateStatus.error
                         ? isRtl
-                          ? "جاري التحديث..."
-                          : "Restarting..."
-                        : isRtl
-                          ? "إعادة التشغيل والتحديث الآن"
-                          : "Restart & Update Now"}
+                          ? `تعذر الاتصال بخادم التحديثات: ${updateStatus.error}`
+                          : `Unable to reach update server: ${updateStatus.error}`
+                        : updateStatus.status === "ready_to_install"
+                          ? isRtl
+                            ? `تم تنزيل تحديث Fontivo v${updateStatus.latestVersion} وتوثيقه عبر SHA-256 وهو جاهز للتثبيت.`
+                            : `Fontivo v${updateStatus.latestVersion} is downloaded, SHA-256 verified, and ready to install.`
+                          : updateStatus.status === "downloading"
+                            ? isRtl
+                              ? `جاري تنزيل الإصدار الجديد v${updateStatus.latestVersion} تلقائياً (${updateStatus.downloadProgress || 0}%)...`
+                              : `Downloading new release v${updateStatus.latestVersion} automatically (${updateStatus.downloadProgress || 0}%)...`
+                            : updateStatus.hasUpdate
+                              ? isRtl
+                                ? `يتوفر إصدار أحدث v${updateStatus.latestVersion} (المثبت: v${updateStatus.currentVersion}).`
+                                : `Newer release v${updateStatus.latestVersion} is available (installed: v${updateStatus.currentVersion}).`
+                              : isRtl
+                                ? `برنامج Fontivo محدث لأحدث إصدار رسمي (v${updateStatus.currentVersion || "1.0.2"}).`
+                                : `Fontivo is up to date on the latest official release (v${updateStatus.currentVersion || "1.0.2"}).`}
                     </span>
-                  </button>
+                  </div>
+                  {updateStatus.status === "ready_to_install" && (
+                    <button
+                      onClick={handleApplyUpdate}
+                      disabled={isApplyingUpdate}
+                      className="px-3 py-1.5 rounded-lg bg-[var(--color-action)] text-[#130C16] font-bold text-xs flex items-center gap-1.5 shrink-0 transition cursor-pointer"
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 ${isApplyingUpdate ? "animate-spin" : ""}`}
+                      />
+                      <span>
+                        {isApplyingUpdate
+                          ? isRtl
+                            ? "جاري التحديث..."
+                            : "Restarting..."
+                          : isRtl
+                            ? "إعادة التشغيل والتحديث الآن"
+                            : "Restart & Update Now"}
+                      </span>
+                    </button>
+                  )}
+                </div>
+
+                {updateStatus.status === "downloading" && (
+                  <div className="w-full h-1.5 rounded-full bg-[var(--color-control)] fontivo-progress-track">
+                    <div
+                      className="h-full rounded-full bg-[var(--color-action)] fontivo-progress-fill transition-all duration-300"
+                      style={{
+                        width: `${Math.max(4, updateStatus.downloadProgress || 0)}%`,
+                      }}
+                    />
+                  </div>
                 )}
               </div>
             )}
+
+            {/* Fontivo-Fonts & Cloud Catalog Sync Row */}
+            <div className="pt-4 border-t border-[var(--color-border-subtle)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="min-w-0" dir="auto">
+                <div className="font-bold text-[var(--color-text-header)] flex items-center gap-2">
+                  <Package className="w-4 h-4 text-[#B7A1D9] shrink-0" />
+                  <span>
+                    {isRtl
+                      ? "مكتبة حزم الخطوط السحابية (Fontivo-Fonts)"
+                      : "Cloud Font Packs Catalog (Fontivo-Fonts)"}
+                  </span>
+                  <span
+                    dir="ltr"
+                    className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#B7A1D9]/15 text-[#B7A1D9] border border-[#B7A1D9]/30"
+                  >
+                    v{fontsUpdateStatus.libraryVersion || CLOUD_MANIFEST_VERSION}
+                  </span>
+                </div>
+                <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
+                  {fontsUpdateStatus.hasUpdate
+                    ? isRtl
+                      ? `يتوفر إصدار أحدث من حزم الخطوط (v${fontsUpdateStatus.libraryVersion}) — يمكنك الترقية من تبويب الحزم السحابية.`
+                      : `Newer Fontivo-Fonts release available (v${fontsUpdateStatus.libraryVersion}) — view in Cloud Packs.`
+                    : fontsUpdateStatus.checkedNow
+                      ? isRtl
+                        ? `مكتبة الخطوط محدثة بالكامل (${Number(fontsUpdateStatus.totalFonts || CLOUD_TOTAL_FONTS).toLocaleString()} خط عبر ${fontsUpdateStatus.packCount || 15} حزمة).`
+                        : `Font library manifest is up to date (${Number(fontsUpdateStatus.totalFonts || CLOUD_TOTAL_FONTS).toLocaleString()} fonts across ${fontsUpdateStatus.packCount || 15} packs).`
+                      : isRtl
+                        ? "التحقق المباشر من تحديثات الحزم السحابية وكتالوج Google Fonts عبر GitHub."
+                        : "Live verification for Fontivo-Fonts cloud packs and Google Fonts catalog via GitHub."}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+                {fontsUpdateStatus.hasUpdate && onNavigateTab && (
+                  <button
+                    onClick={() => onNavigateTab("cloud-packs")}
+                    className="px-3 py-2 rounded-xl bg-[#B7A1D9] text-[#130C16] font-bold text-xs cursor-pointer"
+                  >
+                    {isRtl ? "فتح الحزم المحدثة" : "Open Cloud Packs"}
+                  </button>
+                )}
+                <button
+                  onClick={handleCheckFontsUpdate}
+                  disabled={checkingFontsUpdate}
+                  className="px-3.5 py-2 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[var(--color-text-header)] font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw
+                    className={`w-3.5 h-3.5 text-[#B7A1D9] ${checkingFontsUpdate ? "animate-spin" : ""}`}
+                  />
+                  <span>
+                    {checkingFontsUpdate
+                      ? isRtl
+                        ? "جاري الفحص..."
+                        : "Checking..."
+                      : isRtl
+                        ? "فحص تحديثات الخطوط"
+                        : "Check Fonts Updates"}
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 

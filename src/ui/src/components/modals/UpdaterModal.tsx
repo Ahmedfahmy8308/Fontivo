@@ -1,18 +1,19 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   ArrowUpCircle,
   CheckCircle2,
+  AlertCircle,
   RefreshCw,
   X,
   PackageCheck,
   Globe,
   Layers,
-  Sparkles,
-  Download,
-  HardDrive,
   Info,
   Check,
 } from "lucide-react";
+import uiPkg from "../../../package.json";
+
+const APP_VERSION = uiPkg.version || "1.0.2";
 
 export interface UpdaterModalProps {
   isOpen: boolean;
@@ -24,7 +25,6 @@ export interface UpdaterModalProps {
 export default function UpdaterModal({
   isOpen,
   onClose,
-  t = {},
   isRtl = false,
 }: UpdaterModalProps) {
   const [activeTab, setActiveTab] = useState<"app" | "fonts">("app");
@@ -33,25 +33,30 @@ export default function UpdaterModal({
   const [checkingApp, setCheckingApp] = useState(false);
   const [isApplyingAppUpdate, setIsApplyingAppUpdate] = useState(false);
   const [appUpdateInfo, setAppUpdateInfo] = useState({
-    currentVersion: "1.0.0",
-    latestVersion: "1.0.0",
+    currentVersion: APP_VERSION,
+    latestVersion: APP_VERSION,
     hasUpdate: false,
     status: "idle",
     downloadProgress: 0,
     installerPath: undefined as string | undefined,
+    error: undefined as string | undefined | null,
     lastChecked: isRtl ? "اليوم" : "Today",
     releaseNotes: isRtl
-      ? "Fontivo يعمل بأحدث إصدار مستقر (v1.0.0) مع دعم شامل لخطوط ويندوز ومكتبة Google Fonts السحابية وتكامل Adobe CC الفوري."
-      : "Fontivo is running the latest stable release (v1.0.0) with full Windows typography support, Google Fonts cloud library, and Adobe CC instant activation.",
+      ? "محرك Fontivo المحلي بالاعتماد على Rust لإدارة الخطوط وتفعيلها بالذاكرة وتكامل Adobe CC."
+      : "Native Rust typography engine with zero-bloat RAM activation, cloud packs, and Adobe CC bridge.",
   });
   const [appStatusMessage, setAppStatusMessage] = useState<string | null>(null);
 
   // Fonts Catalog Update State
   const [syncingFonts, setSyncingFonts] = useState(false);
   const [fontsCatalogInfo, setFontsCatalogInfo] = useState({
+    libraryVersion: "1.0.3",
+    embeddedVersion: "1.0.3",
+    hasUpdate: false,
     totalGoogleFonts: "10,939",
     totalFamilies: "4,430",
     cloudPacksCount: "15",
+    googleCatalogCount: "",
     lastSynced: isRtl ? "اليوم" : "Today",
     catalogStatus: isRtl ? "محدث بالكامل" : "Up to Date",
   });
@@ -59,22 +64,88 @@ export default function UpdaterModal({
     null,
   );
 
+  const syncAppStatusSnapshot = useCallback(async () => {
+    try {
+      const res = await fetch("/api/updater", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      setAppUpdateInfo((prev) => ({
+        ...prev,
+        currentVersion: data.currentVersion || prev.currentVersion,
+        latestVersion: data.latestVersion || prev.latestVersion,
+        hasUpdate: Boolean(data.hasUpdate),
+        status: data.status || prev.status,
+        downloadProgress:
+          typeof data.downloadProgress === "number"
+            ? data.downloadProgress
+            : prev.downloadProgress,
+        installerPath: data.installerPath,
+        error: data.error ?? null,
+        lastChecked: data.lastChecked
+          ? isRtl
+            ? "الآن"
+            : "Just now"
+          : prev.lastChecked,
+        releaseNotes: data.releaseNotes || prev.releaseNotes,
+      }));
+    } catch {
+      // ignore offline
+    }
+  }, [isRtl]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    syncAppStatusSnapshot();
+    fetch("/api/catalog/packages", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.libraryVersion) {
+          setFontsCatalogInfo((prev) => ({
+            ...prev,
+            libraryVersion: data.libraryVersion,
+            embeddedVersion: data.embeddedVersion || prev.embeddedVersion,
+            hasUpdate: Boolean(data.hasUpdate),
+            cloudPacksCount: String(data.packCount || prev.cloudPacksCount),
+            catalogStatus: data.hasUpdate
+              ? isRtl
+                ? `يتوفر إصدار v${data.libraryVersion}`
+                : `v${data.libraryVersion} Available`
+              : isRtl
+                ? "محدث بالكامل"
+                : "Up to Date",
+          }));
+        }
+      })
+      .catch(() => {});
+  }, [isOpen, syncAppStatusSnapshot, isRtl]);
+
+  useEffect(() => {
+    if (!isOpen || appUpdateInfo.status !== "downloading") return;
+    const timer = setInterval(syncAppStatusSnapshot, 1200);
+    return () => clearInterval(timer);
+  }, [isOpen, appUpdateInfo.status, syncAppStatusSnapshot]);
+
   if (!isOpen) return null;
 
   const handleCheckAppUpdate = async () => {
     setCheckingApp(true);
     setAppStatusMessage(null);
     try {
-      let res = await fetch("/api/updater/check", { method: "POST" });
+      let res = await fetch("/api/updater/check", {
+        method: "POST",
+        cache: "no-store",
+      });
       if (!res.ok) {
-        res = await fetch("/api/updater");
+        res = await fetch("/api/updater", { cache: "no-store" });
       }
       if (res.ok) {
         const data = await res.json();
+        const ver = data.currentVersion || appUpdateInfo.currentVersion;
+        const latest = data.latestVersion || ver;
         setAppUpdateInfo((prev) => ({
           ...prev,
-          currentVersion: data.currentVersion || prev.currentVersion,
-          latestVersion: data.latestVersion || prev.latestVersion,
+          currentVersion: ver,
+          latestVersion: latest,
           hasUpdate: Boolean(data.hasUpdate),
           status: data.status || prev.status,
           downloadProgress:
@@ -82,34 +153,41 @@ export default function UpdaterModal({
               ? data.downloadProgress
               : prev.downloadProgress,
           installerPath: data.installerPath,
+          error: data.error ?? null,
           lastChecked: isRtl ? "الآن" : "Just now",
           releaseNotes: data.releaseNotes || prev.releaseNotes,
         }));
-        if (data.status === "ready_to_install") {
+        if (data.error) {
           setAppStatusMessage(
             isRtl
-              ? ` تم تنزيل تحديث Fontivo v${data.latestVersion} تلقائياً وهو جاهز للتثبيت!`
-              : ` Fontivo v${data.latestVersion} is downloaded and ready to install!`,
+              ? `تعذر الاتصال بخادم التحديثات: ${data.error}`
+              : `Could not reach update server: ${data.error}`,
+          );
+        } else if (data.status === "ready_to_install") {
+          setAppStatusMessage(
+            isRtl
+              ? `تم تنزيل تحديث Fontivo v${latest} تلقائياً وهو جاهز للتثبيت!`
+              : `Fontivo v${latest} is downloaded and ready to install!`,
           );
         } else if (data.hasUpdate) {
           setAppStatusMessage(
             isRtl
-              ? `يوجد إصدار جديد (v${data.latestVersion}) جاري تنزيله تلقائياً في الخلفية...`
-              : `New release (v${data.latestVersion}) found! Downloading in the background...`,
+              ? `يوجد إصدار جديد (v${latest}) جاري تنزيله تلقائياً في الخلفية...`
+              : `New release (v${latest}) found! Downloading in the background...`,
           );
         } else {
           setAppStatusMessage(
             isRtl
-              ? "أنت تستخدم أحدث إصدار رسمي من تطبيق Fontivo (v1.0.0)!"
-              : "You are running the latest official release of Fontivo (v1.0.0)!",
+              ? `أنت تستخدم أحدث إصدار رسمي من تطبيق Fontivo (v${ver})!`
+              : `You are running the latest official release of Fontivo (v${ver})!`,
           );
         }
       }
     } catch {
       setAppStatusMessage(
         isRtl
-          ? "التطبيق محدث لأحدث إصدار مستقر."
-          : "Fontivo is running the latest stable release.",
+          ? "تعذر الاتصال بخادم التحديثات. تحقق من الاتصال بالإنترنت."
+          : "Unable to reach GitHub releases. Check your internet connection.",
       );
     } finally {
       setCheckingApp(false);
@@ -135,30 +213,74 @@ export default function UpdaterModal({
     setSyncingFonts(true);
     setFontsStatusMessage(null);
     try {
-      const res = await fetch("/api/google/catalog");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.totalFonts) {
-          setFontsCatalogInfo((prev) => ({
-            ...prev,
-            totalGoogleFonts: String(data.totalFonts),
-            totalFamilies: data.totalFamilies
-              ? `${data.totalFamilies}+`
-              : prev.totalFamilies,
-            lastSynced: isRtl ? "الآن" : "Just now",
-          }));
+      const [manifestRes, googleRes] = await Promise.all([
+        fetch("/api/catalog/refresh-manifest", { cache: "no-store" }),
+        fetch("/api/google/catalog?refresh=true", { cache: "no-store" }),
+      ]);
+
+      let nextLibVer = fontsCatalogInfo.libraryVersion;
+      let hasFontsUpdate = false;
+      let nextTotalFonts = fontsCatalogInfo.totalGoogleFonts;
+      let nextFamilies = fontsCatalogInfo.totalFamilies;
+      let nextPacksCount = fontsCatalogInfo.cloudPacksCount;
+      let googleCountStr = "";
+
+      if (manifestRes.ok) {
+        const mData = await manifestRes.json();
+        nextLibVer = String(mData.libraryVersion || nextLibVer);
+        hasFontsUpdate = Boolean(mData.hasUpdate);
+        if (mData.totalFonts) {
+          nextTotalFonts = Number(mData.totalFonts).toLocaleString();
+        }
+        if (mData.totalFamilies) {
+          nextFamilies = Number(mData.totalFamilies).toLocaleString();
+        }
+        if (mData.packCount) {
+          nextPacksCount = String(mData.packCount);
         }
       }
+
+      if (googleRes.ok) {
+        const gData = await googleRes.json();
+        if (gData.totalFamilies || gData.totalFonts) {
+          googleCountStr = String(
+            Number(gData.totalFamilies || gData.totalFonts).toLocaleString(),
+          );
+        }
+      }
+
+      setFontsCatalogInfo((prev) => ({
+        ...prev,
+        libraryVersion: nextLibVer,
+        hasUpdate: hasFontsUpdate,
+        totalGoogleFonts: nextTotalFonts,
+        totalFamilies: nextFamilies,
+        cloudPacksCount: nextPacksCount,
+        googleCatalogCount: googleCountStr || prev.googleCatalogCount,
+        lastSynced: isRtl ? "الآن" : "Just now",
+        catalogStatus: hasFontsUpdate
+          ? isRtl
+            ? `يتوفر إصدار v${nextLibVer}`
+            : `v${nextLibVer} Available`
+          : isRtl
+            ? `محدث (v${nextLibVer})`
+            : `Up to Date (v${nextLibVer})`,
+      }));
+
       setFontsStatusMessage(
-        isRtl
-          ? "تمت مزامنة كتالوج الخطوط بنجاح! 10,939 خطاً متاحاً بالكامل."
-          : "Fonts catalog synced successfully! 10,939 fonts are up to date.",
+        hasFontsUpdate
+          ? isRtl
+            ? `يتوفر تحديث جديد لمكتبة الخطوط (Fontivo-Fonts v${nextLibVer})! افتح تبويب الحزم السحابية لتنزيل الحزم المحدثة.`
+            : `New Fontivo-Fonts update available (v${nextLibVer})! Open Cloud Packs to download updated bundles.`
+          : isRtl
+            ? `تمت المزامنة بنجاح! مكتبة Fontivo-Fonts v${nextLibVer} (${nextTotalFonts} خط عبر ${nextPacksCount} حزمة) محدثة بالكامل.`
+            : `Synced! Fontivo-Fonts v${nextLibVer} (${nextTotalFonts} fonts across ${nextPacksCount} packs) is completely up to date.`,
       );
     } catch {
       setFontsStatusMessage(
         isRtl
-          ? "مكتبة الخطوط متزامنة ومحدثة بالكامل مع خوادم Google Fonts."
-          : "Font library catalog is fully synchronized with Google Fonts.",
+          ? "تعذر الاتصال بـ GitHub لمزامنة كتالوج الخطوط الآن."
+          : "Could not reach GitHub to sync font catalog updates.",
       );
     } finally {
       setSyncingFonts(false);
@@ -244,18 +366,52 @@ export default function UpdaterModal({
               {/* App Status Card */}
               <div className="p-4 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-[var(--color-green)]/15 border border-[var(--color-green)]/30 flex items-center justify-center text-[var(--color-green)] shrink-0">
-                    <CheckCircle2 className="w-5 h-5" />
+                  <div
+                    className={`w-10 h-10 rounded-2xl border flex items-center justify-center shrink-0 ${
+                      appUpdateInfo.error
+                        ? "bg-amber-500/15 border-amber-500/30 text-amber-400"
+                        : appUpdateInfo.hasUpdate
+                          ? "bg-[var(--color-action)]/15 border-[var(--color-action)]/30 text-[var(--color-action)]"
+                          : "bg-[var(--color-green)]/15 border-[var(--color-green)]/30 text-[var(--color-green)]"
+                    }`}
+                  >
+                    {appUpdateInfo.error ? (
+                      <AlertCircle className="w-5 h-5" />
+                    ) : appUpdateInfo.hasUpdate ? (
+                      <ArrowUpCircle className="w-5 h-5" />
+                    ) : (
+                      <CheckCircle2 className="w-5 h-5" />
+                    )}
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-[var(--color-text-header)] flex items-center gap-2">
                       <span>
-                        {isRtl
-                          ? "تطبيق Fontivo محدث بالكامل"
-                          : "Fontivo is Up to Date"}
+                        {appUpdateInfo.status === "ready_to_install"
+                          ? isRtl
+                            ? `تحديث جديد جاهز (v${appUpdateInfo.latestVersion})`
+                            : `Update v${appUpdateInfo.latestVersion} Ready`
+                          : appUpdateInfo.hasUpdate
+                            ? isRtl
+                              ? `يتوفر إصدار جديد (v${appUpdateInfo.latestVersion})`
+                              : `Update v${appUpdateInfo.latestVersion} Available`
+                            : isRtl
+                              ? "تطبيق Fontivo محدث بالكامل"
+                              : "Fontivo is Up to Date"}
                       </span>
-                      <span className="px-2 py-0.5 rounded-md bg-[var(--color-green)]/15 text-[var(--color-green)] text-[10px] font-bold">
-                        {isRtl ? "مستقر" : "Stable"}
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                          appUpdateInfo.hasUpdate
+                            ? "bg-[var(--color-action)]/15 text-[var(--color-action)]"
+                            : "bg-[var(--color-green)]/15 text-[var(--color-green)]"
+                        }`}
+                      >
+                        {appUpdateInfo.hasUpdate
+                          ? isRtl
+                            ? "ترقية"
+                            : "Update"
+                          : isRtl
+                            ? "مستقر"
+                            : "Stable"}
                       </span>
                     </h4>
                     <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
