@@ -81,9 +81,21 @@ if (Test-Path $siteVersionTs) {
 $innoPath = "$workspaceRoot\Fontivo-App\installer\Setup_Fontivo.iss"
 if (Test-Path $innoPath) {
     $innoContent = [System.IO.File]::ReadAllText($innoPath)
-    $innoContent = $innoContent -replace '(?m)^#define MyAppVersion "[^"]+"', "#define MyAppVersion `"$majorMinor`""
+    $innoContent = $innoContent -replace '(?m)^AppVersion=\d+\.\d+\.\d+', "AppVersion=$NewVersion"
+    $innoContent = $innoContent -replace '(?m)^AppVerName=Fontivo \d+\.\d+\.\d+', "AppVerName=Fontivo $NewVersion"
+    $innoContent = $innoContent -replace '(?m)^VersionInfoVersion=\d+\.\d+\.\d+\.\d+', "VersionInfoVersion=$NewVersion.0"
+    $innoContent = $innoContent -replace '(?m)^VersionInfoProductVersion=\d+\.\d+\.\d+', "VersionInfoProductVersion=$NewVersion"
     Write-Utf8NoBom $innoPath $innoContent
-    Write-Host "[ok] Synchronized: Fontivo-App\installer\Setup_Fontivo.iss -> $majorMinor" -ForegroundColor Green
+    Write-Host "[ok] Synchronized: Fontivo-App\installer\Setup_Fontivo.iss -> $NewVersion" -ForegroundColor Green
+}
+
+# 6. Update Fontivo-App/src/fontivo_updater/auto_updater.rs
+$updaterPath = "$workspaceRoot\Fontivo-App\src\fontivo_updater\auto_updater.rs"
+if (Test-Path $updaterPath) {
+    $upContent = [System.IO.File]::ReadAllText($updaterPath)
+    $upContent = $upContent -replace 'pub const CURRENT_VERSION: &''static str = "\d+\.\d+\.\d+"', "pub const CURRENT_VERSION: &'static str = `"$NewVersion`""
+    Write-Utf8NoBom $updaterPath $upContent
+    Write-Host "[ok] Synchronized: Fontivo-App\src\fontivo_updater\auto_updater.rs -> $NewVersion" -ForegroundColor Green
 }
 
 Write-Host "`n[SUCCESS] Version $NewVersion successfully synchronized across all project targets without BOM!" -ForegroundColor Green

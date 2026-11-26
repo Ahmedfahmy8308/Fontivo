@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   HardDrive,
   ShieldCheck,
@@ -429,7 +430,9 @@ export default function WindowsFontsView({
             : " (completed via on-demand UAC elevation)"
           : "";
         const feedbackType =
-          (data.removedCount ?? 0) === 0 && (data.skippedCount ?? 0) > 0
+          (data.removedCount ?? 0) === 0 &&
+          (data.scheduledRebootCount ?? 0) === 0 &&
+          ((data.skippedCount ?? 0) > 0 || (data.alreadyScheduledCount ?? 0) > 0)
             ? "warning"
             : "success";
         setFeedback({
@@ -536,6 +539,22 @@ export default function WindowsFontsView({
             ? "فشل استرجاع النسخة الاحتياطية"
             : "Failed to restore backup"),
       });
+    }
+  };
+
+  const handleDeleteBackup = async (backupId: string) => {
+    try {
+      const res = await fetch("/api/system/windows-fonts/backups/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ backupId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setBackups((prev) => prev.filter((item) => item.id !== backupId));
+      }
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -677,6 +696,10 @@ export default function WindowsFontsView({
   const startItem = totalFonts === 0 ? 0 : startIndex + 1;
   const endItem = Math.min(startIndex + PAGE_SIZE, totalFonts);
 
+  const pendingRebootCount = fonts.filter(
+    (f) => Boolean(f.pendingRebootDelete),
+  ).length;
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[var(--color-back-main)] text-[var(--color-text-main)] select-none">
       {/* 1. Header & Management Actions */}
@@ -814,6 +837,20 @@ export default function WindowsFontsView({
             >
               ✕
             </button>
+          </div>
+        )}
+
+        {/* Pending Windows Reboot Deletion Notice */}
+        {pendingRebootCount > 0 && (
+          <div className="p-3 rounded-xl border border-amber-500/35 bg-amber-500/10 text-amber-200 text-xs flex flex-wrap items-center justify-between gap-2 animate-in fade-in">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                {isRtl
+                  ? `يوجد ${pendingRebootCount} خطاً محجوزاً في ذاكرة ويندوز: تمت إزالتها من سجل الريجستري وأخذ نسخة احتياطية منها بالفعل، وسيقوم ويندوز بحذف ملفاتها تلقائياً عند إعادة تشغيل الجهاز.`
+                  : `${pendingRebootCount} font file(s) are locked in memory: already backed up and removed from Windows Registry, queued for automatic deletion on your next Windows restart.`}
+              </span>
+            </div>
           </div>
         )}
 
@@ -963,6 +1000,14 @@ export default function WindowsFontsView({
                         <span className="text-[10px] font-mono text-[var(--color-text-dim)] whitespace-nowrap shrink-0">
                           {font.format || "TTF"}
                         </span>
+
+                        {font.pendingRebootDelete && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 whitespace-nowrap shrink-0">
+                            {isRtl
+                              ? "محجوز · يُحذف مع إعادة التشغيل"
+                              : "Pending Reboot Delete"}
+                          </span>
+                        )}
                       </div>
 
                       {/* Actions: Protected vs Uninstall */}
@@ -973,6 +1018,14 @@ export default function WindowsFontsView({
                             title="Core Windows operating system font. Protected from deletion."
                           >
                             <span>Protected OS Asset</span>
+                          </span>
+                        ) : font.pendingRebootDelete ? (
+                          <span className="text-[11px] text-amber-300 font-mono flex items-center gap-1 whitespace-nowrap shrink-0">
+                            <span>
+                              {isRtl
+                                ? "بانتظار إعادة التشغيل"
+                                : "Awaiting Restart"}
+                            </span>
                           </span>
                         ) : (
                           <button
@@ -1093,239 +1146,287 @@ export default function WindowsFontsView({
       </main>
 
       {/* Professional Management Modal: 2 Restoration Profiles + Keep Current */}
-      {showRestoreModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border)]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-[var(--color-action)]/15 border border-[var(--color-action)]/30 flex items-center justify-center text-[var(--color-action)] shrink-0">
-                  <RotateCcw className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-[var(--color-text-header)]">
-                    {isRtl
-                      ? "إدارة واستعادة خطوط نظام ويندوز"
-                      : "Windows Font Management & Reset"}
-                  </h3>
-                  <span className="text-xs text-[var(--color-text-muted)]">
-                    {isRtl
-                      ? "اختر مستوى التنظيف المناسب لجهازك وطبيعة عملك"
-                      : "Choose the restoration profile that fits your workflow"}
-                  </span>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setShowRestoreModal(false)}
-                className="text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] p-1 rounded-lg"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Profile Options Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Option 1: Pure Windows Defaults */}
-              <div className="p-5 rounded-2xl bg-[var(--color-control)]/40 border border-[var(--color-border)] hover:border-[#B7A1D9]/60 transition space-y-3 flex flex-col justify-between">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <ShieldCheck className="w-5 h-5 text-[#B7A1D9]" />
-                      <h4 className="text-xs font-bold text-[var(--color-text-header)]">
-                        {isRtl
-                          ? "خطوط ويندوز الأصلية فقط"
-                          : "Factory Windows Core Only"}
-                      </h4>
-                    </div>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#B7A1D9]/15 text-[#B7A1D9] border border-[#B7A1D9]/30">
-                      {isRtl ? "افتراضي" : "Clean Slate"}
+      {showRestoreModal &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+            <div
+              className="w-full max-w-[calc(100vw-1.5rem)] sm:max-w-2xl lg:max-w-3xl bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-2xl sm:rounded-3xl shadow-2xl animate-in zoom-in-95 max-h-[88dvh] flex flex-col overflow-hidden"
+              dir={isRtl ? "rtl" : "ltr"}
+            >
+              <div className="px-4 sm:px-6 py-4 flex items-center justify-between gap-3 border-b border-[var(--color-border)] shrink-0 min-w-0">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-[var(--color-action)]/15 border border-[var(--color-action)]/30 flex items-center justify-center text-[var(--color-action)] shrink-0">
+                    <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm sm:text-base font-black text-[var(--color-text-header)] truncate">
+                      {isRtl
+                        ? "إدارة واستعادة خطوط نظام ويندوز"
+                        : "Windows Font Management & Reset"}
+                    </h3>
+                    <span className="text-[11px] sm:text-xs text-[var(--color-text-muted)] block truncate">
+                      {isRtl
+                        ? "اختر مستوى التنظيف المناسب لجهازك وطبيعة عملك"
+                        : "Choose the restoration profile that fits your workflow"}
                     </span>
                   </div>
-
-                  <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-                    {isRtl
-                      ? "استعادة خطوط ويندوز الرسمية فقط مع نقل الخطوط الإضافية بأمان إلى مجلد النسخ الاحتياطي."
-                      : "Restores standard Windows OS core fonts only and backs up extra fonts safely."}
-                  </p>
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => handleRestoreWithProfile("pure_windows")}
-                  disabled={isRestoring}
-                  className="w-full py-2.5 rounded-xl bg-[var(--color-control)] hover:bg-[#B7A1D9] text-[var(--color-text-header)] hover:text-[#130C16] border border-[var(--color-border)] text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2"
+                  onClick={() => setShowRestoreModal(false)}
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] p-1.5 rounded-lg hover:bg-[var(--color-control)] transition cursor-pointer shrink-0"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>
-                    {isRtl ? "استعادة خطوط ويندوز فقط" : "Restore Windows Only"}
-                  </span>
+                  ✕
                 </button>
               </div>
 
-              {/* Option 2: Essential Design + Windows Defaults (Recommended) */}
-              <div className="p-5 rounded-2xl bg-[var(--color-action)]/5 border border-[var(--color-action)]/45 hover:border-[var(--color-action)] transition space-y-3 flex flex-col justify-between">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Layers className="w-5 h-5 text-[var(--color-action)]" />
-                      <h4 className="text-xs font-bold text-[var(--color-text-header)]">
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-5">
+                {/* Profile Options Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Option 1: Pure Windows Defaults */}
+                  <div className="p-4 sm:p-5 rounded-2xl bg-[var(--color-control)]/40 border border-[var(--color-border)] hover:border-[#B7A1D9]/60 transition space-y-3 flex flex-col justify-between min-w-0">
+                    <div className="space-y-2 min-w-0">
+                      <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <ShieldCheck className="w-5 h-5 text-[#B7A1D9] shrink-0" />
+                          <h4 className="text-xs font-bold text-[var(--color-text-header)] truncate">
+                            {isRtl
+                              ? "خطوط ويندوز الأصلية فقط"
+                              : "Factory Windows Core Only"}
+                          </h4>
+                        </div>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#B7A1D9]/15 text-[#B7A1D9] border border-[#B7A1D9]/30 whitespace-nowrap shrink-0">
+                          {isRtl ? "افتراضي" : "Clean Slate"}
+                        </span>
+                      </div>
+
+                      <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
                         {isRtl
-                          ? "حزمة المصممين الأساسية"
-                          : "Windows + Essential Studio"}
-                      </h4>
+                          ? "استعادة خطوط ويندوز الرسمية فقط مع نقل الخطوط الإضافية بأمان إلى مجلد النسخ الاحتياطي."
+                          : "Restores standard Windows OS core fonts only and backs up extra fonts safely."}
+                      </p>
                     </div>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--color-action)] text-[#130C16] font-semibold">
-                      {isRtl ? "موصى به" : "Recommended"}
-                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() => handleRestoreWithProfile("pure_windows")}
+                      disabled={isRestoring}
+                      className="w-full min-h-9 py-2 px-3 rounded-xl bg-[var(--color-control)] hover:bg-[#B7A1D9] text-[var(--color-text-header)] hover:text-[#130C16] border border-[var(--color-border)] text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        {isRtl
+                          ? "استعادة خطوط ويندوز فقط"
+                          : "Restore Windows Only"}
+                      </span>
+                    </button>
                   </div>
 
-                  <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-                    {isRtl
-                      ? "يحتفظ بخطوط ويندوز مع أشهر الخطوط الأساسية لبرامج التصميم مثل Cairo وTajawal وInter وRoboto."
-                      : "Retains Windows fonts plus essential studio typefaces for Adobe and Figma."}
-                  </p>
+                  {/* Option 2: Essential Design + Windows Defaults (Recommended) */}
+                  <div className="p-4 sm:p-5 rounded-2xl bg-[var(--color-action)]/5 border border-[var(--color-action)]/45 hover:border-[var(--color-action)] transition space-y-3 flex flex-col justify-between min-w-0">
+                    <div className="space-y-2 min-w-0">
+                      <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Layers className="w-5 h-5 text-[var(--color-action)] shrink-0" />
+                          <h4 className="text-xs font-bold text-[var(--color-text-header)] truncate">
+                            {isRtl
+                              ? "حزمة المصممين الأساسية"
+                              : "Windows + Essential Studio"}
+                          </h4>
+                        </div>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--color-action)] text-[#130C16] font-semibold whitespace-nowrap shrink-0">
+                          {isRtl ? "موصى به" : "Recommended"}
+                        </span>
+                      </div>
+
+                      <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+                        {isRtl
+                          ? "يحتفظ بخطوط ويندوز مع أشهر الخطوط الأساسية لبرامج التصميم مثل Cairo وTajawal وInter وRoboto."
+                          : "Retains Windows fonts plus essential studio typefaces for Adobe and Figma."}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRestoreWithProfile("essential_creative")
+                      }
+                      disabled={isRestoring}
+                      className="w-full min-h-9 py-2 px-3 rounded-xl bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-[#130C16] text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <Layers className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        {isRtl
+                          ? "استعادة مع خطوط التصميم"
+                          : "Restore + Keep Studio Fonts"}
+                      </span>
+                    </button>
+                  </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => handleRestoreWithProfile("essential_creative")}
-                  disabled={isRestoring}
-                  className="w-full py-2.5 rounded-xl bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-[#130C16] text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <Layers className="w-3.5 h-3.5" />
+                {/* Note */}
+                <div className="p-3.5 rounded-xl bg-[var(--color-control)]/30 border border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-start gap-2.5">
+                  <Info className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
                   <span>
                     {isRtl
-                      ? "استعادة مع خطوط التصميم"
-                      : "Restore + Keep Studio Fonts"}
+                      ? "يتم أخذ نسخة احتياطية كاملة لكافة الخطوط المحذوفة في مجلد Fontivo، ويمكنك استرجاعها بضغطة زر في أي وقت."
+                      : "A full backup of all uninstalled font files is automatically saved, and you can undo / restore at any time."}
                   </span>
+                </div>
+              </div>
+
+              <div className="px-4 sm:px-6 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowRestoreModal(false)}
+                  className="px-5 py-2 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-xs font-semibold text-[var(--color-text-header)] transition cursor-pointer"
+                >
+                  {isRtl ? "إبقاء الوضع الحالي" : "Keep Current (Cancel)"}
                 </button>
               </div>
             </div>
-
-            {/* Note & Cancel / Keep Current */}
-            <div className="p-3.5 rounded-xl bg-[var(--color-control)]/30 border border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-start gap-2.5">
-              <Info className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
-              <span>
-                {isRtl
-                  ? "يتم أخذ نسخة احتياطية كاملة لكافة الخطوط المحذوفة في مجلد Fontivo، ويمكنك استرجاعها بضغطة زر في أي وقت."
-                  : "A full backup of all uninstalled font files is automatically saved, and you can undo / restore at any time."}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowRestoreModal(false)}
-                className="px-5 py-2.5 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-xs font-semibold text-[var(--color-text-header)] transition cursor-pointer"
-              >
-                {isRtl ? "إبقاء الوضع الحالي" : "Keep Current (Cancel)"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
 
       {/* Backups History Modal */}
-      {showBackupsModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-          <div
-            className="w-full max-w-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-2xl space-y-4 animate-in zoom-in-95 max-h-[85vh] flex flex-col overflow-hidden"
-            dir={isRtl ? "rtl" : "ltr"}
-          >
-            <div className="flex items-center justify-between gap-3 pb-3 border-b border-[var(--color-border)] min-w-0">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <History className="w-5 h-5 text-[var(--color-action)] shrink-0" />
-                <h3 className="text-sm sm:text-base font-bold text-[var(--color-text-header)] truncate">
-                  {isRtl
-                    ? "سجل النسخ الاحتياطية لخطوط ويندوز"
-                    : "Windows Fonts Backup History"}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowBackupsModal(false)}
-                className="text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] p-1.5 rounded-lg hover:bg-[var(--color-control)] transition cursor-pointer shrink-0"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-3 pe-1 min-w-0">
-              {backups.map((b) => (
-                <div
-                  key={b.id}
-                  className="p-3.5 sm:p-4 rounded-2xl bg-[var(--color-back-subtle)] border border-[var(--color-border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0"
-                >
-                  <div className="space-y-1.5 min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2 min-w-0">
-                      <span
-                        className="text-xs font-bold font-mono text-[var(--color-text-header)] break-all"
-                        dir="ltr"
-                      >
-                        {b.id}
-                      </span>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--color-action)]/12 text-[var(--color-action)] border border-[var(--color-action)]/30 whitespace-nowrap shrink-0">
-                        {b.profile === "essential_creative"
-                          ? isRtl
-                            ? "حزمة التصميم"
-                            : "Studio Pack"
-                          : isRtl
-                            ? "ضبط المصنع"
-                            : "Pure Defaults"}
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-[var(--color-text-muted)] font-mono">
-                      {isRtl
-                        ? `تم حفظ ${b.totalFonts} خطاً`
-                        : `${b.totalFonts} fonts backed up`}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 shrink-0 self-end sm:self-center">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenBackupFolder(b.path)}
-                      className="h-8 px-3 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-xs text-[var(--color-text-header)] flex items-center gap-1.5 border border-[var(--color-border)] transition cursor-pointer whitespace-nowrap shrink-0"
-                      title={
-                        isRtl
-                          ? "فتح مجلد النسخة في File Explorer"
-                          : "Open in File Explorer"
-                      }
-                    >
-                      <FolderOpen className="w-3.5 h-3.5 text-[#B7A1D9] shrink-0" />
-                      <span>{isRtl ? "فتح المجلد" : "Open"}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleUndoBackup(b.id)}
-                      className="h-8 px-3 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-xs text-[#130C16] flex items-center gap-1.5 transition cursor-pointer font-bold shadow-2xs whitespace-nowrap shrink-0"
-                      title={
-                        isRtl
-                          ? "استرجاع كافة الخطوط من هذه النسخة وتثبيتها مرة أخرى"
-                          : "Undo and restore all fonts"
-                      }
-                    >
-                      <Undo2 className="w-3.5 h-3.5 shrink-0" />
-                      <span>{isRtl ? "استرجاع" : "Restore"}</span>
-                    </button>
-                  </div>
+      {showBackupsModal &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+            <div
+              className="w-full max-w-[calc(100vw-1.5rem)] sm:max-w-2xl lg:max-w-3xl bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-2xl sm:rounded-3xl shadow-2xl animate-in zoom-in-95 max-h-[88dvh] flex flex-col overflow-hidden"
+              dir={isRtl ? "rtl" : "ltr"}
+            >
+              <div className="px-4 sm:px-6 py-4 flex items-center justify-between gap-3 border-b border-[var(--color-border)] shrink-0 min-w-0">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <History className="w-5 h-5 text-[var(--color-action)] shrink-0" />
+                  <h3 className="text-sm sm:text-base font-bold text-[var(--color-text-header)] truncate">
+                    {isRtl
+                      ? "سجل النسخ الاحتياطية لخطوط ويندوز"
+                      : "Windows Fonts Backup History"}
+                  </h3>
                 </div>
-              ))}
-            </div>
+                <button
+                  type="button"
+                  onClick={() => setShowBackupsModal(false)}
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] p-1.5 rounded-lg hover:bg-[var(--color-control)] transition cursor-pointer shrink-0"
+                >
+                  ✕
+                </button>
+              </div>
 
-            <div className="pt-2 border-t border-[var(--color-border)] flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowBackupsModal(false)}
-                className="px-4 py-2 rounded-xl bg-[var(--color-control)] text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] transition cursor-pointer"
-              >
-                {isRtl ? "إغلاق" : "Close"}
-              </button>
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-3">
+                {backups.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-[var(--color-text-muted)]">
+                    {isRtl
+                      ? "لا توجد نسخ احتياطية محفوظة حالياً."
+                      : "No backups stored yet."}
+                  </div>
+                ) : (
+                  backups.map((b) => {
+                    const totalBackedUp = Number(b.totalFonts || 0);
+                    const rebootQueued = Number(b.scheduledRebootCount || 0);
+                    return (
+                      <div
+                        key={b.id}
+                        className="p-3.5 sm:p-4 rounded-2xl bg-[var(--color-back-subtle)] border border-[var(--color-border)] flex flex-col md:flex-row md:items-center justify-between gap-3 min-w-0"
+                      >
+                        <div className="space-y-1.5 min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2 min-w-0">
+                            <span
+                              className="text-xs font-bold font-mono text-[var(--color-text-header)] break-words [overflow-wrap:anywhere]"
+                              dir="ltr"
+                            >
+                              {b.id}
+                            </span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--color-action)]/12 text-[var(--color-action)] border border-[var(--color-action)]/30 whitespace-nowrap shrink-0">
+                              {b.profile === "essential_creative"
+                                ? isRtl
+                                  ? "حزمة التصميم"
+                                  : "Studio Pack"
+                                : isRtl
+                                  ? "ضبط المصنع"
+                                  : "Pure Defaults"}
+                            </span>
+                            {rebootQueued > 0 && (
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/12 text-amber-300 border border-amber-500/30 whitespace-nowrap shrink-0">
+                                {isRtl
+                                  ? `${rebootQueued} بانتظار إعادة التشغيل`
+                                  : `${rebootQueued} pending reboot`}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-[var(--color-text-muted)] font-mono flex flex-wrap items-center gap-2">
+                            <span>
+                              {isRtl
+                                ? `تم حفظ ${totalBackedUp} خطاً`
+                                : `${totalBackedUp} fonts backed up`}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenBackupFolder(b.path)}
+                            className="h-8 px-3 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-xs text-[var(--color-text-header)] flex items-center gap-1.5 border border-[var(--color-border)] transition cursor-pointer whitespace-nowrap shrink-0"
+                            title={
+                              isRtl
+                                ? "فتح مجلد النسخة في File Explorer"
+                                : "Open in File Explorer"
+                            }
+                          >
+                            <FolderOpen className="w-3.5 h-3.5 text-[#B7A1D9] shrink-0" />
+                            <span>{isRtl ? "فتح المجلد" : "Open"}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUndoBackup(b.id)}
+                            className="h-8 px-3 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-xs text-[#130C16] flex items-center gap-1.5 transition cursor-pointer font-bold shadow-2xs whitespace-nowrap shrink-0"
+                            title={
+                              isRtl
+                                ? "استرجاع كافة الخطوط من هذه النسخة وتثبيتها مرة أخرى"
+                                : "Undo and restore all fonts"
+                            }
+                          >
+                            <Undo2 className="w-3.5 h-3.5 shrink-0" />
+                            <span>{isRtl ? "استرجاع" : "Restore"}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteBackup(b.id)}
+                            className="h-8 px-2.5 rounded-lg bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/25 text-xs flex items-center gap-1 transition cursor-pointer whitespace-nowrap shrink-0"
+                            title={
+                              isRtl
+                                ? "حذف هذه النسخة الاحتياطية من القرص"
+                                : "Delete this backup folder"
+                            }
+                          >
+                            <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="px-4 sm:px-6 py-3.5 border-t border-[var(--color-border)] flex justify-end shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowBackupsModal(false)}
+                  className="px-4 py-2 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] transition cursor-pointer"
+                >
+                  {isRtl ? "إغلاق" : "Close"}
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

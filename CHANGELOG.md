@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.1] - 2026-11-26
+
+### Fixed & Improved
+- **Windows Fonts Backup Counting, Delete & Pending-Reboot Tracking**: Fixed `manifest.json` `totalFonts` counting so locked fonts queued for Windows reboot deletion (`PendingFileRenameOperations`) are accurately counted alongside immediately removed fonts, added `pendingRebootDelete` badges/notices in `WindowsFontsView`, skipped redundant re-backups for already queued fonts, and added backup deletion (`POST/DELETE /api/system/windows-fonts/backups`).
+- **Fully Responsive Backup & Restore Modals**: Rebuilt Windows Restore and Backup History modals via React Portal with sticky header/footer, clean overflow wrapping for long backup IDs, and fluid breakpoints across mobile/tablet/desktop screens.
+- **Unified Windows AppData & Installer Directory Layout**: Consolidated Updates (`%LOCALAPPDATA%\Fontivo\Updates`), Downloads (`%LOCALAPPDATA%\Fontivo\Downloads`), Imported Fonts (`%LOCALAPPDATA%\Fontivo\Fonts\Imported`), Roaming preferences anchor (`%APPDATA%\Fontivo`), and `[Dirs]` creation inside `Setup_Fontivo.iss`; fixed Cloud Packs folder button to open `%LOCALAPPDATA%\Fontivo\Fonts\Packs`, implemented `GET /api/system/info`, and removed empty stray `Downloads\Fontivo` creation.
+- **Methodical Font & Folder Import Pipeline**: Unified folder picking and API folder import into `ingest_font_folder_into_library` with OpenType header pre-validation, SHA-256 deduplication, clean organization under `Fonts\Imported\<Folder>\<Family>\`, automatic collection creation, and unified import summary notifications.
+
+---
+
 ## [1.0.3] - 2026-11-26
 
 ### Fixed & Improved

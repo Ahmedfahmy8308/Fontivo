@@ -516,6 +516,254 @@ pub fn handle_activate_category(
     );
 }
 
+fn sanitize_storage_segment(raw: &str, fallback: &str) -> String {
+    let cleaned: String = raw
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.');
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.chars().take(64).collect()
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderImportSummary {
+    pub success: bool,
+    pub path: String,
+    pub folder_path: String,
+    pub folder_name: String,
+    pub managed_path: String,
+    pub imported_count: usize,
+    pub skipped_duplicates_count: usize,
+    pub skipped_invalid_count: usize,
+    pub duplicates: Vec<crate::server::state::DuplicateFontMatch>,
+    pub fonts: Vec<FontRecord>,
+    pub dictionary: std::collections::HashMap<String, FontRecord>,
+}
+
+/// Unified, deterministic font-folder ingestion used by both native folder picker and API folder import.
+/// Validates binary font headers before ingesting, deduplicates by SHA-256 & identity, organizes valid
+/// external fonts cleanly inside `%LOCALAPPDATA%\Fontivo\Fonts\Imported\<Folder>\<Family>\`, and adds a collection.
+pub fn ingest_font_folder_into_library(
+    folder: &Path,
+    state: &Arc<RwLock<AppState>>,
+) -> Result<FolderImportSummary, String> {
+    if !folder.exists() || !folder.is_dir() {
+        return Err("Folder not found".to_string());
+    }
+
+    let path_str = folder.to_string_lossy().to_string();
+    let folder_name = folder
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("Imported Folder")
+        .to_string();
+
+    let candidate_paths = super::common::walk_fonts_in_dir(folder)
+        .map_err(|e| format!("Failed to scan folder: {}", e))?;
+
+    let mut new_fonts = Vec::new();
+    let mut new_ids = Vec::new();
+    let mut duplicates: Vec<crate::server::state::DuplicateFontMatch> = Vec::new();
+    let mut skipped_invalid_count = 0usize;
+    let mut batch_hashes: HashSet<String> = HashSet::new();
+
+    let safe_folder_seg = sanitize_storage_segment(&folder_name, "Imported");
+
+    let mut st = state.write().unwrap();
+    let managed_fonts_root = st.get_local_fontivo_dir().join("Fonts");
+    let imported_root = st.get_imported_fonts_dir().join(&safe_folder_seg);
+    let canon_managed = managed_fonts_root.canonicalize().ok();
+    let canon_source = folder.canonicalize().ok();
+    let source_already_managed = canon_managed
+        .as_ref()
+        .zip(canon_source.as_ref())
+        .map(|(m, s)| s.starts_with(m))
+        .unwrap_or(false);
+
+    let mut next_id = st.fonts.iter().map(|f| f.id).max().unwrap_or(0) + 1;
+
+    for p in candidate_paths {
+        let meta = match FontParser::parse_file(&p) {
+            Ok(m) => m,
+            Err(_) => {
+                skipped_invalid_count += 1;
+                continue;
+            }
+        };
+
+        let file_name = p
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("font")
+            .to_string();
+        let clean_name =
+            file_name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'], "_");
+        let ext = p
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("ttf")
+            .to_lowercase();
+        let size = fs::metadata(&p).map(|m| m.len() as usize).unwrap_or(0);
+
+        if let Some(dup) = st.find_duplicate_font(
+            Some(&p),
+            None,
+            &clean_name,
+            Some(&meta.family),
+            Some(&meta.subfamily),
+            Some(&meta.postscript_name),
+            size,
+        ) {
+            duplicates.push(dup);
+            continue;
+        }
+
+        if let Some(h) = crate::server::state::compute_file_sha256(&p) {
+            if !batch_hashes.insert(h) {
+                duplicates.push(crate::server::state::DuplicateFontMatch {
+                    file_name: clean_name,
+                    family: meta.family,
+                    style: meta.subfamily,
+                    existing_id: 0,
+                    existing_path: path_str.clone(),
+                    existing_source: "batch".to_string(),
+                    match_reason: "sha256".to_string(),
+                });
+                continue;
+            }
+        }
+
+        let stored_path = if source_already_managed {
+            p.clone()
+        } else {
+            let safe_fam = sanitize_storage_segment(&meta.family, "Misc");
+            let dest_dir = imported_root.join(&safe_fam);
+            let _ = fs::create_dir_all(&dest_dir);
+            let mut dest_path = dest_dir.join(&clean_name);
+            if dest_path.exists() {
+                let stem = Path::new(&clean_name)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Font");
+                dest_path = dest_dir.join(format!("{}_{}.{}", stem, size, ext));
+            }
+            if fs::copy(&p, &dest_path).is_ok() {
+                dest_path
+            } else {
+                skipped_invalid_count += 1;
+                continue;
+            }
+        };
+
+        let is_arabic =
+            meta.coverage.supports_arabic || meta.family.to_lowercase().contains("arabic");
+        let is_latin = meta.coverage.supports_latin;
+        let is_bilingual = is_arabic && is_latin;
+        let is_variable = meta.is_variable;
+        let has_tashkeel = meta.coverage.has_tashkeel;
+        let has_extended_arabic = meta.coverage.has_extended_arabic;
+        let has_arabic_numerals = meta.coverage.has_arabic_numerals;
+        let has_western_numerals = meta.coverage.has_western_numerals;
+        let weight = if meta.weight_class > 0 {
+            meta.weight_class
+        } else {
+            crate::server::state::style_to_weight(Some(&meta.subfamily))
+        };
+
+        let record = FontRecord {
+            id: next_id,
+            name: stored_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&clean_name)
+                .to_string(),
+            path: stored_path.to_string_lossy().to_string(),
+            category: if is_arabic {
+                "01 - Arabic Fonts".to_string()
+            } else {
+                "02 - English Fonts".to_string()
+            },
+            sub_category: Some(format!("Imported · {}", folder_name)),
+            family: Some(meta.family),
+            format: if meta.format.is_empty() {
+                ext.to_uppercase()
+            } else {
+                meta.format
+            },
+            size,
+            is_arabic,
+            is_latin,
+            is_bilingual,
+            is_variable,
+            weight,
+            source: "local".to_string(),
+            is_active: false,
+            is_favorite: false,
+            display_name: Some(meta.full_name),
+            style: Some(meta.subfamily),
+            post_script_name: Some(meta.postscript_name),
+            glyph_count: Some(meta.glyph_count as usize),
+            has_tashkeel,
+            has_extended_arabic,
+            has_arabic_numerals,
+            has_western_numerals,
+            is_local: true,
+        };
+
+        new_ids.push(next_id);
+        next_id += 1;
+        new_fonts.push(record);
+    }
+
+    let mut dictionary: std::collections::HashMap<String, FontRecord> =
+        std::collections::HashMap::new();
+    for f in &new_fonts {
+        dictionary.insert(f.name.clone(), f.clone());
+    }
+
+    if !new_fonts.is_empty() {
+        st.fonts.extend(new_fonts.clone());
+        st.collections
+            .entry(folder_name.clone())
+            .or_default()
+            .extend(new_ids);
+        st.save_collections();
+        st.save_user_library_index();
+    }
+    drop(st);
+
+    Ok(FolderImportSummary {
+        success: true,
+        path: path_str.clone(),
+        folder_path: path_str,
+        folder_name,
+        managed_path: if source_already_managed {
+            folder.to_string_lossy().to_string()
+        } else {
+            imported_root.to_string_lossy().to_string()
+        },
+        imported_count: new_fonts.len(),
+        skipped_duplicates_count: duplicates.len(),
+        skipped_invalid_count,
+        duplicates,
+        fonts: new_fonts,
+        dictionary,
+    })
+}
+
 pub fn handle_import_folder(
     mut req: Request,
     state: &Arc<RwLock<AppState>>,
@@ -531,200 +779,11 @@ pub fn handle_import_folder(
 
     if let Ok(data) = serde_json::from_str::<ImportReq>(&body) {
         let folder = Path::new(&data.folder_path);
-        if folder.exists() && folder.is_dir() {
-            let mut candidate_paths: Vec<std::path::PathBuf> = Vec::new();
-
-            fn collect_recursive(dir: &Path, list: &mut Vec<std::path::PathBuf>, depth: usize) {
-                if depth > 12 || list.len() >= 50_000 {
-                    return;
-                }
-                if let Ok(entries) = fs::read_dir(dir) {
-                    for entry in entries.flatten() {
-                        let p = entry.path();
-                        if p.is_dir() {
-                            collect_recursive(&p, list, depth + 1);
-                        } else if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
-                            let e = ext.to_lowercase();
-                            if e == "ttf" || e == "otf" || e == "woff" || e == "woff2" || e == "ttc"
-                            {
-                                list.push(p);
-                            }
-                        }
-                    }
-                }
-            }
-
-            collect_recursive(folder, &mut candidate_paths, 0);
-
-            let mut new_fonts = Vec::new();
-            let mut duplicates = Vec::new();
-            let mut batch_hashes: HashSet<String> = HashSet::new();
-
-            let mut st = state.write().unwrap();
-            let mut next_id = st.fonts.iter().map(|f| f.id).max().unwrap_or(0) + 1;
-
-            for p in candidate_paths {
-                let file_name = p
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("font")
-                    .to_string();
-                let ext = p
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("ttf")
-                    .to_lowercase();
-                let size = fs::metadata(&p).map(|m| m.len() as usize).unwrap_or(0);
-                let meta = FontParser::parse_file(&p).ok();
-                let family = meta.as_ref().map(|m| m.family.clone());
-                let style = meta.as_ref().map(|m| m.subfamily.clone());
-                let post_script_name = meta.as_ref().map(|m| m.postscript_name.clone());
-
-                if let Some(dup) = st.find_duplicate_font(
-                    Some(&p),
-                    None,
-                    &file_name,
-                    family.as_deref(),
-                    style.as_deref(),
-                    post_script_name.as_deref(),
-                    size,
-                ) {
-                    duplicates.push(dup);
-                    continue;
-                }
-
-                // Intra-batch exact content deduplication
-                if let Some(h) = crate::server::state::compute_file_sha256(&p) {
-                    if !batch_hashes.insert(h) {
-                        duplicates.push(crate::server::state::DuplicateFontMatch {
-                            file_name,
-                            family: family.unwrap_or_else(|| "Unknown".to_string()),
-                            style: style.unwrap_or_else(|| "Regular".to_string()),
-                            existing_id: 0,
-                            existing_path: data.folder_path.clone(),
-                            existing_source: "batch".to_string(),
-                            match_reason: "sha256".to_string(),
-                        });
-                        continue;
-                    }
-                }
-
-                let is_arabic = meta
-                    .as_ref()
-                    .map(|m| m.coverage.supports_arabic)
-                    .unwrap_or(false);
-                let is_latin = meta
-                    .as_ref()
-                    .map(|m| m.coverage.supports_latin)
-                    .unwrap_or(!is_arabic);
-                let is_bilingual = is_arabic && is_latin;
-                let is_variable = meta.as_ref().map(|m| m.is_variable).unwrap_or(false);
-                let has_tashkeel = meta
-                    .as_ref()
-                    .map(|m| m.coverage.has_tashkeel)
-                    .unwrap_or(false);
-                let has_extended_arabic = meta
-                    .as_ref()
-                    .map(|m| m.coverage.has_extended_arabic)
-                    .unwrap_or(false);
-                let has_arabic_numerals = meta
-                    .as_ref()
-                    .map(|m| m.coverage.has_arabic_numerals)
-                    .unwrap_or(false);
-                let has_western_numerals = meta
-                    .as_ref()
-                    .map(|m| m.coverage.has_western_numerals)
-                    .unwrap_or(true);
-                let display_name = meta.as_ref().map(|m| m.full_name.clone());
-                let weight = meta
-                    .as_ref()
-                    .map(|m| m.weight_class)
-                    .filter(|&w| w > 0)
-                    .unwrap_or_else(|| crate::server::state::style_to_weight(style.as_deref()));
-                let glyph_count = meta.as_ref().map(|m| m.glyph_count as usize);
-
-                new_fonts.push(FontRecord {
-                    id: next_id,
-                    name: file_name,
-                    path: p.to_string_lossy().to_string(),
-                    category: if is_arabic {
-                        "01 - Arabic Fonts".to_string()
-                    } else {
-                        "02 - English Fonts".to_string()
-                    },
-                    sub_category: Some("Imported".to_string()),
-                    family,
-                    format: ext.to_uppercase(),
-                    size,
-                    is_arabic,
-                    is_latin,
-                    is_bilingual,
-                    is_variable,
-                    weight,
-                    source: "local".to_string(),
-                    is_active: false,
-                    is_favorite: false,
-                    display_name,
-                    style,
-                    post_script_name,
-                    glyph_count,
-                    has_tashkeel,
-                    has_extended_arabic,
-                    has_arabic_numerals,
-                    has_western_numerals,
-                    is_local: true,
-                });
-                next_id += 1;
-            }
-
-            let imported_count = new_fonts.len();
-            let skipped_duplicates_count = duplicates.len();
-            let folder_name = folder
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string();
-
-            let mut dictionary: std::collections::HashMap<String, FontRecord> =
-                std::collections::HashMap::new();
-            for f in &new_fonts {
-                dictionary.insert(f.name.clone(), f.clone());
-            }
-
-            if !new_fonts.is_empty() {
-                st.fonts.extend(new_fonts.clone());
-                st.save_user_library_index();
-            }
-            drop(st);
-
-            #[derive(Serialize)]
-            #[serde(rename_all = "camelCase")]
-            struct ImportFolderResponse {
-                success: bool,
-                imported_count: usize,
-                skipped_duplicates_count: usize,
-                duplicates: Vec<crate::server::state::DuplicateFontMatch>,
-                folder_name: String,
-                folder_path: String,
-                fonts: Vec<FontRecord>,
-                dictionary: std::collections::HashMap<String, FontRecord>,
-            }
-
-            let resp = ImportFolderResponse {
-                success: true,
-                imported_count,
-                skipped_duplicates_count,
-                duplicates,
-                folder_name,
-                folder_path: data.folder_path.clone(),
-                fonts: new_fonts,
-                dictionary,
-            };
-
+        if let Ok(summary) = ingest_font_folder_into_library(folder, state) {
             respond_json_str(
                 req,
                 200,
-                serde_json::to_string(&resp).unwrap_or_default(),
+                serde_json::to_string(&summary).unwrap_or_default(),
                 cors_origin,
                 json_header,
             );
@@ -2069,26 +2128,46 @@ pub fn handle_library_config_post(mut req: Request, cors_origin: Header, json_he
     );
 }
 
-/// Opens the user's active downloads folder directly in the native file explorer (Windows Explorer)
-pub fn handle_open_downloads_folder(req: Request, cors_origin: Header, json_header: Header) {
-    let dl_dir = LibraryStorageManager::get_downloads_dir();
-    let _ = fs::create_dir_all(&dl_dir);
+/// Opens one of Fontivo's managed folders directly in the native file explorer (Windows Explorer).
+/// Defaults to `downloads_dir` (`%LOCALAPPDATA%\Fontivo\Downloads`), and supports `scope`
+/// (`"packs"`, `"google"`, `"custom"`, `"imported"`, `"updates"`, `"backups"`, `"root"`, `"roaming"`).
+pub fn handle_open_downloads_folder(mut req: Request, cors_origin: Header, json_header: Header) {
+    let body = read_body(&mut req);
+    let scope = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v.get("scope").and_then(|s| s.as_str()).map(|s| s.to_ascii_lowercase()))
+        .unwrap_or_else(|| "downloads".to_string());
+
+    let data_dir = crate::engine::lifecycle::get_app_data_dir();
+    let target_dir = match scope.as_str() {
+        "packs" => LibraryStorageManager::get_extracted_dir(),
+        "google" => LibraryStorageManager::get_google_dir(),
+        "custom" => LibraryStorageManager::get_custom_dir(),
+        "imported" => LibraryStorageManager::get_imported_dir(),
+        "updates" => crate::updater::AutoUpdater::get_updates_dir(),
+        "backups" => data_dir.join("Backups"),
+        "workspaces" => data_dir.join("Workspaces"),
+        "root" | "appdata" | "local" => data_dir,
+        "roaming" => crate::engine::lifecycle::get_legacy_roaming_app_data_dir().unwrap_or(data_dir),
+        _ => LibraryStorageManager::get_downloads_dir(),
+    };
+    let _ = fs::create_dir_all(&target_dir);
 
     #[cfg(windows)]
     {
         let _ = std::process::Command::new("explorer.exe")
-            .arg(&dl_dir)
+            .arg(&target_dir)
             .spawn();
     }
 
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("open").arg(&dl_dir).spawn();
+        let _ = std::process::Command::new("open").arg(&target_dir).spawn();
     }
 
     #[cfg(target_os = "linux")]
     {
-        let _ = std::process::Command::new("xdg-open").arg(&dl_dir).spawn();
+        let _ = std::process::Command::new("xdg-open").arg(&target_dir).spawn();
     }
 
     respond_json(
@@ -2096,7 +2175,8 @@ pub fn handle_open_downloads_folder(req: Request, cors_origin: Header, json_head
         200,
         serde_json::json!({
             "success": true,
-            "path": dl_dir.to_string_lossy().to_string()
+            "scope": scope,
+            "path": target_dir.to_string_lossy().to_string()
         }),
         cors_origin,
         json_header,

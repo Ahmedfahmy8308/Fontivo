@@ -680,3 +680,42 @@ fn test_library_repair_missing_and_orphaned_recovery() {
 
     let _ = fs::remove_dir_all(&temp_lib);
 }
+
+#[test]
+fn test_ensure_directory_layout_and_unified_import_ingestion() {
+    let temp_root = std::env::temp_dir().join(format!("fontivo_layout_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_root);
+    fs::create_dir_all(&temp_root).unwrap();
+
+    let mut st = AppState::new();
+    st.data_dir = temp_root.clone();
+    st.ensure_directory_layout();
+    for expected in [
+        temp_root.join("Fonts").join("Google"),
+        temp_root.join("Fonts").join("Packs"),
+        temp_root.join("Fonts").join("Custom"),
+        temp_root.join("Fonts").join("Imported"),
+        temp_root.join("Backups"),
+        temp_root.join("Workspaces"),
+        temp_root.join("Updates"),
+        temp_root.join("Downloads"),
+        temp_root.join("Cache").join("PackArchives"),
+    ] {
+        assert!(expected.is_dir(), "Missing expected managed dir {:?}", expected);
+    }
+
+    let state = Arc::new(RwLock::new(st));
+    // Create a test import folder with corrupt + invalid files cleanly skipped
+    let import_src = std::env::temp_dir().join(format!("fontivo_import_src_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&import_src);
+    fs::create_dir_all(&import_src).unwrap();
+    fs::write(import_src.join("corrupt.ttf"), b"NOT_A_FONT").unwrap();
+
+    let summary = Fontivo::server::routes::fonts::ingest_font_folder_into_library(&import_src, &state)
+        .expect("Ingest folder should complete cleanly");
+    assert_eq!(summary.imported_count, 0);
+    assert_eq!(summary.skipped_invalid_count, 1);
+
+    let _ = fs::remove_dir_all(&import_src);
+    let _ = fs::remove_dir_all(&temp_root);
+}

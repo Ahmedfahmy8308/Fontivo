@@ -700,6 +700,9 @@ impl ApiServer {
                         }
 
                         // System Health, Memory & Registry Diagnostics
+                        ("GET", "/api/system/info") => {
+                            routes::system::handle_system_info(req, cors_origin, json_header)
+                        }
                         ("GET", "/api/system/admin-status") => {
                             routes::system::handle_admin_status(req, cors_origin, json_header)
                         }
@@ -737,6 +740,10 @@ impl ApiServer {
                         }
                         ("GET", "/api/system/windows-fonts/backups") => {
                             routes::system::handle_get_backups(req, cors_origin, json_header)
+                        }
+                        ("DELETE", "/api/system/windows-fonts/backups")
+                        | ("POST", "/api/system/windows-fonts/backups/delete") => {
+                            routes::system::handle_delete_backup(req, cors_origin, json_header)
                         }
                         ("POST", "/api/system/windows-fonts/open-folder") => {
                             routes::system::handle_open_backup_folder(req, cors_origin, json_header)

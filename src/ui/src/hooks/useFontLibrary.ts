@@ -397,6 +397,21 @@ export function useFontLibrary({
               ? `تم استيراد ${data.importedCount || 0} خطاً وتجاهل ${dupCount} خطوط مكررة موجودة مسبقاً${dupSample}`
               : `تم استيراد وفهرسة ${data.importedCount || 0} خطاً بنجاح!`,
         });
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("fontivo:import-result", {
+              detail: {
+                kind: "folder",
+                folderName: data.folderName || "",
+                managedPath: data.managedPath || "",
+                importedCount: Number(data.importedCount || 0),
+                skippedDuplicatesCount: dupCount,
+                skippedInvalidCount: Number(data.skippedInvalidCount || 0),
+                duplicates: Array.isArray(data.duplicates) ? data.duplicates : [],
+              },
+            }),
+          );
+        }
         fetchStats();
         fetchCollections();
         fetchData(true);
@@ -534,7 +549,11 @@ export function useFontLibrary({
       window.dispatchEvent(
         new CustomEvent("fontivo:import-result", {
           detail: {
+            kind: "files",
             importedCount: newlyImported.length,
+            skippedDuplicatesCount: skippedDuplicates.length,
+            skippedInvalidCount:
+              files.length - newlyImported.length - skippedDuplicates.length,
             duplicates: skippedDuplicates,
           },
         }),

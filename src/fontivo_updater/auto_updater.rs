@@ -92,7 +92,7 @@ pub type UpdateCheckResult = UpdateStatus;
 pub struct AutoUpdater;
 
 impl AutoUpdater {
-    pub const CURRENT_VERSION: &'static str = "1.0.3";
+    pub const CURRENT_VERSION: &'static str = "1.1.1";
     pub const DEFAULT_MANIFEST_URL: &'static str =
         "https://api.github.com/repos/Ahmedfahmy8308/Fontivo/releases/latest";
 
@@ -317,7 +317,7 @@ impl AutoUpdater {
         *MOCK_UPDATE.write().unwrap() = mock;
     }
 
-    /// Resolve local directory for storing downloaded update installers
+    /// Resolve local directory for storing downloaded update installers (`%LOCALAPPDATA%\Fontivo\Updates`)
     pub fn get_updates_dir() -> PathBuf {
         if cfg!(test) || std::env::var("FONTIVO_TEST_MODE").is_ok() {
             let p = std::env::temp_dir().join("Fontivo_test_updates");
@@ -327,21 +327,13 @@ impl AutoUpdater {
 
         #[cfg(windows)]
         {
-            let base = std::env::var("APPDATA")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| {
-                    std::env::var("USERPROFILE")
-                        .map(|p| PathBuf::from(p).join("AppData").join("Roaming"))
-                        .unwrap_or_else(|_| PathBuf::from("."))
-                })
-                .join("Fontivo");
-            let p = base.join("updates");
+            let p = crate::engine::lifecycle::get_app_data_dir().join("Updates");
             let _ = fs::create_dir_all(&p);
             p
         }
         #[cfg(not(windows))]
         {
-            let p = std::env::temp_dir().join("Fontivo").join("updates");
+            let p = crate::engine::lifecycle::get_app_data_dir().join("updates");
             let _ = fs::create_dir_all(&p);
             p
         }

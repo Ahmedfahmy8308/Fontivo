@@ -301,7 +301,12 @@ export default function App({
   });
 
   const [importBanner, setImportBanner] = useState<{
+    kind?: "folder" | "files";
+    folderName?: string;
+    managedPath?: string;
     importedCount: number;
+    skippedDuplicatesCount?: number;
+    skippedInvalidCount?: number;
     duplicates: Array<{
       fileName: string;
       existingPath: string;
@@ -314,10 +319,23 @@ export default function App({
       const detail = (ev as CustomEvent).detail;
       if (
         detail &&
-        Array.isArray(detail.duplicates) &&
-        detail.duplicates.length > 0
+        ((detail.importedCount ?? 0) > 0 ||
+          (detail.skippedDuplicatesCount ?? 0) > 0 ||
+          (detail.skippedInvalidCount ?? 0) > 0 ||
+          (Array.isArray(detail.duplicates) && detail.duplicates.length > 0))
       ) {
-        setImportBanner(detail);
+        setImportBanner({
+          kind: detail.kind,
+          folderName: detail.folderName,
+          managedPath: detail.managedPath,
+          importedCount: Number(detail.importedCount || 0),
+          skippedDuplicatesCount: Number(
+            detail.skippedDuplicatesCount ??
+              (Array.isArray(detail.duplicates) ? detail.duplicates.length : 0),
+          ),
+          skippedInvalidCount: Number(detail.skippedInvalidCount || 0),
+          duplicates: Array.isArray(detail.duplicates) ? detail.duplicates : [],
+        });
       }
     };
     window.addEventListener("fontivo:import-result", onImportRes);
@@ -346,10 +364,35 @@ export default function App({
         continue;
       }
       const normPath = p.replace(/\//g, "\\");
-      const lastSep = normPath.lastIndexOf("\\");
-      if (lastSep <= 0) continue;
-      const dirPath = normPath.slice(0, lastSep);
-      const dirName = dirPath.slice(dirPath.lastIndexOf("\\") + 1) || dirPath;
+      const lowPath = normPath.toLowerCase();
+      let dirPath = "";
+      let dirName = "";
+
+      const importedIdx = lowPath.indexOf("\\fonts\\imported\\");
+      const packsIdx = lowPath.indexOf("\\fonts\\packs\\");
+      const customIdx = lowPath.indexOf("\\fonts\\custom\\");
+
+      if (importedIdx >= 0) {
+        const after = normPath.slice(importedIdx + "\\fonts\\imported\\".length);
+        const seg = after.split("\\")[0] || "Imported";
+        dirPath = normPath.slice(0, importedIdx + "\\fonts\\imported\\".length) + seg;
+        dirName = seg;
+      } else if (packsIdx >= 0) {
+        const after = normPath.slice(packsIdx + "\\fonts\\packs\\".length);
+        const seg = after.split("\\")[0] || "Packs";
+        dirPath = normPath.slice(0, packsIdx + "\\fonts\\packs\\".length) + seg;
+        dirName = seg;
+      } else if (customIdx >= 0) {
+        const prefix = normPath.slice(0, customIdx + "\\fonts\\custom".length);
+        dirPath = prefix;
+        dirName = isRtl ? "الخطوط الخاصة (Custom)" : "Custom Fonts";
+      } else {
+        const lastSep = normPath.lastIndexOf("\\");
+        if (lastSep <= 0) continue;
+        dirPath = normPath.slice(0, lastSep);
+        dirName = dirPath.slice(dirPath.lastIndexOf("\\") + 1) || dirPath;
+      }
+
       const existing = map.get(dirPath) || {
         path: dirPath,
         name: dirName,
@@ -363,7 +406,7 @@ export default function App({
       map.set(dirPath, existing);
     }
     return Array.from(map.values()).sort((a, b) => b.total - a.total);
-  }, [fonts]);
+  }, [fonts, isRtl]);
 
   const handleContextualBatch = async (
     action:
@@ -916,27 +959,57 @@ export default function App({
         </div>
       )}
 
-      {/* Live Duplicate Font Detection Banner */}
-      {importBanner && importBanner.duplicates.length > 0 && (
+      {/* Live Import Summary & Duplicate Detection Banner */}
+      {importBanner && (
         <div
           data-testid="duplicate-import-banner"
-          className="px-4 py-2 bg-amber-500/12 border-b border-amber-500/35 text-xs text-[var(--color-text-header)] flex items-center justify-between gap-3 shrink-0"
+          className={`px-4 py-2 border-b text-xs text-[var(--color-text-header)] flex items-center justify-between gap-3 shrink-0 ${
+            importBanner.duplicates.length > 0 && importBanner.importedCount === 0
+              ? "bg-amber-500/12 border-amber-500/35"
+              : "bg-emerald-500/12 border-emerald-500/35"
+          }`}
         >
           <div className="flex items-center gap-2 min-w-0 flex-1">
-            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            {importBanner.duplicates.length > 0 &&
+            importBanner.importedCount === 0 ? (
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            ) : (
+              <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+            )}
             <div className="truncate">
               <span className="font-bold">
                 {isRtl
-                  ? `تم تجاهل ${importBanner.duplicates.length} ${importBanner.duplicates.length === 1 ? "خط مكرر" : "خطوط مكررة"} (موجودة بالفعل): `
-                  : `Skipped ${importBanner.duplicates.length} duplicate font(s) already in library: `}
+                  ? `${
+                      importBanner.folderName
+                        ? `مجلد "${importBanner.folderName}": `
+                        : ""
+                    }تم استيراد ${importBanner.importedCount} خطاً بنجاح`
+                  : `${
+                      importBanner.folderName
+                        ? `Folder "${importBanner.folderName}": `
+                        : ""
+                    }Imported ${importBanner.importedCount} font(s)`}
+                {(importBanner.skippedDuplicatesCount ?? importBanner.duplicates.length) >
+                0
+                  ? isRtl
+                    ? ` • تم تجاهل ${importBanner.skippedDuplicatesCount ?? importBanner.duplicates.length} مكرر`
+                    : ` • Skipped ${importBanner.skippedDuplicatesCount ?? importBanner.duplicates.length} duplicate(s)`
+                  : ""}
+                {(importBanner.skippedInvalidCount ?? 0) > 0
+                  ? isRtl
+                    ? ` • تخطي ${importBanner.skippedInvalidCount} ملف غير صالح`
+                    : ` • Skipped ${importBanner.skippedInvalidCount} invalid`
+                  : ""}
               </span>
-              <span className="font-mono text-[11px] text-[var(--color-text-muted)]">
-                {importBanner.duplicates
-                  .slice(0, 3)
-                  .map((d) => `${d.fileName} (${d.existingPath})`)
-                  .join(" • ")}
-                {importBanner.duplicates.length > 3 ? " ..." : ""}
-              </span>
+              {importBanner.duplicates.length > 0 && (
+                <span className="font-mono text-[11px] text-[var(--color-text-muted)] ms-2">
+                  {importBanner.duplicates
+                    .slice(0, 2)
+                    .map((d) => `${d.fileName} (${d.existingPath})`)
+                    .join(" • ")}
+                  {importBanner.duplicates.length > 2 ? " ..." : ""}
+                </span>
+              )}
             </div>
           </div>
           <button

@@ -69,8 +69,16 @@ export default function SettingsView({
     "%LOCALAPPDATA%\\Fontivo\\Fonts",
   );
   const [downloadsDir, setDownloadsDir] = useState<string>(
-    "%USERPROFILE%\\Downloads\\Fontivo",
+    "%LOCALAPPDATA%\\Fontivo\\Downloads",
   );
+  const [systemPaths, setSystemPaths] = useState<{
+    dataDir?: string;
+    packsDir?: string;
+    updatesDir?: string;
+    backupsDir?: string;
+    roamingDir?: string;
+    programDataDir?: string;
+  }>({});
   const [pickingDir, setPickingDir] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState(() => {
@@ -96,18 +104,31 @@ export default function SettingsView({
     fetch("/api/system/info")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
+        if (!data) return;
         const path = data?.fontsDir || data?.storagePath || data?.dataDir;
         if (typeof path === "string" && path.trim()) {
           setStoragePath(path);
         }
+        if (typeof data?.downloadsDir === "string" && data.downloadsDir.trim()) {
+          setDownloadsDir(data.downloadsDir);
+        }
+        setSystemPaths({
+          dataDir: data.dataDir,
+          packsDir: data.packsDir,
+          updatesDir: data.updatesDir,
+          backupsDir: data.backupsDir,
+          roamingDir: data.roamingDir,
+          programDataDir: data.programDataDir,
+        });
       })
       .catch(() => {});
 
     fetch("/api/library/config")
       .then((r) => (r.ok ? r.json() : null))
-      .then((cfg) => {
-        if (cfg?.downloadsDir) {
-          setDownloadsDir(cfg.downloadsDir);
+      .then((res) => {
+        const dl = res?.config?.downloadsDir ?? res?.downloadsDir;
+        if (typeof dl === "string" && dl.trim()) {
+          setDownloadsDir(dl);
         }
       })
       .catch(() => {});
@@ -154,12 +175,13 @@ export default function SettingsView({
       const res = await fetch("/api/dialog/pick-directory", { method: "POST" });
       if (res.ok) {
         const data = await res.json();
-        if (data.selectedPath) {
-          setDownloadsDir(data.selectedPath);
+        const picked = data?.path || data?.selectedPath;
+        if (picked) {
+          setDownloadsDir(picked);
           await fetch("/api/library/config", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ downloadsDir: data.selectedPath }),
+            body: JSON.stringify({ downloadsDir: picked }),
           });
         }
       }
@@ -170,9 +192,13 @@ export default function SettingsView({
     }
   };
 
-  const handleOpenDownloadsDir = async () => {
+  const handleOpenDownloadsDir = async (scope: string = "downloads") => {
     try {
-      await fetch("/api/library/open-downloads", { method: "POST" });
+      await fetch("/api/library/open-downloads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope }),
+      });
     } catch {
       // ignore
     }
@@ -424,8 +450,8 @@ export default function SettingsView({
                   <FolderOpen className="w-4 h-4 text-[var(--color-action)] shrink-0" />
                   <span>
                     {isRtl
-                      ? "مسار تخزين الخطوط والبيانات"
-                      : "Font Library Storage Path"}
+                      ? "مسار تخزين الخطوط والبيانات (AppData Local)"
+                      : "Font Library Storage Path (AppData Local)"}
                   </span>
                 </div>
                 <div
@@ -435,25 +461,34 @@ export default function SettingsView({
                   {storagePath}
                 </div>
               </div>
-              <button
-                onClick={handleCopyStoragePath}
-                className="h-8 px-3 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[var(--color-text-header)] text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-center"
-              >
-                {copiedPath ? (
-                  <Check className="w-3.5 h-3.5 text-[var(--color-action)]" />
-                ) : (
-                  <Copy className="w-3.5 h-3.5" />
-                )}
-                <span>
-                  {copiedPath
-                    ? isRtl
-                      ? "تم النسخ"
-                      : "Copied"
-                    : isRtl
-                      ? "نسخ المسار"
-                      : "Copy Path"}
-                </span>
-              </button>
+              <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+                <button
+                  onClick={handleCopyStoragePath}
+                  className="h-8 px-3 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[var(--color-text-header)] text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+                >
+                  {copiedPath ? (
+                    <Check className="w-3.5 h-3.5 text-[var(--color-action)]" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {copiedPath
+                      ? isRtl
+                        ? "تم النسخ"
+                        : "Copied"
+                      : isRtl
+                        ? "نسخ المسار"
+                        : "Copy Path"}
+                  </span>
+                </button>
+                <button
+                  onClick={() => handleOpenDownloadsDir("root")}
+                  className="h-8 px-3 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[var(--color-text-header)] text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+                >
+                  <FolderOpen className="w-3.5 h-3.5 text-[#B7A1D9]" />
+                  <span>{isRtl ? "فتح AppData" : "Open AppData"}</span>
+                </button>
+              </div>
             </div>
 
             {/* Dedicated Downloads Folder Row */}
@@ -463,8 +498,8 @@ export default function SettingsView({
                   <Download className="w-4 h-4 text-[var(--color-action)] shrink-0" />
                   <span>
                     {isRtl
-                      ? "مجلد تنزيل الخطوط وحزم السحاب"
-                      : "Font Downloads Folder"}
+                      ? "مجلد تنزيل وتصدير الخطوط"
+                      : "Font Downloads & Exports Folder"}
                   </span>
                 </div>
                 <div
@@ -489,7 +524,7 @@ export default function SettingsView({
                   <span>{isRtl ? "تغيير المجلد" : "Change Folder"}</span>
                 </button>
                 <button
-                  onClick={handleOpenDownloadsDir}
+                  onClick={() => handleOpenDownloadsDir("downloads")}
                   className="h-8 px-3 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-[#130C16] text-xs font-bold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap shadow-xs"
                   title={
                     isRtl
@@ -501,6 +536,51 @@ export default function SettingsView({
                   <span>{isRtl ? "فتح المجلد" : "Open Folder"}</span>
                 </button>
               </div>
+            </div>
+
+            {/* AppData Managed Directories Summary */}
+            <div className="p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 bg-[var(--color-back-subtle)]/50">
+              {[
+                {
+                  scope: "packs",
+                  label: isRtl ? "الحزم السحابية" : "Cloud Packs",
+                  path: systemPaths.packsDir || "%LOCALAPPDATA%\\Fontivo\\Fonts\\Packs",
+                },
+                {
+                  scope: "updates",
+                  label: isRtl ? "مجلد التحديثات (Updater)" : "App Updater Cache",
+                  path: systemPaths.updatesDir || "%LOCALAPPDATA%\\Fontivo\\Updates",
+                },
+                {
+                  scope: "backups",
+                  label: isRtl ? "النسخ الاحتياطية" : "System Backups",
+                  path: systemPaths.backupsDir || "%LOCALAPPDATA%\\Fontivo\\Backups",
+                },
+                {
+                  scope: "roaming",
+                  label: isRtl ? "إعدادات المستخدم (Roaming)" : "User Roaming Profile",
+                  path: systemPaths.roamingDir || "%APPDATA%\\Fontivo",
+                },
+              ].map((dirItem) => (
+                <button
+                  key={dirItem.scope}
+                  type="button"
+                  onClick={() => handleOpenDownloadsDir(dirItem.scope)}
+                  className="p-2.5 rounded-xl bg-[var(--color-back-card)] hover:bg-[var(--color-control)] border border-[var(--color-border)] text-start transition cursor-pointer min-w-0"
+                  title={dirItem.path}
+                >
+                  <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-[var(--color-text-header)]">
+                    <span className="truncate">{dirItem.label}</span>
+                    <FolderOpen className="w-3.5 h-3.5 text-[var(--color-action)] shrink-0" />
+                  </div>
+                  <div
+                    className="text-[10px] font-mono text-[var(--color-text-muted)] truncate mt-1"
+                    dir="ltr"
+                  >
+                    {dirItem.path}
+                  </div>
+                </button>
+              ))}
             </div>
 
             {/* Autostart */}

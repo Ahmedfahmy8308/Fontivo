@@ -53,22 +53,22 @@ export default function WindowsFontResetModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 select-none"
+      className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-3 sm:p-4 select-none"
       dir={isRtl ? "rtl" : "ltr"}
     >
-      <div className="bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-2xl max-w-lg w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150 text-[var(--color-text-main)]">
+      <div className="bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-2xl max-w-[calc(100vw-1.5rem)] sm:max-w-lg w-full max-h-[88dvh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150 text-[var(--color-text-main)]">
         {/* Header */}
-        <div className="p-5 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-back-header)]">
-          <div className="flex items-center gap-3">
+        <div className="p-4 sm:p-5 border-b border-[var(--color-border)] flex items-center justify-between gap-3 bg-[var(--color-back-header)] shrink-0 min-w-0">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="w-10 h-10 rounded-xl bg-[var(--color-action)]/15 border border-[var(--color-action)]/35 flex items-center justify-center text-[var(--color-action)] shrink-0">
               <RotateCcw className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="font-bold text-base text-[var(--color-text-header)]">
+            <div className="min-w-0">
+              <h3 className="font-bold text-sm sm:text-base text-[var(--color-text-header)] truncate">
                 {safeT.windowsFontReset ||
                   "Windows Font Cleanup & Factory Reset"}
               </h3>
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+              <p className="text-[11px] sm:text-xs text-[var(--color-text-muted)] mt-0.5 truncate">
                 {isRtl
                   ? "تنظيف مفاتيح الريجستري وإرجاع الخطوط الأصلية"
                   : "Windows Default Fonts Factory Restore & Registry Purge"}
@@ -77,14 +77,14 @@ export default function WindowsFontResetModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:bg-[var(--color-control)] transition cursor-pointer"
+            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:bg-[var(--color-control)] transition cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Body */}
-        <div className="p-5 sm:p-6 space-y-5 text-xs leading-relaxed overflow-y-auto flex-1">
+        <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 text-xs leading-relaxed overflow-y-auto flex-1 min-h-0">
           <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
             <div>
@@ -154,7 +154,7 @@ export default function WindowsFontResetModal({
           <button
             onClick={handleReset}
             disabled={isResetting}
-            className="w-full h-9 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+            className="w-full min-h-9 py-2 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 text-center"
           >
             {isResetting ? (
               <>

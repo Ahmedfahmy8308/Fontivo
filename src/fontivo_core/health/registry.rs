@@ -18,6 +18,80 @@ pub fn normalize_windows_path_for_compare(p: &Path) -> String {
     stripped.trim_end_matches('\\').to_ascii_lowercase()
 }
 
+/// Reads Windows `PendingFileRenameOperations` to detect locked font files
+/// already queued for deletion on next OS reboot.
+pub fn get_pending_reboot_font_deletions() -> std::collections::HashSet<String> {
+    #[allow(unused_mut)]
+    let mut set = std::collections::HashSet::new();
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Registry::{RegQueryValueExW, REG_MULTI_SZ, REG_VALUE_TYPE};
+        let subkey: Vec<u16> = "SYSTEM\\CurrentControlSet\\Control\\Session Manager\0"
+            .encode_utf16()
+            .collect();
+        let val_name: Vec<u16> = "PendingFileRenameOperations\0".encode_utf16().collect();
+        unsafe {
+            let mut hkey = HKEY::default();
+            if RegOpenKeyExW(
+                HKEY_LOCAL_MACHINE,
+                PCWSTR(subkey.as_ptr()),
+                None,
+                KEY_READ,
+                &mut hkey,
+            )
+            .is_ok()
+            {
+                let mut val_type = REG_VALUE_TYPE::default();
+                let mut byte_len = 0u32;
+                let _ = RegQueryValueExW(
+                    hkey,
+                    PCWSTR(val_name.as_ptr()),
+                    None,
+                    Some(&mut val_type),
+                    None,
+                    Some(&mut byte_len),
+                );
+                if val_type == REG_MULTI_SZ && byte_len > 2 && byte_len <= 4 * 1024 * 1024 {
+                    let mut buf = vec![0u8; byte_len as usize];
+                    if RegQueryValueExW(
+                        hkey,
+                        PCWSTR(val_name.as_ptr()),
+                        None,
+                        Some(&mut val_type),
+                        Some(buf.as_mut_ptr()),
+                        Some(&mut byte_len),
+                    )
+                    .is_ok()
+                    {
+                        let u16_slice = std::slice::from_raw_parts(
+                            buf.as_ptr() as *const u16,
+                            (byte_len as usize) / 2,
+                        );
+                        let strings: Vec<String> = u16_slice
+                            .split(|&c| c == 0)
+                            .filter(|s| !s.is_empty())
+                            .map(String::from_utf16_lossy)
+                            .collect();
+                        for s in strings {
+                            let trimmed = s.trim();
+                            let cleaned = trimmed
+                                .strip_prefix(r"\??\")
+                                .or_else(|| trimmed.strip_prefix(r"\\?\"))
+                                .unwrap_or(trimmed);
+                            let low = cleaned.replace('/', "\\").to_ascii_lowercase();
+                            if low.contains("\\fonts\\") {
+                                set.insert(low);
+                            }
+                        }
+                    }
+                }
+                let _ = RegCloseKey(hkey);
+            }
+        }
+    }
+    set
+}
+
 /// Returns true if the given path resides inside %WINDIR%\Fonts (requires Administrator privileges)
 pub fn is_system_windows_fonts_path(path_str: &str) -> bool {
     let win_dir = env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
@@ -446,6 +520,7 @@ pub fn enumerate_windows_fonts() -> Vec<WindowsFontItem> {
                                     hive: "HKCU".to_string(),
                                     is_system_core: is_core,
                                     is_uninstallable: !is_core,
+                                    pending_reboot_delete: false,
                                 });
                             }
                         }
@@ -482,6 +557,7 @@ pub fn enumerate_windows_fonts() -> Vec<WindowsFontItem> {
                                     hive: "HKLM".to_string(),
                                     is_system_core: is_core,
                                     is_uninstallable: !is_core,
+                                    pending_reboot_delete: false,
                                 });
                             }
                         }
@@ -535,8 +611,11 @@ pub fn enumerate_windows_fonts() -> Vec<WindowsFontItem> {
         });
     }
 
+    let pending_deletes = get_pending_reboot_font_deletions();
     for (idx, item) in results.iter_mut().enumerate() {
         item.id = format!("win-{}", idx + 1);
+        let norm = normalize_windows_path_for_compare(Path::new(&item.path));
+        item.pending_reboot_delete = pending_deletes.contains(&norm);
     }
 
     results
@@ -647,6 +726,7 @@ fn scan_registry_font_hive(
                         hive: hive_name.to_string(),
                         is_system_core: is_core,
                         is_uninstallable,
+                        pending_reboot_delete: false,
                     });
                 }
 

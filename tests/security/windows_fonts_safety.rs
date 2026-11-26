@@ -759,3 +759,43 @@ fn test_validate_protected_fonts_post_op_and_undo_exact_entries() {
         "%LOCALAPPDATA%\\Microsoft\\Windows\\Fonts\\CustomDisplay.otf"
     );
 }
+
+#[test]
+fn test_get_fontivo_backups_counts_scheduled_reboot_fonts_from_manifest() {
+    let temp_data = env::temp_dir().join(format!("fontivo_backup_count_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_data);
+    let backups_root = temp_data.join("Backups");
+    let backup_id = "backup_9999999_pure_windows_test";
+    let backup_dir = backups_root.join(backup_id);
+    fs::create_dir_all(backup_dir.join("fonts")).unwrap();
+
+    // Simulate a legacy manifest where `totalFonts` was written as 0 despite scheduledReboot fonts existing
+    let legacy_manifest = serde_json::json!({
+        "id": backup_id,
+        "timestamp": 9999999u64,
+        "dateFormatted": "Backup-9999999",
+        "profile": "pure_windows",
+        "totalFonts": 0,
+        "fonts": [
+            { "name": "LBRITE", "fileName": "LBRITE.TTF", "scheduledReboot": true },
+            { "name": "LCALLIG", "fileName": "LCALLIG.TTF", "scheduledReboot": true }
+        ]
+    });
+    fs::write(
+        backup_dir.join("manifest.json"),
+        serde_json::to_string_pretty(&legacy_manifest).unwrap(),
+    )
+    .unwrap();
+
+    let list = Fontivo::engine::health::backup::get_fontivo_backups_in(&backups_root);
+    let item = list.iter().find(|b| b.id == backup_id).expect("Backup must appear");
+    assert_eq!(item.total_fonts, 2, "Must count scheduledReboot fonts from manifest");
+    assert_eq!(item.scheduled_reboot_count, 2);
+    assert_eq!(item.removed_count, 0);
+
+    Fontivo::engine::health::backup::delete_fontivo_backup_in(&backups_root, backup_id)
+        .expect("Delete backup should succeed");
+    assert!(!backup_dir.exists(), "Backup folder should be removed on delete");
+
+    let _ = fs::remove_dir_all(&temp_data);
+}

@@ -11,6 +11,8 @@ pub struct WindowsFontItem {
     pub hive: String,
     pub is_system_core: bool,
     pub is_uninstallable: bool,
+    #[serde(default)]
+    pub pending_reboot_delete: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -170,6 +172,10 @@ pub struct BackupFolderInfo {
     pub date_formatted: String,
     pub profile: String,
     pub total_fonts: usize,
+    #[serde(default)]
+    pub removed_count: usize,
+    #[serde(default)]
+    pub scheduled_reboot_count: usize,
     pub path: String,
 }
 
@@ -182,6 +188,8 @@ pub struct RestoreProfileResult {
     pub retained_count: usize,
     #[serde(default)]
     pub scheduled_reboot_count: usize,
+    #[serde(default)]
+    pub already_scheduled_count: usize,
     #[serde(default)]
     pub skipped_count: usize,
     #[serde(default)]

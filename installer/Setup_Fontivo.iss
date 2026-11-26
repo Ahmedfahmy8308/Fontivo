@@ -4,17 +4,17 @@
 [Setup]
 AppId={{5B6327E1-8A19-4C2E-9FD4-E48A96F7B301}
 AppName=Fontivo
-AppVersion=1.0.3
-AppVerName=Fontivo 1.0.3
+AppVersion=1.1.1
+AppVerName=Fontivo 1.1.1
 AppPublisher=Eng. Ahmed Fahmy (Fontivo Open Source)
 AppPublisherURL=https://ahmedfahmy8308.github.io/Fontivo-Site/
 AppSupportURL=https://github.com/Ahmedfahmy8308/Fontivo/issues
 AppUpdatesURL=https://github.com/Ahmedfahmy8308/Fontivo/releases
-VersionInfoVersion=1.0.3.0
+VersionInfoVersion=1.1.1.0
 VersionInfoCompany=Eng. Ahmed Fahmy (Fontivo Open Source)
 VersionInfoDescription=Fontivo Desktop Font Manager Setup
 VersionInfoProductName=Fontivo
-VersionInfoProductVersion=1.0.3
+VersionInfoProductVersion=1.1.1
 VersionInfoCopyright=Copyright (c) 2026 Eng. Ahmed Fahmy & Eng. Mohamed Elashwah (MIT)
 DefaultDirName={autopf}\Fontivo
 DefaultGroupName=Fontivo
@@ -36,6 +36,23 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+
+[Dirs]
+Name: "{localappdata}\Fontivo"
+Name: "{localappdata}\Fontivo\Fonts"
+Name: "{localappdata}\Fontivo\Fonts\Google"
+Name: "{localappdata}\Fontivo\Fonts\Packs"
+Name: "{localappdata}\Fontivo\Fonts\Custom"
+Name: "{localappdata}\Fontivo\Fonts\Imported"
+Name: "{localappdata}\Fontivo\Backups"
+Name: "{localappdata}\Fontivo\Workspaces"
+Name: "{localappdata}\Fontivo\Updates"
+Name: "{localappdata}\Fontivo\Downloads"
+Name: "{localappdata}\Fontivo\Cache"
+Name: "{localappdata}\Fontivo\Cache\PackArchives"
+Name: "{localappdata}\Fontivo\WebView2"
+Name: "{userappdata}\Fontivo"
+Name: "{commonappdata}\Fontivo"; Permissions: users-modify; Check: IsAdminInstallMode
 
 [Files]
 Source: "..\release\Fontivo.exe"; DestDir: "{app}"; Flags: ignoreversion

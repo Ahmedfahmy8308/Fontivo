@@ -115,6 +115,10 @@ impl SystemHealthChecker {
         registry::registry_value_matches_font(val_name, val_data, target_name, target_path)
     }
 
+    pub fn get_pending_reboot_font_deletions() -> std::collections::HashSet<String> {
+        registry::get_pending_reboot_font_deletions()
+    }
+
     pub fn scan_registry_fonts() -> (usize, Vec<DeadFontEntry>) {
         registry::scan_registry_fonts()
     }
@@ -216,6 +220,10 @@ impl SystemHealthChecker {
 
     pub fn get_fontivo_backups() -> Vec<BackupFolderInfo> {
         backup::get_fontivo_backups()
+    }
+
+    pub fn delete_fontivo_backup(backup_id: &str) -> Result<(), String> {
+        backup::delete_fontivo_backup(backup_id)
     }
 
     pub fn open_backup_folder(path: &str) -> Result<(), String> {

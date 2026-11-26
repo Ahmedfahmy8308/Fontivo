@@ -18,6 +18,9 @@ import {
   Layers,
   Zap,
 } from "lucide-react";
+import uiPkg from "../../../package.json";
+
+const APP_VERSION = uiPkg.version || "1.1.1";
 
 export interface LicensesViewProps {
   families?: any[];
@@ -176,7 +179,7 @@ export default function LicensesView({
                 <div className="flex flex-wrap items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-[var(--color-action)] shrink-0" />
                   <h3 className="text-sm sm:text-base font-bold text-[var(--color-text-header)]">
-                    Fontivo Desktop v1.0.0
+                    Fontivo Desktop v{APP_VERSION}
                   </h3>
                   <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-[var(--color-back-subtle)] border border-[var(--color-border)] text-[#B7A1D9] font-semibold">
                     Fontivo-Fonts v1.0.3 (10,939 Fonts)

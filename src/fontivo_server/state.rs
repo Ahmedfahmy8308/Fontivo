@@ -70,6 +70,8 @@ pub fn classify_font_source(path: &str, sub_category: Option<&str>) -> String {
     }
     if p.contains("\\fonts\\custom\\")
         || p.ends_with("\\fonts\\custom")
+        || p.contains("\\fonts\\imported\\")
+        || p.ends_with("\\fonts\\imported")
         || p.contains("\\customfonts\\")
     {
         return "local".to_string();
@@ -380,6 +382,20 @@ impl AppState {
         dir
     }
 
+    /// Resolves `%LOCALAPPDATA%\Fontivo\Fonts\Imported`
+    pub fn get_imported_fonts_dir(&self) -> PathBuf {
+        let dir = self.data_dir.join("Fonts").join("Imported");
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// Resolves `%LOCALAPPDATA%\Fontivo\Updates`
+    pub fn get_updates_dir(&self) -> PathBuf {
+        let dir = self.data_dir.join("Updates");
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+
     /// Resolves `%LOCALAPPDATA%\Fontivo\user-library-index.json`
     pub fn get_user_library_index_path(&self) -> PathBuf {
         self.data_dir.join("user-library-index.json")
@@ -638,7 +654,94 @@ impl AppState {
                         let _ = fs::remove_dir_all(&j);
                     }
                 }
-                let _ = fs::remove_dir(&roaming);
+            }
+        }
+
+        // 3. Migrate lowercase `updates` inside data_dir into canonical `Updates`
+        let lower_updates = self.data_dir.join("updates");
+        let canon_updates = self.data_dir.join("Updates");
+        if lower_updates.exists() && lower_updates.is_dir() && lower_updates != canon_updates {
+            Self::merge_move_dir(&lower_updates, &canon_updates);
+        }
+
+        // 4. Ensure complete structured directory layout exists upfront (Local, Roaming, optional ProgramData)
+        self.ensure_directory_layout();
+    }
+
+    /// Creates Fontivo's standard, clean directory layout on startup so all managed folders exist
+    /// deterministically without scattering stray empty folders across User Downloads.
+    pub fn ensure_directory_layout(&self) {
+        let fonts_root = self.data_dir.join("Fonts");
+        for dir in [
+            self.data_dir.clone(),
+            fonts_root.clone(),
+            fonts_root.join("Google"),
+            fonts_root.join("Packs"),
+            fonts_root.join("Custom"),
+            fonts_root.join("Imported"),
+            self.data_dir.join("Backups"),
+            self.data_dir.join("Workspaces"),
+            self.data_dir.join("Updates"),
+            self.data_dir.join("Downloads"),
+            self.data_dir.join("Cache"),
+            self.data_dir.join("Cache").join("PackArchives"),
+            self.data_dir.join("WebView2"),
+        ] {
+            let _ = fs::create_dir_all(dir);
+        }
+
+        // Clean up legacy empty `%USERPROFILE%\Downloads\Fontivo` if present
+        if let Ok(home) = env::var("USERPROFILE").or_else(|_| env::var("HOME")) {
+            let legacy_dl = PathBuf::from(home).join("Downloads").join("Fontivo");
+            if legacy_dl.exists() && legacy_dl.is_dir() {
+                let is_empty = fs::read_dir(&legacy_dl)
+                    .map(|mut it| it.next().is_none())
+                    .unwrap_or(false);
+                if is_empty {
+                    let _ = fs::remove_dir(&legacy_dl);
+                }
+            }
+        }
+
+        // Lightweight Roaming `%APPDATA%\Fontivo\preferences.json` anchor (skipped during isolated tests)
+        if let Some(roaming) = crate::engine::lifecycle::get_legacy_roaming_app_data_dir() {
+            if fs::create_dir_all(&roaming).is_ok() {
+                let prefs_path = roaming.join("preferences.json");
+                let prefs = serde_json::json!({
+                    "app": "Fontivo",
+                    "localDataDir": self.data_dir.to_string_lossy(),
+                    "updatesDir": self.data_dir.join("Updates").to_string_lossy(),
+                    "fontsDir": fonts_root.to_string_lossy(),
+                    "backupsDir": self.data_dir.join("Backups").to_string_lossy(),
+                    "downloadsDir": self.data_dir.join("Downloads").to_string_lossy(),
+                });
+                if let Ok(json) = serde_json::to_string_pretty(&prefs) {
+                    let _ = fs::write(prefs_path, json);
+                }
+            }
+        }
+
+        // Best-effort `%PROGRAMDATA%\Fontivo\runtime-paths.json` when writable (Admin / All-Users setup)
+        #[cfg(windows)]
+        if env::var("FONTIVO_DATA_DIR")
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+        {
+            if let Ok(pd) = env::var("PROGRAMDATA") {
+                if !pd.trim().is_empty() {
+                    let pd_dir = PathBuf::from(pd).join("Fontivo");
+                    if fs::create_dir_all(&pd_dir).is_ok() {
+                        let meta_path = pd_dir.join("runtime-paths.json");
+                        let meta = serde_json::json!({
+                            "app": "Fontivo",
+                            "version": crate::updater::AutoUpdater::CURRENT_VERSION,
+                            "localDataDir": self.data_dir.to_string_lossy(),
+                        });
+                        if let Ok(json) = serde_json::to_string_pretty(&meta) {
+                            let _ = fs::write(meta_path, json);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1220,11 +1323,14 @@ impl AppState {
                     self.data_dir.join("Fonts").join("Google"),
                     self.data_dir.join("Fonts").join("Packs"),
                     self.data_dir.join("Fonts").join("Custom"),
+                    self.data_dir.join("Fonts").join("Imported"),
                     self.data_dir.join("Fonts"),
                     self.data_dir.clone(),
                     LibraryStorageManager::get_storage_dir(),
                     LibraryStorageManager::get_google_dir(),
                     LibraryStorageManager::get_extracted_dir(),
+                    LibraryStorageManager::get_custom_dir(),
+                    LibraryStorageManager::get_imported_dir(),
                 ];
                 let is_managed = allowed_roots.iter().any(|root| {
                     root.canonicalize()

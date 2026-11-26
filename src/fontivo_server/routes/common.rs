@@ -139,27 +139,40 @@ pub fn decode_base64_bytes(input: &str) -> Option<Vec<u8>> {
 }
 
 pub fn walk_fonts_in_dir(dir: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
-    let mut results = Vec::new();
-    if dir.is_dir() {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                if let Ok(sub) = walk_fonts_in_dir(&path) {
-                    results.extend(sub);
+    fn walk_inner(dir: &Path, list: &mut Vec<PathBuf>, depth: usize) {
+        if depth > 12 || list.len() >= 50_000 || !dir.is_dir() {
+            return;
+        }
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if list.len() >= 50_000 {
+                    break;
                 }
-            } else if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                let ext_l = ext.to_lowercase();
-                if ext_l == "ttf"
-                    || ext_l == "otf"
-                    || ext_l == "woff"
-                    || ext_l == "woff2"
-                    || ext_l == "ttc"
-                {
-                    results.push(path);
+                let path = entry.path();
+                if path.is_dir() {
+                    let dir_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    if dir_name.starts_with('.')
+                        || dir_name.eq_ignore_ascii_case("__MACOSX")
+                        || dir_name.eq_ignore_ascii_case("node_modules")
+                    {
+                        continue;
+                    }
+                    walk_inner(&path, list, depth + 1);
+                } else if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                    let ext_l = ext.to_lowercase();
+                    if ext_l == "ttf"
+                        || ext_l == "otf"
+                        || ext_l == "woff"
+                        || ext_l == "woff2"
+                        || ext_l == "ttc"
+                    {
+                        list.push(path);
+                    }
                 }
             }
         }
     }
+    let mut results = Vec::new();
+    walk_inner(dir, &mut results, 0);
     Ok(results)
 }

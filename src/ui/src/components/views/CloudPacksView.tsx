@@ -395,6 +395,8 @@ export default function CloudPacksView({
     try {
       await safeFetchJson("/api/library/open-downloads", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "packs" }),
         timeoutMs: 4000,
       });
     } catch {
@@ -748,11 +750,13 @@ export default function CloudPacksView({
               onClick={handleOpenDownloadsFolder}
               className="h-9 px-3 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-header)] flex items-center gap-1.5 transition cursor-pointer"
               title={
-                isRtl ? "فتح مجلد التنزيلات على جهازك" : "Open Downloads Folder"
+                isRtl
+                  ? "فتح مجلد حزم الخطوط المنزلة داخل AppData"
+                  : "Open Downloaded Cloud Packs Folder"
               }
             >
               <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
-              <span>{isRtl ? "مجلد التنزيلات" : "Downloads Folder"}</span>
+              <span>{isRtl ? "مجلد الحزم المنزلة" : "Packs Folder"}</span>
             </button>
 
             <button

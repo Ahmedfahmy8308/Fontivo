@@ -158,6 +158,89 @@ pub fn handle_get_backups(req: Request, cors_origin: Header, json_header: Header
     );
 }
 
+pub fn handle_delete_backup(mut req: Request, cors_origin: Header, json_header: Header) {
+    let body = read_body(&mut req);
+    let payload: Result<UndoBackupPayload, _> = serde_json::from_str(&body);
+    match payload {
+        Ok(p) => match SystemHealthChecker::delete_fontivo_backup(&p.backup_id) {
+            Ok(()) => {
+                respond_json(
+                    req,
+                    200,
+                    serde_json::json!({ "success": true, "backupId": p.backup_id }),
+                    cors_origin,
+                    json_header,
+                );
+            }
+            Err(e) => {
+                respond_json(
+                    req,
+                    400,
+                    serde_json::json!({ "success": false, "error": e }),
+                    cors_origin,
+                    json_header,
+                );
+            }
+        },
+        Err(e) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": format!("Invalid payload: {}", e) }),
+                cors_origin,
+                json_header,
+            );
+        }
+    }
+}
+
+pub fn handle_system_info(req: Request, cors_origin: Header, json_header: Header) {
+    let data_dir = crate::engine::lifecycle::get_app_data_dir();
+    let roaming_dir = crate::engine::lifecycle::get_legacy_roaming_app_data_dir();
+    let cfg = crate::engine::LibraryStorageManager::get_config();
+    let fonts_dir = crate::engine::LibraryStorageManager::get_storage_dir();
+    let packs_dir = crate::engine::LibraryStorageManager::get_extracted_dir();
+    let google_dir = crate::engine::LibraryStorageManager::get_google_dir();
+    let custom_dir = crate::engine::LibraryStorageManager::get_custom_dir();
+    let imported_dir = crate::engine::LibraryStorageManager::get_imported_dir();
+    let downloads_dir = crate::engine::LibraryStorageManager::get_downloads_dir();
+    let updates_dir = crate::updater::AutoUpdater::get_updates_dir();
+    let backups_dir = data_dir.join("Backups");
+    let workspaces_dir = data_dir.join("Workspaces");
+    let cache_dir = data_dir.join("Cache");
+    let program_data_dir = std::env::var("PROGRAMDATA")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(|p| std::path::PathBuf::from(p).join("Fontivo"));
+
+    let _ = cfg;
+    respond_json(
+        req,
+        200,
+        serde_json::json!({
+            "success": true,
+            "version": crate::updater::AutoUpdater::CURRENT_VERSION,
+            "dataDir": data_dir.to_string_lossy().to_string(),
+            "storagePath": fonts_dir.to_string_lossy().to_string(),
+            "roamingDir": roaming_dir.map(|p| p.to_string_lossy().to_string()),
+            "programDataDir": program_data_dir.map(|p| p.to_string_lossy().to_string()),
+            "fontsDir": fonts_dir.to_string_lossy().to_string(),
+            "packsDir": packs_dir.to_string_lossy().to_string(),
+            "googleDir": google_dir.to_string_lossy().to_string(),
+            "customDir": custom_dir.to_string_lossy().to_string(),
+            "importedDir": imported_dir.to_string_lossy().to_string(),
+            "downloadsDir": downloads_dir.to_string_lossy().to_string(),
+            "updatesDir": updates_dir.to_string_lossy().to_string(),
+            "backupsDir": backups_dir.to_string_lossy().to_string(),
+            "workspacesDir": workspaces_dir.to_string_lossy().to_string(),
+            "cacheDir": cache_dir.to_string_lossy().to_string(),
+            "usedSpaceBytes": crate::engine::LibraryStorageManager::calculate_used_space(),
+        }),
+        cors_origin,
+        json_header,
+    );
+}
+
 pub fn handle_open_backup_folder(mut req: Request, cors_origin: Header, json_header: Header) {
     let body = read_body(&mut req);
     if let Ok(payload) = serde_json::from_str::<OpenFolderPayload>(&body) {

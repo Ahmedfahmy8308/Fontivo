@@ -339,6 +339,7 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
         let all_fonts = super::registry::enumerate_windows_fonts();
         let mut to_remove = Vec::new();
         let mut retained_count = 0;
+        let mut already_scheduled_count = 0;
 
         for font in all_fonts {
             let is_core =
@@ -353,6 +354,32 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
             {
                 retained_count += 1;
                 continue;
+            }
+
+            // Skip locked fonts that are already backed up, unregistered from Registry,
+            // and queued in PendingFileRenameOperations awaiting OS reboot.
+            if font.pending_reboot_delete {
+                let has_reg_entry = pre_snapshot.iter().any(|e| {
+                    e.hive.eq_ignore_ascii_case(&font.hive)
+                        && super::registry::registry_value_matches_font(
+                            &e.value_name,
+                            &e.value_data,
+                            Some(&font.name),
+                            &font.path,
+                        )
+                });
+                if !has_reg_entry {
+                    already_scheduled_count += 1;
+                    append_transaction_log(
+                        &mut tx_log,
+                        "skip_already_scheduled_reboot",
+                        "skipped",
+                        &font.name,
+                        &font.hive,
+                        "Font registry entry already removed and file deletion queued for next Windows reboot",
+                    );
+                    continue;
+                }
             }
 
             let is_system_path =
@@ -749,6 +776,8 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
             );
         }
 
+        let total_backed_up = backed_up_entries.len();
+
         // Write metadata manifest in backup folder
         let manifest_path = backup_dir.join("manifest.json");
         let manifest_data = serde_json::json!({
@@ -756,7 +785,10 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
             "timestamp": timestamp,
             "dateFormatted": format!("Backup-{}", timestamp),
             "profile": clean_profile,
-            "totalFonts": removed_count,
+            "totalFonts": total_backed_up,
+            "removedCount": removed_count,
+            "scheduledRebootCount": scheduled_reboot_count,
+            "alreadyScheduledCount": already_scheduled_count,
             "snapshotFile": "fonts_registry_snapshot.json",
             "transactionLogFile": "transaction_log.jsonl",
             "fonts": backed_up_entries
@@ -775,26 +807,41 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
             serde_json::to_string_pretty(&backed_up_names).unwrap_or_default(),
         );
 
-        // Rebuild font cache and log outcome
-        match super::cache::rebuild_font_cache() {
-            Ok(msg) => {
-                append_transaction_log(&mut tx_log, "rebuild_font_cache", "ok", "*", "SYSTEM", msg)
+        // Rebuild font cache and log outcome only when changes occurred
+        if removed_count > 0 || scheduled_reboot_count > 0 {
+            match super::cache::rebuild_font_cache() {
+                Ok(msg) => append_transaction_log(
+                    &mut tx_log,
+                    "rebuild_font_cache",
+                    "ok",
+                    "*",
+                    "SYSTEM",
+                    msg,
+                ),
+                Err(err) => append_transaction_log(
+                    &mut tx_log,
+                    "rebuild_font_cache",
+                    "skipped",
+                    "*",
+                    "SYSTEM",
+                    err,
+                ),
             }
-            Err(err) => append_transaction_log(
-                &mut tx_log,
-                "rebuild_font_cache",
-                "skipped",
-                "*",
-                "SYSTEM",
-                err,
-            ),
         }
         let _ = write_transaction_log_jsonl(&tx_log_path, &tx_log);
 
         let reboot_note = if scheduled_reboot_count > 0 {
             format!(
-                " وتمت جدولة حذف {} خطاً محجوزاً في الذاكرة تلقائياً عند إعادة تشغيل ويندوز.",
+                " وتم حفظ نسخة احتياطية من {} خطاً وجدولة حذف ملفاتها المحجوزة تلقائياً عند إعادة تشغيل ويندوز.",
                 scheduled_reboot_count
+            )
+        } else {
+            String::new()
+        };
+        let already_note = if already_scheduled_count > 0 {
+            format!(
+                " ({} خطاً محجوزاً مسبقاً في الذاكرة ومسجل حذفه عند إعادة تشغيل ويندوز القادمة).",
+                already_scheduled_count
             )
         } else {
             String::new()
@@ -816,13 +863,13 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
 
         let msg = if clean_profile == "essential_creative" {
             format!(
-                "تم بنجاح الاحتفاظ بخطوط ويندوز الأصلية وأكثر من {} خط أساسي للتصميم، ونقل {} خطاً إلى مجلد النسخ الاحتياطي.{}{}",
-                retained_count, removed_count, reboot_note, skipped_note
+                "تم الاحتفاظ بخطوط ويندوز الأصلية و{} خطاً أساسياً للتصميم؛ تم نقل {} خطاً وحفظ {} في النسخة الاحتياطية.{}{}{}",
+                retained_count, removed_count, total_backed_up, reboot_note, already_note, skipped_note
             )
         } else {
             format!(
-                "تمت استعادة خطوط ويندوز الأصلية (ضبط المصنع): تم نقل {} خطاً إلى مجلد النسخ الاحتياطي.{}{}",
-                removed_count, reboot_note, skipped_note
+                "تمت استعادة خطوط ويندوز الأصلية (ضبط المصنع): تم نقل {} خطاً وحفظ {} خطاً في النسخة الاحتياطية.{}{}{}",
+                removed_count, total_backed_up, reboot_note, already_note, skipped_note
             )
         };
 
@@ -832,6 +879,7 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
             removed_count,
             retained_count,
             scheduled_reboot_count,
+            already_scheduled_count,
             skipped_count,
             skipped_fonts,
             backup_path: backup_dir.to_string_lossy().to_string(),
@@ -848,6 +896,7 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
             removed_count: 0,
             retained_count: 350,
             scheduled_reboot_count: 0,
+            already_scheduled_count: 0,
             skipped_count: 0,
             skipped_fonts: Vec::new(),
             backup_path: "/tmp/backup".to_string(),
@@ -859,11 +908,12 @@ pub fn restore_windows_fonts_with_profile(profile: &str) -> Result<RestoreProfil
 }
 
 pub fn get_fontivo_backups() -> Vec<BackupFolderInfo> {
+    let backups_root = crate::engine::lifecycle::get_app_data_dir().join("Backups");
+    get_fontivo_backups_in(&backups_root)
+}
+
+pub fn get_fontivo_backups_in(backups_root: &Path) -> Vec<BackupFolderInfo> {
     let mut list = Vec::new();
-    let local_app_data = env::var("LOCALAPPDATA").unwrap_or_else(|_| "C:\\".to_string());
-    let backups_root = PathBuf::from(&local_app_data)
-        .join("Fontivo")
-        .join("Backups");
     if backups_root.exists() {
         if let Ok(entries) = fs::read_dir(&backups_root) {
             for entry in entries.flatten() {
@@ -881,13 +931,46 @@ pub fn get_fontivo_backups() -> Vec<BackupFolderInfo> {
                                     .as_str()
                                     .unwrap_or("pure_windows")
                                     .to_string();
-                                let total_fonts = val["totalFonts"].as_u64().unwrap_or(0) as usize;
+                                let array_count = val["fonts"]
+                                    .as_array()
+                                    .map(|a| a.len())
+                                    .unwrap_or(0);
+                                let removed_count = val["removedCount"]
+                                    .as_u64()
+                                    .map(|v| v as usize)
+                                    .unwrap_or_else(|| {
+                                        val["fonts"]
+                                            .as_array()
+                                            .map(|a| {
+                                                a.iter()
+                                                    .filter(|f| !f["scheduledReboot"].as_bool().unwrap_or(false))
+                                                    .count()
+                                            })
+                                            .unwrap_or(0)
+                                    });
+                                let scheduled_reboot_count = val["scheduledRebootCount"]
+                                    .as_u64()
+                                    .map(|v| v as usize)
+                                    .unwrap_or_else(|| {
+                                        val["fonts"]
+                                            .as_array()
+                                            .map(|a| {
+                                                a.iter()
+                                                    .filter(|f| f["scheduledReboot"].as_bool().unwrap_or(false))
+                                                    .count()
+                                            })
+                                            .unwrap_or(0)
+                                    });
+                                let raw_total = val["totalFonts"].as_u64().unwrap_or(0) as usize;
+                                let total_fonts = raw_total.max(array_count);
                                 list.push(BackupFolderInfo {
                                     id,
                                     timestamp,
                                     date_formatted,
                                     profile,
                                     total_fonts,
+                                    removed_count,
+                                    scheduled_reboot_count,
                                     path: p.to_string_lossy().to_string(),
                                 });
                             }
@@ -899,6 +982,38 @@ pub fn get_fontivo_backups() -> Vec<BackupFolderInfo> {
     }
     list.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     list
+}
+
+pub fn delete_fontivo_backup(backup_id: &str) -> Result<(), String> {
+    let backups_root = crate::engine::lifecycle::get_app_data_dir().join("Backups");
+    delete_fontivo_backup_in(&backups_root, backup_id)
+}
+
+pub fn delete_fontivo_backup_in(backups_root: &Path, backup_id: &str) -> Result<(), String> {
+    let safe_id = super::registry::validate_backup_id(backup_id)?;
+    let target = backups_root.join(safe_id);
+    if !target.exists() || !target.is_dir() {
+        return Err("Backup folder not found".to_string());
+    }
+    let canon_root = backups_root
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve Backups root: {}", e))?;
+    let canon_target = target
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve backup directory: {}", e))?;
+    if !canon_target.starts_with(&canon_root) || canon_target == canon_root {
+        return Err("Security violation: invalid backup path".to_string());
+    }
+    if let Ok(content) = fs::read_to_string(canon_target.join("manifest.json")) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(ts) = val["timestamp"].as_u64() {
+                let legacy = backups_root.join(format!("fonts_backup_{}.json", ts));
+                let _ = fs::remove_file(legacy);
+            }
+        }
+    }
+    fs::remove_dir_all(&canon_target).map_err(|e| format!("Failed to delete backup: {}", e))?;
+    Ok(())
 }
 
 pub fn open_backup_folder(path: &str) -> Result<(), String> {

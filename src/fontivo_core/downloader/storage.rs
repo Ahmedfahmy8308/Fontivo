@@ -17,12 +17,21 @@ fn is_ephemeral_test_path(path_str: &str) -> bool {
 }
 
 fn default_export_downloads_dir() -> PathBuf {
-    env::var("USERPROFILE")
-        .or_else(|_| env::var("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| crate::engine::lifecycle::get_app_data_dir())
-        .join("Downloads")
-        .join("Fontivo")
+    crate::engine::lifecycle::get_app_data_dir().join("Downloads")
+}
+
+fn cleanup_empty_legacy_user_downloads_fontivo() {
+    if let Ok(home) = env::var("USERPROFILE").or_else(|_| env::var("HOME")) {
+        let legacy = PathBuf::from(home).join("Downloads").join("Fontivo");
+        if legacy.exists() && legacy.is_dir() {
+            let is_empty = fs::read_dir(&legacy)
+                .map(|mut it| it.next().is_none())
+                .unwrap_or(false);
+            if is_empty {
+                let _ = fs::remove_dir(&legacy);
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -67,8 +76,10 @@ impl LibraryStorageManager {
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(mut cfg) = serde_json::from_str::<LibraryConfig>(&content) {
                 if !is_ephemeral_test_path(&cfg.library_dir) {
-                    // Upgrade legacy AppData\Roaming\Fontivo\Library paths seamlessly
+                    // Upgrade legacy AppData\Roaming\Fontivo\Library or old Downloads\Fontivo defaults
                     let low = cfg.library_dir.replace('/', "\\").to_ascii_lowercase();
+                    let dl_low = cfg.downloads_dir.replace('/', "\\").to_ascii_lowercase();
+                    let mut changed = false;
                     if low.ends_with("\\appdata\\roaming\\fontivo\\library")
                         || low.ends_with("\\appdata\\local\\fontivo\\library")
                     {
@@ -76,14 +87,18 @@ impl LibraryStorageManager {
                             .join("Fonts")
                             .to_string_lossy()
                             .to_string();
-                        if cfg
-                            .downloads_dir
-                            .to_ascii_lowercase()
-                            .contains("\\library\\downloads")
-                        {
-                            cfg.downloads_dir =
-                                default_export_downloads_dir().to_string_lossy().to_string();
-                        }
+                        changed = true;
+                    }
+                    if dl_low.is_empty()
+                        || dl_low.contains("\\library\\downloads")
+                        || dl_low.ends_with("\\downloads\\fontivo")
+                    {
+                        cfg.downloads_dir =
+                            default_export_downloads_dir().to_string_lossy().to_string();
+                        cleanup_empty_legacy_user_downloads_fontivo();
+                        changed = true;
+                    }
+                    if changed {
                         let _ = Self::save_config(&cfg);
                     }
                     return cfg;
@@ -274,6 +289,20 @@ impl LibraryStorageManager {
     /// Subdirectory for extracted cloud font packs (`%LOCALAPPDATA%\Fontivo\Fonts\Packs`)
     pub fn get_extracted_dir() -> PathBuf {
         let dir = Self::get_storage_dir().join("Packs");
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// Subdirectory for imported user font folders (`%LOCALAPPDATA%\Fontivo\Fonts\Imported`)
+    pub fn get_imported_dir() -> PathBuf {
+        let dir = Self::get_storage_dir().join("Imported");
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// Subdirectory for custom uploaded font files (`%LOCALAPPDATA%\Fontivo\Fonts\Custom`)
+    pub fn get_custom_dir() -> PathBuf {
+        let dir = Self::get_storage_dir().join("Custom");
         let _ = fs::create_dir_all(&dir);
         dir
     }
