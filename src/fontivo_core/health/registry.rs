@@ -805,14 +805,7 @@ pub fn uninstall_windows_font(name: Option<&str>, path_str: &str) -> Result<Stri
         if path.exists() {
             let _ = fs::remove_file(path);
         }
-        if scheduled_on_reboot {
-            Ok(format!(
-                "تمت إزالة تسجيل '{}' وجدولة حذف ملفه المحجوز تلقائياً عند إعادة تشغيل ويندوز.",
-                query_name
-            ))
-        } else {
-            Ok(format!("Successfully uninstalled font '{}'", query_name))
-        }
+        Ok(format!("Successfully uninstalled font '{}'", query_name))
     }
 }
 
