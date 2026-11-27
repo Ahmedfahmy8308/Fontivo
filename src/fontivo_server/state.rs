@@ -2062,19 +2062,32 @@ impl AppState {
             ));
         }
 
+        // Build normalized old-directory prefixes (canonical, raw candidate, and non-canonical
+        // imported_root/old_name) so Windows 8.3 short paths (e.g. RUNNER~1) match reliably.
+        let mut old_keys: Vec<String> = Vec::new();
+        for p in [
+            clean_old_path.clone(),
+            strip_windows_verbatim_prefix(&candidate),
+            strip_windows_verbatim_prefix(&imported_root.join(&old_name)),
+        ] {
+            let k = normalize_font_path_key(&p.to_string_lossy())
+                .trim_end_matches('\\')
+                .to_string();
+            if !k.is_empty() && !old_keys.contains(&k) {
+                old_keys.push(k);
+            }
+        }
+        let old_prefixes: Vec<String> = old_keys.iter().map(|k| format!("{}\\", k)).collect();
+
         // Deactivate any active RAM fonts inside old_dir before renaming so OS releases handles
-        let old_key = normalize_font_path_key(&clean_old_path.to_string_lossy())
-            .trim_end_matches('\\')
-            .to_string();
-        let old_prefix = format!("{}\\", old_key);
         let mut reactivate_ids: Vec<usize> = Vec::new();
         for f in &self.fonts {
             let fk = normalize_font_path_key(&f.path);
-            if fk == old_key || fk.starts_with(&old_prefix) {
-                if self.active_font_ids.contains(&f.id) || f.is_active {
-                    let _ = self.activator.deactivate_ram(&f.path);
-                    reactivate_ids.push(f.id);
-                }
+            let matches_old = old_keys.iter().any(|k| fk == *k)
+                || old_prefixes.iter().any(|p| fk.starts_with(p));
+            if matches_old && (self.active_font_ids.contains(&f.id) || f.is_active) {
+                let _ = self.activator.deactivate_ram(&f.path);
+                reactivate_ids.push(f.id);
             }
         }
 
@@ -2096,13 +2109,12 @@ impl AppState {
 
         // Update indexed font records whose paths reside inside old_dir
         let mut updated_count = 0usize;
-        let old_prefix_len = old_prefix.len();
         for f in &mut self.fonts {
             let fk = normalize_font_path_key(&f.path);
-            if fk.starts_with(&old_prefix) {
+            if let Some(matched_prefix) = old_prefixes.iter().find(|p| fk.starts_with(p.as_str())) {
                 let norm_orig = f.path.replace('/', "\\");
                 let stripped_orig = norm_orig.strip_prefix(r"\\?\").unwrap_or(&norm_orig);
-                let rel_tail = stripped_orig.get(old_prefix_len..).unwrap_or("");
+                let rel_tail = stripped_orig.get(matched_prefix.len()..).unwrap_or("");
                 let mut rebuilt = clean_new_dir.clone();
                 for seg in rel_tail.split('\\').filter(|s| !s.is_empty()) {
                     rebuilt = rebuilt.join(seg);
