@@ -20,6 +20,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import uiPkg from "../../../package.json";
+import { openExternalUrl } from "../../utils/openExternalUrl";
 
 const APP_VERSION = uiPkg.version;
 
@@ -357,6 +358,10 @@ export default function LicensesView({
                   href="https://ahmed-fahmy.engineer/"
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openExternalUrl("https://ahmed-fahmy.engineer/");
+                  }}
                   className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-action)] hover:text-[#130C16] border border-[var(--color-border)] hover:border-[var(--color-action)] text-[var(--color-text-header)] font-semibold text-xs transition"
                 >
                   <Globe className="w-3.5 h-3.5" />
@@ -367,6 +372,10 @@ export default function LicensesView({
                   href="https://github.com/Ahmedfahmy8308"
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openExternalUrl("https://github.com/Ahmedfahmy8308");
+                  }}
                   className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[var(--color-text-header)] font-semibold text-xs transition"
                 >
                   <Code2 className="w-3.5 h-3.5 text-[#B7A1D9]" />
@@ -427,6 +436,10 @@ export default function LicensesView({
                 href="https://mohamed-elashwah.me/"
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={(e) => {
+                  e.preventDefault();
+                  openExternalUrl("https://mohamed-elashwah.me/");
+                }}
                 className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-control)] hover:bg-[#B7A1D9] hover:text-[#130C16] border border-[var(--color-border)] hover:border-[#B7A1D9] text-[var(--color-text-header)] font-semibold text-xs transition w-full"
               >
                 <Globe className="w-3.5 h-3.5" />
@@ -542,6 +555,10 @@ export default function LicensesView({
               href="https://fontivo-app.github.io"
               target="_blank"
               rel="noopener noreferrer"
+              onClick={(e) => {
+                e.preventDefault();
+                openExternalUrl("https://fontivo-app.github.io");
+              }}
               dir="ltr"
               className="text-[11px] font-mono text-[var(--color-action)] hover:underline inline-flex items-center gap-1"
             >

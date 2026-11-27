@@ -104,4 +104,21 @@ describe("ColorStudioView Component & Color Engine Tests", () => {
     expect(htmlAr).toContain("فاحص تباين WCAG 2.1");
     expect(htmlAr).toContain("مولد تناسقات الألوان");
   });
+
+  it("wraps image canvas and loupe inside a tight relative inline-block container and supports extracted palette", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../../src/components/views/ColorStudioView.tsx"),
+      "utf8",
+    );
+
+    expect(src).toContain("canvasWrapperRef");
+    expect(src).toContain("relative inline-block");
+    expect(src).toContain("extractedImagePalette");
+    expect(src).toContain('data-testid="extracted-image-palette"');
+    expect(src).toContain("إضافة للاستوديو");
+    expect(src).toContain("تصدير .ASE");
+    expect(src).toContain('img.crossOrigin = "anonymous"');
+  });
 });

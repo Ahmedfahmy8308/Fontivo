@@ -995,6 +995,9 @@ impl ApiServer {
                         ("POST", "/api/system/pin-taskbar-picker") => {
                             routes::system::handle_pin_taskbar_picker(req, cors_origin, json_header)
                         }
+                        ("POST", "/api/system/open-url") => {
+                            routes::system::handle_open_url(req, cors_origin, json_header)
+                        }
                         ("GET", "/api/updater")
                         | ("GET", "/api/updater/status")
                         | ("GET", "/api/check-update") => {

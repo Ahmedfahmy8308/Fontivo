@@ -1,5 +1,5 @@
 import React from "react";
-import { Minus, Square, X } from "lucide-react";
+import { Minus, Square, X, Zap, Sun, Moon, Globe } from "lucide-react";
 import { FontSortBy } from "../../types/font";
 import { NetworkStatus } from "../../types/system";
 import { TranslationDictionary } from "../../i18n/locales";
@@ -36,10 +36,19 @@ export interface HeaderBarProps {
 export default function HeaderBar({
   onHeaderMouseDown,
   onHeaderDoubleClick,
+  onOpenRamCleaner,
+  ramMb = 0,
+  theme = "dark",
+  toggleTheme,
   sendWindowEvent,
   setActiveTab,
+  currentLanguage = "en",
+  onSetLanguage,
   t = {},
+  isRtl = false,
 }: HeaderBarProps) {
+  const isAr = currentLanguage === "ar" || isRtl;
+
   return (
     <header
       onMouseDown={onHeaderMouseDown}
@@ -71,8 +80,60 @@ export default function HeaderBar({
         </div>
       </div>
 
-      {/* Right: Window Controls */}
-      <div className="flex items-center gap-0.5 text-[var(--color-text-muted)] shrink-0">
+      {/* Right: RAM Badge, Language Switcher, Theme Toggle & Window Controls */}
+      <div
+        className="flex items-center gap-1.5 text-[var(--color-text-muted)] shrink-0"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          data-testid="header-ram-badge"
+          onClick={() => {
+            if (setActiveTab) setActiveTab("system-health");
+            else if (onOpenRamCleaner) onOpenRamCleaner();
+          }}
+          className="h-8 px-2.5 flex items-center gap-1.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] hover:border-[var(--color-action)] text-[11px] font-mono font-bold text-[var(--color-text-header)] transition cursor-pointer shrink-0 whitespace-nowrap"
+          title={isAr ? "صحة النظام والرام" : "RAM & System Health"}
+        >
+          <Zap className="w-3.5 h-3.5 text-[var(--color-action)] shrink-0" />
+          <span className="tabular-nums">{`${ramMb} MB`}</span>
+        </button>
+
+        <button
+          type="button"
+          data-testid="header-language-switcher"
+          onClick={() => onSetLanguage && onSetLanguage(isAr ? "en" : "ar")}
+          className="h-8 px-2.5 flex items-center gap-1.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] hover:border-[var(--color-action)] text-[11px] font-bold text-[var(--color-text-header)] transition cursor-pointer shrink-0 whitespace-nowrap"
+          title={isAr ? "Switch to English" : "التبديل إلى العربية"}
+        >
+          <Globe className="w-3.5 h-3.5 text-[#B7A1D9] shrink-0" />
+          <span>{isAr ? "EN" : "عربي"}</span>
+        </button>
+
+        <button
+          type="button"
+          data-testid="header-theme-toggle"
+          onClick={() => toggleTheme && toggleTheme()}
+          className="h-8 w-8 flex items-center justify-center rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] hover:border-[var(--color-action)] text-[var(--color-text-header)] transition cursor-pointer shrink-0"
+          title={
+            theme === "dark"
+              ? isAr
+                ? "الوضع الفاتح"
+                : "Light Mode"
+              : isAr
+                ? "الوضع الداكن"
+                : "Dark Mode"
+          }
+        >
+          {theme === "dark" ? (
+            <Sun className="w-3.5 h-3.5 text-amber-400" />
+          ) : (
+            <Moon className="w-3.5 h-3.5 text-[#B7A1D9]" />
+          )}
+        </button>
+
+        <div className="w-px h-4 bg-[var(--color-border)] mx-0.5 shrink-0" />
+
         <button
           onClick={() => sendWindowEvent && sendWindowEvent("minimize")}
           className="h-8 w-8 flex items-center justify-center hover:bg-[var(--color-control)] hover:text-[var(--color-text-header)] rounded-md transition cursor-pointer shrink-0"

@@ -412,6 +412,12 @@ fn real_main() -> Result<(), Box<dyn std::error::Error>> {
     let webview = match WebViewBuilder::new_with_web_context(&mut web_context)
         .with_background_color((20, 13, 24, 255))
         .with_url(&url)
+        .with_new_window_req_handler(|req_url, _features| {
+            if let Ok(validated) = Fontivo::server::routes::system::validate_external_url(&req_url) {
+                let _ = Fontivo::server::routes::system::launch_external_url(&validated);
+            }
+            wry::NewWindowResponse::Deny
+        })
         .with_ipc_handler(move |req| {
             let body = req.body().trim();
             match body {
@@ -439,6 +445,14 @@ fn real_main() -> Result<(), Box<dyn std::error::Error>> {
             WebViewBuilder::new()
                 .with_background_color((20, 13, 24, 255))
                 .with_url(&url)
+                .with_new_window_req_handler(|req_url, _features| {
+                    if let Ok(validated) =
+                        Fontivo::server::routes::system::validate_external_url(&req_url)
+                    {
+                        let _ = Fontivo::server::routes::system::launch_external_url(&validated);
+                    }
+                    wry::NewWindowResponse::Deny
+                })
                 .with_ipc_handler(move |req| {
                     let body = req.body().trim();
                     match body {

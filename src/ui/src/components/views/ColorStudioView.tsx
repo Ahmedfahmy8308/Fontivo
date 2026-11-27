@@ -106,9 +106,13 @@ export default function ColorStudioView({
 
   // Image Extractor State
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [extractedImagePalette, setExtractedImagePalette] = useState<
+    SavedSwatch[]
+  >([]);
   const [isHoveringCanvas, setIsHoveringCanvas] = useState(false);
   const [loupeColor, setLoupeColor] = useState("#F16B50");
   const [loupePos, setLoupePos] = useState({ x: 0, y: 0 });
+  const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const aseInputRef = useRef<HTMLInputElement | null>(null);
@@ -338,29 +342,30 @@ export default function ColorStudioView({
       const dataUrl = e.target.result;
       setImageSrc(dataUrl);
       const img = new Image();
+      img.crossOrigin = "anonymous";
       img.onload = () => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
+        const w = img.naturalWidth || img.width || 512;
+        const h = img.naturalHeight || img.height || 512;
+        canvas.width = w;
+        canvas.height = h;
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
 
         const colors = extractDominantColorsFromCanvas(canvas, 6);
         if (colors.length > 0) {
-          setBaseHex(colors[0].hex);
-          setSavedSwatches((prev) =>
-            [
-              ...colors.map((c: any, idx: number) => ({
-                id: `img-${Date.now()}-${idx}`,
-                name: c.name || c.hex,
-                hex: c.hex.toUpperCase(),
-                role: c.role,
-              })),
-              ...prev,
-            ].slice(0, 24),
-          );
+          const mapped: SavedSwatch[] = colors.map((c: any, idx: number) => ({
+            id: `img-${Date.now()}-${idx}`,
+            name: c.name || c.hex.toUpperCase(),
+            hex: c.hex.toUpperCase(),
+            role: c.role,
+          }));
+          setExtractedImagePalette(mapped);
+          setBaseHex(mapped[0].hex);
+          setSavedSwatches((prev) => [...mapped, ...prev].slice(0, 24));
           setNotification({
             type: "success",
             text: isRtl
@@ -1087,13 +1092,35 @@ export default function ColorStudioView({
               }`}
               onClick={() => !imageSrc && imageInputRef.current?.click()}
             >
-              <canvas
-                ref={canvasRef}
-                onMouseMove={handleCanvasMouseMove}
-                onMouseLeave={() => setIsHoveringCanvas(false)}
-                onClick={handleCanvasClick}
-                className={`max-w-full max-h-[380px] object-contain rounded-lg ${!imageSrc ? "hidden" : "block"}`}
-              />
+              <div
+                ref={canvasWrapperRef}
+                className={`relative inline-block max-w-full ${!imageSrc ? "hidden" : ""}`}
+              >
+                <canvas
+                  ref={canvasRef}
+                  onMouseMove={handleCanvasMouseMove}
+                  onMouseLeave={() => setIsHoveringCanvas(false)}
+                  onClick={handleCanvasClick}
+                  className="max-w-full max-h-[380px] object-contain rounded-lg block"
+                />
+
+                {imageSrc && isHoveringCanvas && (
+                  <div
+                    data-testid="image-pixel-loupe"
+                    className="absolute pointer-events-none w-16 h-16 rounded-full border-2 border-white shadow-xl flex flex-col items-center justify-center text-[9px] font-mono font-bold text-white z-20 transform -translate-x-1/2 -translate-y-1/2"
+                    style={{
+                      backgroundColor: loupeColor,
+                      top: `${loupePos.y}px`,
+                      left: `${loupePos.x}px`,
+                    }}
+                  >
+                    <Crosshair className="w-4 h-4 opacity-75" />
+                    <span className="drop-shadow-md text-[8px]">
+                      {loupeColor}
+                    </span>
+                  </div>
+                )}
+              </div>
 
               {!imageSrc && (
                 <div className="text-center space-y-2 p-6">
@@ -1112,23 +1139,126 @@ export default function ColorStudioView({
                   </p>
                 </div>
               )}
-
-              {imageSrc && isHoveringCanvas && (
-                <div
-                  className="absolute pointer-events-none w-16 h-16 rounded-full border-2 border-white shadow-xl flex flex-col items-center justify-center text-[9px] font-mono font-bold text-white z-20 transform -translate-x-1/2 -translate-y-1/2"
-                  style={{
-                    backgroundColor: loupeColor,
-                    top: `${loupePos.y}px`,
-                    left: `${loupePos.x}px`,
-                  }}
-                >
-                  <Crosshair className="w-4 h-4 opacity-75" />
-                  <span className="drop-shadow-md text-[8px]">
-                    {loupeColor}
-                  </span>
-                </div>
-              )}
             </div>
+
+            {extractedImagePalette.length > 0 && (
+              <div
+                data-testid="extracted-image-palette"
+                className="p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2">
+                    <Palette className="w-4 h-4 text-[var(--color-action)] shrink-0" />
+                    <span>
+                      {isRtl
+                        ? `الألوان المستخرجة (${extractedImagePalette.length})`
+                        : `Extracted Image Palette (${extractedImagePalette.length})`}
+                    </span>
+                  </h3>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        downloadAseFile(
+                          extractedImagePalette,
+                          "Fontivo-Image-Palette.ase",
+                        );
+                        setCopiedExport("ase");
+                        setTimeout(() => setCopiedExport(null), 1800);
+                      }}
+                      className="h-8 px-3 rounded-lg text-[11px] font-bold bg-[var(--color-control)] hover:bg-[var(--color-action)] text-[var(--color-text-header)] hover:text-white border border-[var(--color-border)] transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+                    >
+                      <Download className="w-3.5 h-3.5 shrink-0" />
+                      <span>{isRtl ? "تصدير .ASE" : "Export .ASE"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const css = exportToCssVariables(
+                          extractedImagePalette,
+                          "fontivo-image",
+                        );
+                        handleCopyValue(css);
+                      }}
+                      className="h-8 px-3 rounded-lg text-[11px] font-mono bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] border border-[var(--color-border)] transition cursor-pointer whitespace-nowrap"
+                    >
+                      CSS Vars
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const tw = exportToTailwindConfig(
+                          extractedImagePalette,
+                        );
+                        handleCopyValue(tw);
+                      }}
+                      className="h-8 px-3 rounded-lg text-[11px] font-mono bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] border border-[var(--color-border)] transition cursor-pointer whitespace-nowrap"
+                    >
+                      Tailwind
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                  {extractedImagePalette.map((sw) => (
+                    <div
+                      key={sw.id}
+                      className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border)] flex flex-col gap-2.5"
+                    >
+                      <div
+                        className="w-full h-14 rounded-lg border border-black/15 shadow-inner"
+                        style={{ backgroundColor: sw.hex }}
+                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-xs font-mono font-bold text-[var(--color-text-header)] truncate">
+                            {sw.hex}
+                          </div>
+                          {sw.role && (
+                            <div className="text-[10px] text-[var(--color-text-dim)] truncate">
+                              {sw.role}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyValue(sw.hex)}
+                          className="h-7 px-2 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[10px] font-mono text-[var(--color-text-header)] flex items-center gap-1 transition cursor-pointer shrink-0"
+                          title={isRtl ? "نسخ HEX" : "Copy HEX"}
+                        >
+                          {copiedText === sw.hex ? (
+                            <Check className="w-3 h-3 text-[var(--color-green)]" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                          <span>HEX</span>
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBaseHex(sw.hex);
+                          addSwatchToHistory(sw.hex, sw.name);
+                          setNotification({
+                            type: "success",
+                            text: isRtl
+                              ? `تمت إضافة ${sw.hex} للاستوديو.`
+                              : `Added ${sw.hex} to Studio.`,
+                          });
+                        }}
+                        className="w-full h-7 px-2.5 rounded-lg bg-[var(--color-action)]/12 hover:bg-[var(--color-action)] text-[var(--color-action)] hover:text-white border border-[var(--color-action)]/30 text-[11px] font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
+                      >
+                        <BookmarkPlus className="w-3.5 h-3.5 shrink-0" />
+                        <span>
+                          {isRtl ? "إضافة للاستوديو" : "Add to Studio"}
+                        </span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

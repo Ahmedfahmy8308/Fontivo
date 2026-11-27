@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.7] - 2026-11-27
+
+### Added & Improved
+- **External Developer Link Opening (`POST /api/system/open-url` & WebView2 Handler)**: Added `POST /api/system/open-url` with strict `http://`/`https://` validation (blocking `javascript:`, `file://`, `cmd:`, whitespace, control chars, and shell metacharacters) launching the OS default browser safely (`rundll32.exe url.dll,FileProtocolHandler` on Windows, `open` on macOS, `xdg-open` on Linux), added WebView2 `with_new_window_req_handler` in `src/main.rs` so `<a target="_blank">` links open externally, and wired `openExternalUrl.ts` across `LicensesView.tsx` and `AboutDeveloperModal.tsx`.
+- **Sidebar Cleanup & HeaderBar Controls Restoration**: Removed `Quick RAM Boost`, `Font Library` (`all`) filter, and `Collections` accordion from `Sidebar.tsx`, and restored the `HeaderBar.tsx` RAM badge (`system-health` navigation), Language Switcher (`عربي / EN`), and Theme Toggle (Dark / Light) while keeping breadcrumb and Operations trigger removed.
+- **ColorStudio Image Extractor Swatches & 1:1 Loupe Alignment**: Fixed `ColorStudioView.tsx` image canvas loupe alignment (`relative inline-block` `canvasWrapperRef`), set `img.crossOrigin = "anonymous"`, and rendered 6-swatch `extractedImagePalette` cards in Tab 2 with copy HEX, `.ASE`, `CSS Vars`, `Tailwind`, and `Add to Studio` actions.
+- **Workspaces Overhaul**: Set the `WorkspacesView.tsx` sidebar collapsed by default (`useState(true)`) with a clean zero-overflow collapsed rail, removed the Brand Identity / Guidelines and Typography Pairing / Specimen cards, and overhauled Project Font Files (`ملفات خطوط المشروع` / `Project Font Files`) with full-width responsive rows, real RAM activation, inline role assignment, search, filter, and removal.
+
+---
+
 ## [1.1.6] - 2026-11-27
 
 ### Fixed & Improved

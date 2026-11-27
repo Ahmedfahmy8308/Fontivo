@@ -885,7 +885,8 @@ export default function WorkspacesView({
   const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(
     null,
   );
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [ramActiveMap, setRamActiveMap] = useState<Record<string, boolean>>({});
   const [currentFolderPath, setCurrentFolderPath] = useState<string>("Designs");
   const [showPinnedOnly, setShowPinnedOnly] = useState(false);
   const [newSubfolderName, setNewSubfolderName] = useState("");
@@ -2036,6 +2037,152 @@ export default function WorkspacesView({
         ...subfolders,
         fonts: nextFonts,
       },
+    };
+    await persistWorkspace(nextWs);
+  };
+
+  const resolveProjectFontNumericId = (f: any): number | null => {
+    if (typeof f?.id === "number" && Number.isFinite(f.id) && f.id > 0) {
+      return f.id;
+    }
+    if (typeof f?.id === "string" && /^\d+$/.test(f.id.trim())) {
+      const parsed = Number(f.id.trim());
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    const targetName = String(f?.name || "").trim().toLowerCase();
+    const targetFamily = String(f?.family || "").trim().toLowerCase();
+    const matched = effectiveFonts.find((ef: any) => {
+      const efId = Number(ef?.id);
+      if (!Number.isFinite(efId) || efId <= 0) return false;
+      const efFamily = String(ef.family || "").trim().toLowerCase();
+      const efName = String(ef.name || "").trim().toLowerCase();
+      const efDisp = String(ef.displayName || "").trim().toLowerCase();
+      return (
+        (targetName &&
+          (efName === targetName ||
+            efDisp === targetName ||
+            efFamily === targetName)) ||
+        (targetFamily &&
+          (efFamily === targetFamily ||
+            efName === targetFamily ||
+            efDisp === targetFamily))
+      );
+    });
+    return matched ? Number(matched.id) : null;
+  };
+
+  const getProjectFontRamKey = (f: any, resolvedId: number | null): string =>
+    String(resolvedId ?? f?.id ?? f?.name ?? "");
+
+  const handleToggleProjectFontRam = async (f: any) => {
+    if (!activeWorkspace) return;
+    const resolvedId = resolveProjectFontNumericId(f);
+    const key = getProjectFontRamKey(f, resolvedId);
+    const currentlyActive = ramActiveMap[key] ?? Boolean(f.isActive);
+    const nextActive = !currentlyActive;
+
+    setRamActiveMap((prev) => ({ ...prev, [key]: nextActive }));
+
+    try {
+      if (resolvedId) {
+        if (typeof onActivateFont === "function") {
+          await Promise.resolve(onActivateFont(resolvedId));
+        } else {
+          await safeFetchJson<any>(`/api/fonts/${resolvedId}/activate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ active: nextActive }),
+            timeoutMs: 5000,
+          });
+        }
+      } else {
+        await safeFetchJson<any>(
+          `/api/workspaces/${activeWorkspace.id}/activate-ram`,
+          {
+            method: "POST",
+            timeoutMs: 5000,
+          },
+        );
+      }
+
+      setWorkspaces((prev) =>
+        prev.map((w) => {
+          if (w.id !== activeWorkspace.id) return w;
+          const prevSub = w.subfolders || subfolders;
+          return {
+            ...w,
+            subfolders: {
+              ...prevSub,
+              fonts: (prevSub.fonts || []).map((item: any) =>
+                String(item.id) === String(f.id) || item.name === f.name
+                  ? { ...item, isActive: nextActive }
+                  : item,
+              ),
+            },
+          };
+        }),
+      );
+
+      setNotification({
+        type: "success",
+        text: isRtl
+          ? nextActive
+            ? `تم تفعيل الخط "${f.name}" في الذاكرة (RAM) بنجاح.`
+            : `تم إلغاء تفعيل الخط "${f.name}" من الذاكرة.`
+          : nextActive
+            ? `Activated "${f.name}" in RAM!`
+            : `Deactivated "${f.name}" from RAM.`,
+      });
+      if (onRefreshStats) onRefreshStats();
+    } catch (e: any) {
+      setRamActiveMap((prev) => ({ ...prev, [key]: currentlyActive }));
+      setNotification({
+        type: "error",
+        text:
+          e?.message ||
+          (isRtl ? "تعذر تحديث حالة الخط في الرام." : "Failed to toggle RAM activation."),
+      });
+    }
+  };
+
+  const handleAssignProjectFontRole = async (
+    f: any,
+    roleKey: "none" | "heading" | "body" | "accent" | "code",
+  ) => {
+    if (!activeWorkspace) return;
+    const resolvedId = resolveProjectFontNumericId(f);
+    const fontSlot: TypographyFontObject = {
+      name: f.name || f.family || "Font",
+      fontId: resolvedId ?? undefined,
+      family: f.family || f.name,
+      style: f.format || "Regular",
+      path: f.path,
+    };
+
+    const nextTypography = { ...(activeWorkspace.typography || {}) };
+    const slotKeys: Array<"headingFont" | "bodyFont" | "accentFont" | "codeFont"> = [
+      "headingFont",
+      "bodyFont",
+      "accentFont",
+      "codeFont",
+    ];
+    for (const k of slotKeys) {
+      const cur = nextTypography[k];
+      if (!cur) continue;
+      const curName = getFontDisplayName(cur).toLowerCase();
+      if (curName === String(f.name || "").toLowerCase()) {
+        delete nextTypography[k];
+      }
+    }
+
+    if (roleKey === "heading") nextTypography.headingFont = fontSlot;
+    if (roleKey === "body") nextTypography.bodyFont = fontSlot;
+    if (roleKey === "accent") nextTypography.accentFont = fontSlot;
+    if (roleKey === "code") nextTypography.codeFont = fontSlot;
+
+    const nextWs: Workspace = {
+      ...activeWorkspace,
+      typography: nextTypography,
     };
     await persistWorkspace(nextWs);
   };
@@ -3347,11 +3494,19 @@ export default function WorkspacesView({
     >
       {/* 1. Responsive Workspace Selector */}
       <aside
+        data-testid="workspaces-sidebar"
+        data-collapsed={sidebarCollapsed ? "true" : "false"}
         className={`${
-          sidebarCollapsed ? "lg:w-16" : "lg:w-56 xl:w-64"
-        } w-full shrink-0 border-b lg:border-b-0 lg:border-r rtl:lg:border-l rtl:lg:border-r-0 border-[var(--color-border)] flex flex-col bg-[var(--color-back-side)]/50 transition-all duration-200 max-h-48 lg:max-h-none`}
+          sidebarCollapsed ? "lg:w-14 shrink-0 overflow-hidden" : "lg:w-56 xl:w-64 shrink-0"
+        } w-full border-b lg:border-b-0 lg:border-r rtl:lg:border-l rtl:lg:border-r-0 border-[var(--color-border)] flex flex-col bg-[var(--color-back-side)]/50 transition-all duration-200 max-h-48 lg:max-h-none`}
       >
-        <div className="p-3 sm:p-3.5 border-b border-[var(--color-border)] flex items-center justify-between gap-2 shrink-0">
+        <div
+          className={`${
+            sidebarCollapsed
+              ? "p-2 flex flex-row lg:flex-col items-center justify-between lg:justify-center gap-1.5"
+              : "p-3 sm:p-3.5 flex items-center justify-between gap-2"
+          } border-b border-[var(--color-border)] shrink-0`}
+        >
           {!sidebarCollapsed && (
             <div className="flex items-center gap-2 min-w-0">
               <Briefcase className="w-4 h-4 text-[var(--color-action)] shrink-0" />
@@ -3360,17 +3515,19 @@ export default function WorkspacesView({
               </h2>
             </div>
           )}
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              onClick={openCreateModal}
-              className="h-7 w-7 flex items-center justify-center rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white transition cursor-pointer shadow-2xs"
-              title={isRtl ? "مشروع جديد" : "New Project"}
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
+          <div
+            className={`${
+              sidebarCollapsed
+                ? "flex flex-row lg:flex-col items-center gap-1.5 mx-auto"
+                : "flex items-center gap-1 shrink-0"
+            }`}
+          >
             <button
               onClick={() => setSidebarCollapsed((p) => !p)}
-              className="hidden lg:flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] border border-[var(--color-border)] transition cursor-pointer"
+              data-testid="workspaces-sidebar-toggle"
+              className={`hidden lg:flex ${
+                sidebarCollapsed ? "w-9 h-9 mx-auto" : "h-7 w-7"
+              } items-center justify-center rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] border border-[var(--color-border)] transition cursor-pointer shrink-0`}
               title={
                 sidebarCollapsed
                   ? isRtl
@@ -3382,16 +3539,30 @@ export default function WorkspacesView({
               }
             >
               {sidebarCollapsed ? (
-                <PanelLeftOpen className="w-3.5 h-3.5" />
+                <PanelLeftOpen className="w-4 h-4" />
               ) : (
                 <PanelLeftClose className="w-3.5 h-3.5" />
               )}
+            </button>
+            <button
+              onClick={openCreateModal}
+              data-testid="workspaces-new-btn"
+              className={`${
+                sidebarCollapsed ? "w-9 h-9 mx-auto" : "h-7 w-7"
+              } flex items-center justify-center rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white transition cursor-pointer shadow-2xs shrink-0`}
+              title={isRtl ? "مشروع جديد" : "New Project"}
+            >
+              <Plus className="w-4 h-4" />
             </button>
           </div>
         </div>
 
         {/* Workspaces List */}
-        <div className="flex lg:flex-col overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto flex-1 p-2 gap-1.5">
+        <div
+          className={`flex lg:flex-col overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto flex-1 ${
+            sidebarCollapsed ? "p-1.5 gap-1.5 lg:items-center" : "p-2 gap-1.5"
+          }`}
+        >
           {workspaces.map((ws) => {
             const isSelected = ws.id === selectedId;
             const taskCount = ws.tasks?.length || 0;
@@ -3414,7 +3585,7 @@ export default function WorkspacesView({
                 }}
                 className={`${
                   sidebarCollapsed
-                    ? "p-2 flex items-center justify-center shrink-0"
+                    ? "p-1 flex items-center justify-center mx-auto shrink-0"
                     : "p-2.5 sm:p-3 flex flex-col gap-1.5 min-w-[200px] lg:min-w-0 shrink-0 lg:shrink"
                 } rounded-xl border transition cursor-pointer ${
                   isSelected
@@ -3428,11 +3599,11 @@ export default function WorkspacesView({
                     <img
                       src={ws.logoDataUrl}
                       alt={ws.name}
-                      className="w-8 h-8 rounded-lg object-cover border border-[var(--color-border)]"
+                      className="w-9 h-9 mx-auto rounded-lg object-cover border border-[var(--color-border)] shrink-0"
                     />
                   ) : (
                     <div
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-black text-white shadow-2xs"
+                      className="w-9 h-9 mx-auto rounded-lg flex items-center justify-center text-[11px] font-black text-white shadow-2xs shrink-0"
                       style={{ backgroundColor: primaryHex }}
                     >
                       {initials}
@@ -4270,227 +4441,16 @@ export default function WorkspacesView({
             </section>
           )}
 
-          {/* Section 2: Typography Lab & Project Fonts Studio (Fonts/) */}
+          {/* Section 2: Full-Width Project Font Files Studio */}
           {(activeSubfolderTab === "all" || activeSubfolderTab === "Fonts") && (
-            <section className="grid grid-cols-1 xl:grid-cols-12 gap-6 min-w-0">
-              {/* Left (5 cols): Live Interactive Typography Specimen & Custom Roles */}
-              <div className="xl:col-span-5 p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs min-w-0 flex flex-col justify-between">
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
-                      <Type className="w-4 h-4 text-[var(--color-action)] shrink-0" />
-                      <span>
-                        {isRtl ? "تناغم الخطوط والمعاينة" : "Typography Pairing"}
-                      </span>
-                    </h3>
-                    <div
-                      dir="ltr"
-                      className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-[var(--color-text-dim)] min-w-0"
-                    >
-                      <span className="truncate max-w-[160px]">
-                        H:{" "}
-                        {getFontDisplayName(
-                          activeWorkspace.typography?.headingFont,
-                        )}
-                      </span>
-                      <span>•</span>
-                      <span className="truncate max-w-[160px]">
-                        B:{" "}
-                        {getFontDisplayName(
-                          activeWorkspace.typography?.bodyFont,
-                        )}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Live Specimen Controls: Editable Text + Font Size Slider (16px–44px) */}
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 p-2.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)]">
-                    <input
-                      type="text"
-                      dir="auto"
-                      data-testid="workspace-specimen-input"
-                      value={specimenText}
-                      onChange={(e) => setSpecimenText(e.target.value)}
-                      placeholder={
-                        isRtl
-                          ? "اكتب نصاً للمعاينة الحية (عربي أو إنجليزي)..."
-                          : "Type live Arabic or Latin specimen text..."
-                      }
-                      className="flex-1 min-w-0 h-8 bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
-                    />
-                    <div className="flex items-center gap-2 shrink-0">
-                      <input
-                        type="range"
-                        min={16}
-                        max={44}
-                        step={1}
-                        data-testid="workspace-specimen-size-slider"
-                        aria-label={
-                          isRtl ? "حجم خط المعاينة" : "Specimen font size"
-                        }
-                        value={specimenSize}
-                        onChange={(e) =>
-                          setSpecimenSize(Number(e.target.value))
-                        }
-                        className="w-24 accent-[var(--color-action)] cursor-pointer"
-                      />
-                      <span
-                        dir="ltr"
-                        data-testid="workspace-specimen-size-value"
-                        className="text-[11px] font-mono tabular-nums text-[var(--color-text-muted)] w-10 text-end"
-                      >
-                        {specimenSize}px
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] space-y-3.5">
-                    <div>
-                      <div
-                        dir="ltr"
-                        className="text-[10px] font-mono text-[var(--color-text-dim)] uppercase tracking-wider mb-1 flex items-center justify-between gap-2"
-                      >
-                        <span className="truncate">
-                          Heading Font —{" "}
-                          {getFontDisplayName(
-                            activeWorkspace.typography?.headingFont,
-                          )}
-                        </span>
-                        {loadedHeadingFamily && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold shrink-0">
-                            @font-face
-                          </span>
-                        )}
-                      </div>
-                      <h2
-                        dir="auto"
-                        data-testid="workspace-specimen-heading"
-                        style={{
-                          fontFamily: loadedHeadingFamily
-                            ? `"${loadedHeadingFamily}", sans-serif`
-                            : undefined,
-                          fontSize: `${specimenSize}px`,
-                        }}
-                        className="font-bold text-[var(--color-text-header)] leading-tight tracking-tight break-words"
-                      >
-                        {specimenText.trim()
-                          ? specimenText
-                          : typeof activeWorkspace.typography
-                                ?.previewHeading === "string"
-                            ? activeWorkspace.typography.previewHeading
-                            : "Typographic Architecture & Hierarchy"}
-                      </h2>
-                    </div>
-
-                    <div className="pt-2.5 border-t border-[var(--color-border-subtle)]">
-                      <div
-                        dir="ltr"
-                        className="text-[10px] font-mono text-[var(--color-text-dim)] uppercase tracking-wider mb-1 flex items-center justify-between gap-2"
-                      >
-                        <span className="truncate">
-                          Body Font —{" "}
-                          {getFontDisplayName(
-                            activeWorkspace.typography?.bodyFont,
-                          )}
-                        </span>
-                        {loadedBodyFamily && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold shrink-0">
-                            @font-face
-                          </span>
-                        )}
-                      </div>
-                      <p
-                        dir="auto"
-                        data-testid="workspace-specimen-body"
-                        style={{
-                          fontFamily: loadedBodyFamily
-                            ? `"${loadedBodyFamily}", sans-serif`
-                            : undefined,
-                          fontSize: `${Math.max(12, Math.round(specimenSize * 0.62))}px`,
-                        }}
-                        className="text-[var(--color-text-main)] leading-relaxed opacity-90 break-words"
-                      >
-                        {specimenText.trim()
-                          ? specimenText
-                          : typeof activeWorkspace.typography?.previewBody ===
-                              "string"
-                            ? activeWorkspace.typography.previewBody
-                            : "High-performance legibility engineered for modern software surfaces, editorial spreads, and mathematical tabular systems."}
-                      </p>
-                    </div>
-
-                    {Boolean(
-                      getFontDisplayName(activeWorkspace.typography?.accentFont),
-                    ) && (
-                      <div className="pt-2 border-t border-[var(--color-border-subtle)] flex items-center justify-between gap-2 text-[11px]">
-                        <span className="text-[var(--color-text-dim)] font-sans font-semibold">
-                          {isRtl ? "الخط المساعد / الأرقام:" : "Accent / Code:"}
-                        </span>
-                        <span
-                          dir="auto"
-                          style={{
-                            fontFamily: loadedAccentFamily
-                              ? `"${loadedAccentFamily}", monospace`
-                              : undefined,
-                          }}
-                          className="text-[var(--color-action)] font-sans font-semibold truncate"
-                        >
-                          {getFontDisplayName(
-                            activeWorkspace.typography?.accentFont,
-                          )}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {Array.isArray(activeWorkspace.customFonts) &&
-                    activeWorkspace.customFonts.length > 0 && (
-                      <div className="space-y-2">
-                        <div className="text-[10px] font-sans font-bold uppercase tracking-wider text-[var(--color-text-dim)]">
-                          {isRtl
-                            ? "أدوار الخطوط المخصصة"
-                            : "Custom Font Roles"}
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {activeWorkspace.customFonts.map((cf, idx) => (
-                            <div
-                              key={`${cf.id || cf.label}-${idx}`}
-                              className="p-2.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] flex items-center justify-between gap-2 min-w-0"
-                            >
-                              <span
-                                dir="auto"
-                                className="text-[11px] font-sans font-semibold text-[var(--color-text-muted)] truncate"
-                              >
-                                {cf.label}
-                              </span>
-                              <span
-                                dir="auto"
-                                className="text-[11px] font-bold text-[var(--color-action)] truncate"
-                              >
-                                {getFontDisplayName(cf)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                </div>
-              </div>
-
-              {/* Right (7 cols): Project Font Files (Fonts/) + Full-Library Live Search */}
-              <div className="xl:col-span-7 p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-3.5 shadow-xs min-w-0">
+            <section className="w-full min-w-0">
+              <div className="w-full p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-3.5 shadow-xs min-w-0">
                 <div className="flex items-start sm:items-center justify-between gap-2 flex-wrap">
                   <div className="min-w-0">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 leading-snug">
                       <Layers className="w-4 h-4 text-[var(--color-action)] shrink-0" />
                       <span>
-                        {isRtl ? (
-                          <>
-                            ملفات خطوط المشروع (<bdi dir="ltr">Fonts/</bdi>)
-                          </>
-                        ) : (
-                          "Project Font Files (Fonts/)"
-                        )}
+                        {isRtl ? "ملفات خطوط المشروع" : "Project Font Files"}
                       </span>
                       <span
                         dir="ltr"
@@ -4685,42 +4645,95 @@ export default function WorkspacesView({
                       );
                     }
 
-                    return visibleFonts.map((f: any, idx: number) => (
-                      <div
-                        key={`${f.id || f.name}-${idx}`}
-                        className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] flex items-center justify-between gap-2.5 min-w-0"
-                      >
-                        <div className="min-w-0 flex-1 space-y-0.5">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span
-                              dir="auto"
-                              className="text-xs font-bold text-[var(--color-text-header)] truncate"
-                            >
-                              {f.name}
-                            </span>
-                            {f.roleLabel && (
-                              <span className="px-2 py-0.5 rounded-md bg-[var(--color-action)]/12 border border-[var(--color-action)]/25 text-[10px] font-sans font-semibold text-[var(--color-action)] whitespace-nowrap shrink-0">
-                                {f.roleLabel}
+                    return visibleFonts.map((f: any, idx: number) => {
+                      const resolvedId = resolveProjectFontNumericId(f);
+                      const ramKey = getProjectFontRamKey(f, resolvedId);
+                      const isFontActive =
+                        ramActiveMap[ramKey] ?? Boolean(f.isActive);
+                      const currentRoleValue =
+                        f.roleLabel === (isRtl ? "العناوين" : "Heading")
+                          ? "heading"
+                          : f.roleLabel === (isRtl ? "النصوص" : "Body")
+                            ? "body"
+                            : f.roleLabel === (isRtl ? "مساعد" : "Accent")
+                              ? "accent"
+                              : f.roleLabel === (isRtl ? "الكود" : "Code")
+                                ? "code"
+                                : "none";
+
+                      return (
+                        <div
+                          key={`${f.id || f.name}-${idx}`}
+                          className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0"
+                        >
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <div className="flex flex-wrap items-center gap-2 min-w-0">
+                              <span
+                                dir="auto"
+                                className="text-xs font-bold text-[var(--color-text-header)] truncate"
+                              >
+                                {f.name}
                               </span>
-                            )}
+                              {f.roleLabel && (
+                                <span className="px-2 py-0.5 rounded-md bg-[var(--color-action)]/12 border border-[var(--color-action)]/25 text-[10px] font-sans font-semibold text-[var(--color-action)] whitespace-nowrap shrink-0">
+                                  {f.roleLabel}
+                                </span>
+                              )}
+                            </div>
+                            <div
+                              dir="ltr"
+                              className="text-[10px] font-mono text-[var(--color-text-dim)] truncate"
+                            >
+                              {f.path} • {f.format || "TTF"}
+                            </div>
                           </div>
-                          <div
-                            dir="ltr"
-                            className="text-[10px] font-mono text-[var(--color-text-dim)] truncate"
-                          >
-                            {f.path} • {f.format || "TTF"}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {typeof onActivateFont === "function" &&
-                          typeof f.id === "number" ? (
+                          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                            <div className="relative">
+                              <select
+                                value={currentRoleValue}
+                                style={SELECT_APPEARANCE_STYLE}
+                                onChange={(e) =>
+                                  handleAssignProjectFontRole(
+                                    f,
+                                    e.target.value as
+                                      | "none"
+                                      | "heading"
+                                      | "body"
+                                      | "accent"
+                                      | "code",
+                                  )
+                                }
+                                aria-label={
+                                  isRtl ? "تعيين دور الخط" : "Assign font role"
+                                }
+                                className="h-7 appearance-none !appearance-none bg-[var(--color-control)] border border-[var(--color-border)] rounded-lg ps-2 pe-6 text-[10px] font-sans font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] outline-none cursor-pointer"
+                              >
+                                <option value="none">
+                                  {isRtl ? "بدون دور" : "No role"}
+                                </option>
+                                <option value="heading">
+                                  {isRtl ? "العناوين" : "Heading"}
+                                </option>
+                                <option value="body">
+                                  {isRtl ? "النصوص" : "Body"}
+                                </option>
+                                <option value="accent">
+                                  {isRtl ? "مساعد" : "Accent"}
+                                </option>
+                                <option value="code">
+                                  {isRtl ? "الكود" : "Code"}
+                                </option>
+                              </select>
+                              <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-1.5" />
+                            </div>
                             <button
                               type="button"
-                              onClick={() => onActivateFont(f.id)}
+                              data-testid="workspace-font-ram-btn"
+                              onClick={() => handleToggleProjectFontRam(f)}
                               className={`h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition whitespace-nowrap ${
                                 isRtl ? "font-sans" : "font-mono font-bold"
                               } ${
-                                f.isActive
+                                isFontActive
                                   ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25"
                                   : "bg-[var(--color-control)] hover:bg-[var(--color-action)] hover:text-white text-[var(--color-text-muted)]"
                               }`}
@@ -4732,7 +4745,7 @@ export default function WorkspacesView({
                             >
                               <Zap className="w-3 h-3 shrink-0" />
                               <span>
-                                {f.isActive
+                                {isFontActive
                                   ? isRtl
                                     ? "نشط بالرام"
                                     : "Active"
@@ -4741,43 +4754,25 @@ export default function WorkspacesView({
                                     : "Activate"}
                               </span>
                             </button>
-                          ) : (
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap ${
-                                isRtl ? "font-sans" : "font-mono font-bold"
-                              } ${
-                                f.isActive
-                                  ? "bg-[var(--color-action)]/15 text-[var(--color-action)]"
-                                  : "bg-[var(--color-control)] text-[var(--color-text-muted)]"
-                              }`}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveFontFromWorkspace(idx)}
+                              aria-label={
+                                isRtl ? `إزالة ${f.name}` : `Remove ${f.name}`
+                              }
+                              className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-rose-500/15 text-[var(--color-text-muted)] hover:text-rose-400 flex items-center justify-center transition cursor-pointer"
+                              title={
+                                isRtl
+                                  ? "إزالة الخط من المشروع"
+                                  : "Remove from workspace"
+                              }
                             >
-                              {f.isActive
-                                ? isRtl
-                                  ? "نشط بالرام"
-                                  : "Active"
-                                : isRtl
-                                  ? "جاهز"
-                                  : "Ready"}
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveFontFromWorkspace(idx)}
-                            aria-label={
-                              isRtl ? `إزالة ${f.name}` : `Remove ${f.name}`
-                            }
-                            className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-rose-500/15 text-[var(--color-text-muted)] hover:text-rose-400 flex items-center justify-center transition cursor-pointer"
-                            title={
-                              isRtl
-                                ? "إزالة الخط من المشروع"
-                                : "Remove from workspace"
-                            }
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ));
+                      );
+                    });
                   })()}
                 </div>
               </div>
@@ -5273,12 +5268,11 @@ export default function WorkspacesView({
             </section>
           )}
 
-          {/* Section 4: Balanced Tasks & Brand Guidelines Studio (Guidelines/) */}
+          {/* Section 4: Full-Width Project Tasks & Deadlines */}
           {(activeSubfolderTab === "all" ||
             activeSubfolderTab === "Guidelines") && (
-            <section className="grid grid-cols-1 xl:grid-cols-12 gap-6 min-w-0">
-              {/* Left (7 cols): Project Tasks & Deadlines Card */}
-              <div className="xl:col-span-7 p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs min-w-0">
+            <section className="w-full min-w-0">
+              <div className="w-full p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs min-w-0">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2 min-w-0">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2">
@@ -5596,267 +5590,6 @@ export default function WorkspacesView({
                       );
                     })
                   )}
-                </div>
-              </div>
-
-              {/* Right (5 cols): Live Brand Identity Sheet & Art Direction Card */}
-              <div className="xl:col-span-5 p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs min-w-0 flex flex-col justify-between">
-                <div className="space-y-3.5">
-                  <div className="flex items-start sm:items-center justify-between gap-2 flex-wrap">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
-                      <FileCode className="w-4 h-4 text-[var(--color-action)] shrink-0" />
-                      <span>
-                        {isRtl
-                          ? "دليل الهوية والتوجيه الفني"
-                          : "Brand Identity & Art Direction"}
-                      </span>
-                    </h3>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenInExplorer("Guidelines")}
-                      className="text-[11px] text-[var(--color-action)] hover:underline font-semibold cursor-pointer whitespace-nowrap shrink-0"
-                    >
-                      {isRtl ? (
-                        <>
-                          فتح <bdi dir="ltr">Guidelines/</bdi>
-                        </>
-                      ) : (
-                        "Open Guidelines/"
-                      )}
-                    </button>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (isEditingNotes) {
-                          handleSaveNotesInline();
-                        } else {
-                          setNotesDraft(activeWorkspace.notes || "");
-                          setIsEditingNotes(true);
-                        }
-                      }}
-                      disabled={savingNotes}
-                      className="h-8 px-3 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text-header)] flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
-                    >
-                      <Pencil className="w-3 h-3 text-[var(--color-action)] shrink-0" />
-                      <span>
-                        {isEditingNotes
-                          ? savingNotes
-                            ? isRtl
-                              ? "جاري الحفظ..."
-                              : "Saving..."
-                            : isRtl
-                              ? "حفظ الملاحظات"
-                              : "Save Notes"
-                          : isRtl
-                            ? "تعديل الملاحظات"
-                            : "Edit Notes"}
-                      </span>
-                    </button>
-                    <a
-                      href={styleGuideAssetUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        handleOpenStyleGuide();
-                      }}
-                      className="h-8 px-3 rounded-lg bg-[var(--color-action)]/15 hover:bg-[var(--color-action)]/25 border border-[var(--color-action)]/40 text-[11px] font-sans font-bold text-[var(--color-action)] inline-flex items-center gap-1.5 transition whitespace-nowrap cursor-pointer"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                      <span>
-                        {openingStyleGuide
-                          ? isRtl
-                            ? "جاري الفتح..."
-                            : "Opening..."
-                          : isRtl
-                            ? "فتح دليل الهوية (StyleGuide.html)"
-                            : "Open StyleGuide.html"}
-                      </span>
-                    </a>
-                  </div>
-
-                  {/* Live Brand Identity Sheet: Colors + Typography */}
-                  <div className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] space-y-3">
-                    {/* Active Brand Colors */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-dim)]">
-                        <span className="flex items-center gap-1">
-                          <Palette className="w-3 h-3 text-[var(--color-action)]" />
-                          {isRtl ? "ألوان الهوية النشطة" : "Brand Colors"}
-                        </span>
-                        <span dir="ltr" className="font-mono">
-                          {(activeWorkspace.palette || []).length}
-                        </span>
-                      </div>
-                      {(activeWorkspace.palette || []).length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5">
-                          {(activeWorkspace.palette || []).map((sw, idx) => (
-                            <button
-                              key={`${sw.hex}-${idx}`}
-                              type="button"
-                              onClick={() => handleCopyHex(sw.hex)}
-                              title={
-                                isRtl
-                                  ? `نسخ ${sw.hex}`
-                                  : `Copy ${sw.hex}`
-                              }
-                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[var(--color-back-card)] border border-[var(--color-border-subtle)] hover:border-[var(--color-action)]/60 text-[10px] transition cursor-pointer"
-                            >
-                              <span
-                                className="w-3 h-3 rounded-sm border border-white/20 shrink-0"
-                                style={{ backgroundColor: sw.hex }}
-                              />
-                              <span className="font-semibold text-[var(--color-text-header)] max-w-[90px] truncate">
-                                {sw.name}
-                              </span>
-                              <span
-                                dir="ltr"
-                                className="font-mono text-[var(--color-text-dim)]"
-                              >
-                                {sw.hex}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-[11px] text-[var(--color-text-dim)]">
-                          {isRtl
-                            ? "لا توجد ألوان مضافة بعد."
-                            : "No brand colors defined yet."}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Active Brand Typography Roles */}
-                    <div className="pt-2 border-t border-[var(--color-border-subtle)] space-y-1.5">
-                      <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-dim)]">
-                        <Type className="w-3 h-3 text-[var(--color-action)]" />
-                        <span>
-                          {isRtl ? "خطوط الهوية المعتمدة" : "Brand Typography"}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
-                        <div className="px-2.5 py-1.5 rounded-lg bg-[var(--color-back-card)] border border-[var(--color-border-subtle)] min-w-0">
-                          <div className="text-[9px] text-[var(--color-text-dim)]">
-                            {isRtl ? "العناوين" : "Heading"}
-                          </div>
-                          <div className="font-semibold text-[var(--color-text-header)] truncate">
-                            {getFontDisplayName(
-                              activeWorkspace.typography?.headingFont,
-                            ) || "—"}
-                          </div>
-                        </div>
-                        <div className="px-2.5 py-1.5 rounded-lg bg-[var(--color-back-card)] border border-[var(--color-border-subtle)] min-w-0">
-                          <div className="text-[9px] text-[var(--color-text-dim)]">
-                            {isRtl ? "النصوص" : "Body"}
-                          </div>
-                          <div className="font-semibold text-[var(--color-text-header)] truncate">
-                            {getFontDisplayName(
-                              activeWorkspace.typography?.bodyFont,
-                            ) || "—"}
-                          </div>
-                        </div>
-                        {activeWorkspace.typography?.accentFont && (
-                          <div className="px-2.5 py-1.5 rounded-lg bg-[var(--color-back-card)] border border-[var(--color-border-subtle)] min-w-0">
-                            <div className="text-[9px] text-[var(--color-text-dim)]">
-                              {isRtl ? "التمييز" : "Accent"}
-                            </div>
-                            <div className="font-semibold text-[var(--color-text-header)] truncate">
-                              {getFontDisplayName(
-                                activeWorkspace.typography.accentFont,
-                              )}
-                            </div>
-                          </div>
-                        )}
-                        {(activeWorkspace.customFonts || []).map((cf) => (
-                          <div
-                            key={cf.id}
-                            className="px-2.5 py-1.5 rounded-lg bg-[var(--color-back-card)] border border-[var(--color-border-subtle)] min-w-0"
-                          >
-                            <div className="text-[9px] text-[var(--color-text-dim)] truncate">
-                              {cf.label}
-                            </div>
-                            <div className="font-semibold text-[var(--color-text-header)] truncate">
-                              {getFontDisplayName(cf) || "—"}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Project Notes / Art Direction (Editable Inline) */}
-                  {isEditingNotes ? (
-                    <div className="space-y-2">
-                      <textarea
-                        rows={5}
-                        dir="auto"
-                        value={notesDraft}
-                        onChange={(e) => setNotesDraft(e.target.value)}
-                        placeholder={
-                          isRtl
-                            ? "اكتب إرشادات الهوية البصرية واستخدام الخطوط والألوان..."
-                            : "Write brand guidelines, typography rules, and delivery notes..."
-                        }
-                        className="w-full p-3.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-action)] text-xs text-[var(--color-text-header)] leading-relaxed outline-none resize-y"
-                      />
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsEditingNotes(false);
-                            setNotesDraft(activeWorkspace.notes || "");
-                          }}
-                          className="px-3 py-1.5 rounded-lg bg-[var(--color-control)] text-[11px] text-[var(--color-text-muted)] cursor-pointer"
-                        >
-                          {isRtl ? "إلغاء" : "Cancel"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleSaveNotesInline}
-                          disabled={savingNotes}
-                          className="px-3.5 py-1.5 rounded-lg bg-[var(--color-action)] text-white text-[11px] font-bold cursor-pointer"
-                        >
-                          {isRtl ? "حفظ في دليل الهوية" : "Save Guidelines"}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div
-                      dir="auto"
-                      className="p-3.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] text-xs text-[var(--color-text-main)] leading-relaxed break-words min-h-[88px] whitespace-pre-wrap"
-                    >
-                      {activeWorkspace.notes ||
-                        (isRtl
-                          ? "لا توجد ملاحظات مضافة بعد — اضغط تعديل الملاحظات لإضافة قواعد الهوية والتوجيه الفني."
-                          : "No guidelines notes yet — click Edit Notes to add brand rules and art direction.")}
-                    </div>
-                  )}
-                </div>
-
-                {/* Quick Brand Spec Summary Footer */}
-                <div className="pt-3 border-t border-[var(--color-border-subtle)] grid grid-cols-2 gap-2 text-[11px]">
-                  <div className="p-2.5 rounded-lg bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] min-w-0">
-                    <div className="text-[10px] text-[var(--color-text-dim)]">
-                      {isRtl ? "الخطوط المرتبطة" : "Linked Fonts"}
-                    </div>
-                    <div className="font-bold text-[var(--color-text-header)] truncate">
-                      {subfolders.fonts?.length || 0}{" "}
-                      {isRtl ? "خطوط" : "fonts"}
-                    </div>
-                  </div>
-                  <div className="p-2.5 rounded-lg bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] min-w-0">
-                    <div className="text-[10px] text-[var(--color-text-dim)]">
-                      {isRtl ? "درجات الألوان" : "Palette Swatches"}
-                    </div>
-                    <div className="font-bold text-[var(--color-text-header)] truncate">
-                      {activeWorkspace.palette?.length || 0}{" "}
-                      {isRtl ? "ألوان" : "swatches"}
-                    </div>
-                  </div>
                 </div>
               </div>
             </section>

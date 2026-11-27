@@ -34,8 +34,11 @@ describe("Sidebar Component & Navigation Tests", () => {
     );
 
     expect(html).toContain("Import Font Folder");
-    expect(html).toContain("Font Library");
+    expect(html).toContain("Active in RAM");
     expect(html).toContain("Settings &amp; System");
+    expect(html).not.toContain("Quick RAM Boost");
+    expect(html).not.toContain("Font Library");
+    expect(html).not.toContain("Collections");
 
     const settingsHtml = renderToString(
       React.createElement(Sidebar, {
@@ -113,7 +116,9 @@ describe("Sidebar Component & Navigation Tests", () => {
       }),
     );
 
-    expect(htmlAr).toContain("الكل");
+    expect(htmlAr).not.toContain("تسريع الرام السريع");
+    expect(htmlAr).not.toContain("مكتبة الخطوط");
+    expect(htmlAr).not.toContain("المجموعات");
     expect(htmlAr).toContain("المفعلة بالرام");
     expect(htmlAr).toContain("المفضلة");
     expect(htmlAr).toContain("خطوط النظام");
@@ -122,7 +127,6 @@ describe("Sidebar Component & Navigation Tests", () => {
     expect(htmlAr).toContain("كتالوج Google Fonts");
     expect(htmlAr).toContain("1,961+");
     expect(htmlAr).toContain("tabular-nums");
-    expect(htmlAr).toContain("776");
     expect(htmlAr).toContain("700");
     expect(htmlAr).toContain("76");
     expect(htmlAr).toContain("24");
@@ -176,6 +180,6 @@ describe("Sidebar Component & Navigation Tests", () => {
     );
 
     const matches = html.match(/10,939/g) || [];
-    expect(matches.length).toBe(2); // Once on Font Library button, once on All filter row — NOT in top header
+    expect(matches.length).toBe(0);
   });
 });

@@ -1811,3 +1811,115 @@ pub fn handle_system_storage_cleanup(
         json_header,
     );
 }
+
+/// Validates that an external URL is strictly `http://` or `https://`, has a valid host,
+/// and contains no whitespace, control characters, quotes, or shell metacharacters.
+pub fn validate_external_url(raw: &str) -> Result<String, String> {
+    if raw.is_empty() || raw.len() > 2048 {
+        return Err("URL must be between 1 and 2048 characters".to_string());
+    }
+
+    if !(raw.starts_with("https://") || raw.starts_with("http://")) {
+        return Err("Only http:// and https:// URLs are allowed".to_string());
+    }
+
+    if raw.chars().any(|c| {
+        c.is_whitespace()
+            || c.is_control()
+            || matches!(c, '"' | '\'' | '`' | '&' | '|' | '<' | '>' | '^')
+    }) {
+        return Err("URL contains forbidden whitespace or shell metacharacters".to_string());
+    }
+
+    let parsed = url::Url::parse(raw).map_err(|e| format!("Invalid URL: {}", e))?;
+    if !matches!(parsed.scheme(), "http" | "https") || !parsed.has_host() {
+        return Err("URL must have a valid http or https host".to_string());
+    }
+
+    Ok(raw.to_string())
+}
+
+/// Launches a validated external URL in the OS default browser without invoking a shell.
+pub fn launch_external_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("rundll32.exe")
+            .arg("url.dll,FileProtocolHandler")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("Failed to launch browser: {}", e))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("Failed to launch browser: {}", e))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("Failed to launch browser: {}", e))
+    }
+}
+
+#[derive(Deserialize)]
+struct OpenUrlPayload {
+    url: String,
+}
+
+/// POST /api/system/open-url: validates an external http/https URL and opens it in the OS browser.
+pub fn handle_open_url(mut req: Request, cors_origin: Header, json_header: Header) {
+    let body = read_body(&mut req);
+    let payload: OpenUrlPayload = match serde_json::from_str(&body) {
+        Ok(p) => p,
+        Err(e) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": format!("Invalid payload: {}", e) }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let validated = match validate_external_url(&payload.url) {
+        Ok(u) => u,
+        Err(e) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": e }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    match launch_external_url(&validated) {
+        Ok(()) => respond_json(
+            req,
+            200,
+            serde_json::json!({ "success": true, "url": validated }),
+            cors_origin,
+            json_header,
+        ),
+        Err(e) => respond_json(
+            req,
+            500,
+            serde_json::json!({ "success": false, "error": e }),
+            cors_origin,
+            json_header,
+        ),
+    }
+}

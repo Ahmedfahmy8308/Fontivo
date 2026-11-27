@@ -12,6 +12,7 @@ import {
   Users,
 } from "lucide-react";
 import uiPkg from "../../../package.json";
+import { openExternalUrl } from "../../utils/openExternalUrl";
 
 const APP_VERSION = uiPkg.version;
 
@@ -129,6 +130,10 @@ export default function AboutDeveloperModal({
                   href="https://ahmed-fahmy.engineer/"
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openExternalUrl("https://ahmed-fahmy.engineer/");
+                  }}
                   className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-action)] hover:text-[#130C16] border border-[var(--color-border)] hover:border-[var(--color-action)] text-[var(--color-text-header)] font-semibold text-xs transition duration-200 cursor-pointer w-full group shadow-2xs"
                 >
                   <Globe className="w-3.5 h-3.5 text-[#B7A1D9] group-hover:text-[#130C16] transition-colors" />
@@ -173,6 +178,10 @@ export default function AboutDeveloperModal({
                   href="https://mohamed-elashwah.me/"
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openExternalUrl("https://mohamed-elashwah.me/");
+                  }}
                   className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-action)] hover:text-white border border-[var(--color-border)] hover:border-[var(--color-action)] text-[var(--color-text-header)] font-semibold text-xs transition duration-200 cursor-pointer w-full group shadow-2xs"
                 >
                   <Globe className="w-3.5 h-3.5 text-[#F16B50] group-hover:text-white transition-colors" />
@@ -251,6 +260,10 @@ export default function AboutDeveloperModal({
               href="https://github.com/Ahmedfahmy8308/Fontivo"
               target="_blank"
               rel="noopener noreferrer"
+              onClick={(e) => {
+                e.preventDefault();
+                openExternalUrl("https://github.com/Ahmedfahmy8308/Fontivo");
+              }}
               className="text-[11px] text-[var(--color-text-muted)] hover:text-white font-mono inline-flex items-center gap-1 transition-colors"
             >
               <Github className="w-3.5 h-3.5" />
@@ -261,6 +274,10 @@ export default function AboutDeveloperModal({
               href="https://github.com/Ahmedfahmy8308/Fontivo-Fonts"
               target="_blank"
               rel="noopener noreferrer"
+              onClick={(e) => {
+                e.preventDefault();
+                openExternalUrl("https://github.com/Ahmedfahmy8308/Fontivo-Fonts");
+              }}
               className="text-[11px] text-[var(--color-text-muted)] hover:text-white font-mono inline-flex items-center gap-1 transition-colors"
             >
               <Github className="w-3.5 h-3.5" />
@@ -271,6 +288,10 @@ export default function AboutDeveloperModal({
               href="https://fontivo-app.github.io"
               target="_blank"
               rel="noopener noreferrer"
+              onClick={(e) => {
+                e.preventDefault();
+                openExternalUrl("https://fontivo-app.github.io");
+              }}
               className="text-[11px] text-amber-400 hover:text-amber-300 font-mono inline-flex items-center gap-1 transition-colors"
             >
               <Globe className="w-3.5 h-3.5" />

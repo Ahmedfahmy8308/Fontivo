@@ -192,8 +192,6 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain("Cairo Bold");
     expect(html).toContain("Inter Regular");
     expect(html).toContain("JetBrains Mono");
-    expect(html).toContain("Social Media Headlines");
-    expect(html).toContain("Tajawal ExtraBold");
     expect(html).toContain("2026-12-20");
     expect(html).toContain("High");
     expect(html).not.toContain("[object Object]");
@@ -219,19 +217,50 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain("رفع تصميم");
     expect(html).toContain("مجلد داخلي");
     expect(html).toContain("تعديل المشروع");
-    expect(html).toContain("تعديل الملاحظات");
     expect(html).toContain("max-w-7xl");
     expect(html).toContain('dir="ltr"');
     expect(html).toContain('dir="auto"');
   });
 
-  it("renders redesigned palette cards, freeform Design Files & Import (.PSD / .AI), Live Brand Identity Sheet, full-width Add Task input, StyleGuide.html link, and non-mono Arabic filters", () => {
+  it("renders collapsed-by-default sidebar, clean Project Font Files without (Fonts/), removes Guidelines & Typography Specimen cards, and enables RAM activation for every font", () => {
     const html = renderToString(
       React.createElement(WorkspacesView, {
-        fonts: [],
+        fonts: [
+          {
+            id: 201,
+            name: "InterDisplay-Bold.otf",
+            family: "Inter Display",
+            style: "Bold",
+          },
+        ],
         isRtl: true,
       }),
     );
+
+    // 1. Collapsed-by-default sidebar with zero-overflow rail classes
+    expect(html).toContain('data-testid="workspaces-sidebar"');
+    expect(html).toContain('data-collapsed="true"');
+    expect(html).toContain("lg:w-14 shrink-0 overflow-hidden");
+    expect(html).toContain("w-9 h-9 mx-auto");
+    expect(html).toContain("lg:flex-col items-center");
+
+    // 2. Guidelines & Typography Pairing/Specimen cards removed completely
+    expect(html).not.toContain("دليل الهوية والتوجيه الفني");
+    expect(html).not.toContain("Brand Identity &amp; Art Direction");
+    expect(html).not.toContain("تناغم الخطوط والمعاينة");
+    expect(html).not.toContain("Typography Pairing");
+    expect(html).not.toContain('data-testid="workspace-specimen-size-slider"');
+    expect(html).not.toContain('data-testid="workspace-specimen-input"');
+
+    // 3. Clean Arabic Project Font Files heading without (Fonts/) or (FONTS/)
+    expect(html).toContain("ملفات خطوط المشروع");
+    expect(html).not.toContain("ملفات خطوط المشروع (");
+
+    // 4. RAM activation button & role assignment rendered for every project font
+    expect(html).toContain('data-testid="workspace-font-ram-btn"');
+    expect(html).toContain("تفعيل");
+    expect(html).toContain("نشط بالرام");
+    expect(html).toContain('aria-label="تعيين دور الخط"');
 
     // Full-width auto-fill swatch grid (min 240px per card — never collapses on desktop 1920px+)
     expect(html).toContain(
@@ -255,19 +284,8 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain("إضافة مهمة جديدة للمشروع (اضغط Enter)...");
     expect(html).toContain('class="w-full bg-[var(--color-back-main)]');
 
-    // Live Brand Identity Sheet without (Guidelines/)
-    expect(html).toContain("دليل الهوية والتوجيه الفني");
-    expect(html).not.toContain("دليل الهوية والتوجيه الفني (");
-    expect(html).toContain("ألوان الهوية النشطة");
-    expect(html).toContain("خطوط الهوية المعتمدة");
-    expect(html).toContain("#F16B50");
-
-    // Open File & StyleGuide.html button
+    // Open File button
     expect(html).toContain("فتح الملف");
-    expect(html).toContain("فتح دليل الهوية (StyleGuide.html)");
-    expect(html).toContain(
-      "/api/workspaces/fontivo-studio-swiss/asset?path=Guidelines/styleguide.html",
-    );
 
     // Arabic task filter pills must use font-sans (never font-mono)
     expect(html).toContain("الكل");
@@ -312,7 +330,6 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain('dir="auto"');
     expect(html).toContain('appearance:none');
     expect(html).toContain('flex-1 min-w-0 text-start text-xs break-words');
-    expect(html).toContain('dir="ltr" class="flex flex-wrap items-center gap-2 text-[11px] font-mono');
   });
 
   it("syncs heading, body, accent, and custom font roles cleanly into deduplicated projectFonts", () => {
@@ -415,7 +432,7 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     ).toEqual([]);
   });
 
-  it("renders Export Handover (.ZIP) button, interactive specimen slider (16-44px) & input, and Extract Palette from Logo button when logo is present", () => {
+  it("renders Export Handover (.ZIP) button, clean English Project Font Files heading, and Extract Palette from Logo button when logo is present", () => {
     const wsWithLogo = [
       {
         id: "brand-zip-test",
@@ -440,10 +457,9 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(htmlEn).toContain("Export Handover (.ZIP)");
     expect(htmlEn).toContain("/api/workspaces/brand-zip-test/export-bundle");
     expect(htmlEn).toContain("Extract Palette from Logo");
-    expect(htmlEn).toContain('data-testid="workspace-specimen-size-slider"');
-    expect(htmlEn).toContain('min="16"');
-    expect(htmlEn).toContain('max="44"');
-    expect(htmlEn).toContain('data-testid="workspace-specimen-input"');
+    expect(htmlEn).toContain("Project Font Files");
+    expect(htmlEn).not.toContain("Project Font Files (Fonts/)");
+    expect(htmlEn).toContain('data-testid="workspace-font-ram-btn"');
 
     const htmlAr = renderToString(
       React.createElement(WorkspacesView, { fonts: [], isRtl: true }),

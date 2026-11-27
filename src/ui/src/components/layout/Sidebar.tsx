@@ -1,8 +1,5 @@
 import React, { useState, useRef } from "react";
 import {
-  ChevronDown,
-  ChevronRight,
-  Trash2,
   FolderPlus,
   Zap,
   Globe,
@@ -20,7 +17,6 @@ import {
   ArrowRight,
   ShieldCheck,
   FileText,
-  Check,
   Monitor,
 } from "lucide-react";
 import { FontFilter, FontStats } from "../../types/font";
@@ -77,11 +73,6 @@ export default function Sidebar({
     else setInternalMode(mode);
   };
 
-  const [newCollectionName, setNewCollectionName] = useState("");
-  const [isAddingCollection, setIsAddingCollection] = useState(false);
-  const [collectionsOpen, setCollectionsOpen] = useState(false);
-  const [ramBoosting, setRamBoosting] = useState(false);
-  const [ramBoostDone, setRamBoostDone] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Honest, real counts derived directly from backend stats (zero hardcoded fake counts)
@@ -105,31 +96,6 @@ export default function Sidebar({
       customAndCloudCount + downloadedGoogleCount,
   );
 
-  const getCollectionName = (name: string) => {
-    if (isRtl) {
-      if (name === "Web & UI Typography")
-        return safeT.colWebUI || "خطوط الويب والواجهات";
-      if (name === "Headlines & Posters")
-        return safeT.colHeadlines || "عناوين وملصقات";
-      if (name === "Calligraphy & Scripts")
-        return safeT.colCalligraphy || "خطوط فنية ويدوية";
-      if (name === "Branding & Identity")
-        return safeT.colBranding || "الهوية البصرية";
-    }
-    return name;
-  };
-
-  const handleCreateCollection = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCollectionName.trim()) {
-      setIsAddingCollection(false);
-      return;
-    }
-    if (onCreateCollection) onCreateCollection(newCollectionName.trim());
-    setNewCollectionName("");
-    setIsAddingCollection(false);
-  };
-
   const isFilterActive = (type: string, val: string | null = null) => {
     if (activeTab !== "library") return false;
     if (val !== null) {
@@ -141,25 +107,6 @@ export default function Sidebar({
   const handleSelectFilter = (filterObj: FontFilter) => {
     setActiveTab("library");
     setFilter(filterObj);
-  };
-
-  const handleRamBoostClick = async () => {
-    if (ramBoosting) return;
-    setRamBoosting(true);
-    try {
-      if (onQuickRamBoost) {
-        await onQuickRamBoost();
-      } else {
-        await fetch("/api/system/optimize-ram", { method: "POST" }).catch(
-          () => {},
-        );
-        if (onOpenRamCleaner) onOpenRamCleaner();
-      }
-      setRamBoostDone(true);
-      setTimeout(() => setRamBoostDone(false), 1800);
-    } finally {
-      setRamBoosting(false);
-    }
   };
 
   const handleBackToLibrary = () => {
@@ -175,14 +122,6 @@ export default function Sidebar({
   const BackIcon = isRtl ? ArrowRight : ArrowLeft;
 
   const sourceFilterItems = [
-    {
-      id: "all",
-      label: isRtl ? "الكل" : "All",
-      count: totalCount,
-      icon: Layers,
-      iconClass: "text-[var(--color-action)]",
-      filter: { type: "all", value: null } as FontFilter,
-    },
     {
       id: "active",
       label: isRtl ? "المفعلة بالرام" : "Active in RAM",
@@ -337,24 +276,6 @@ export default function Sidebar({
             </>
           ) : (
             <>
-              <button
-                onClick={handleRamBoostClick}
-                className="w-10 h-10 rounded-xl flex items-center justify-center bg-[var(--color-action)]/15 text-[var(--color-action)] border border-[var(--color-action)]/30 hover:bg-[var(--color-action)] hover:text-[#130C16] transition cursor-pointer"
-                title={isRtl ? "تسريع الرام السريع" : "Quick RAM Boost"}
-              >
-                <Zap className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => handleSelectFilter({ type: "all", value: null })}
-                className={`w-10 h-10 rounded-xl flex items-center justify-center transition cursor-pointer ${
-                  activeTab === "library"
-                    ? "bg-[var(--color-action)] text-white"
-                    : "text-[var(--color-text-muted)] hover:bg-[var(--color-control)]"
-                }`}
-                title={isRtl ? "مكتبة الخطوط" : "Font Library"}
-              >
-                <Layers className="w-4 h-4" />
-              </button>
               <button
                 onClick={() => setActiveTab("google-fonts")}
                 className={`w-10 h-10 rounded-xl flex items-center justify-center transition cursor-pointer ${
@@ -521,58 +442,8 @@ export default function Sidebar({
       ) : (
         /* MAIN SIDEBAR MODE — Clean, Honest Counts & Direct Creative Tools */
         <div className="flex-1 overflow-y-auto px-2.5 py-3 space-y-3">
-          {/* Quick RAM Boost Action */}
-          <button
-            onClick={handleRamBoostClick}
-            disabled={ramBoosting}
-            className={`w-full h-9 px-3 rounded-xl flex items-center justify-between gap-2 text-xs font-bold transition cursor-pointer border ${
-              ramBoostDone
-                ? "bg-[var(--color-action)] text-[#130C16] border-[var(--color-action)]"
-                : "bg-[var(--color-action)]/12 hover:bg-[var(--color-action)]/20 text-[var(--color-action)] border-[var(--color-action)]/30"
-            }`}
-          >
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              {ramBoostDone ? (
-                <Check className="w-4 h-4 shrink-0" />
-              ) : (
-                <Zap className="w-4 h-4 shrink-0" />
-              )}
-              <span className="truncate whitespace-nowrap">
-                {ramBoostDone
-                  ? isRtl
-                    ? "تم تسريع الرام بنجاح"
-                    : "RAM Boosted"
-                  : isRtl
-                    ? "تسريع الرام السريع"
-                    : "Quick RAM Boost"}
-              </span>
-            </div>
-            <span className="text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded bg-black/15 shrink-0">
-              {activeCount.toLocaleString()}
-            </span>
-          </button>
-
-          {/* Font Library & Honest Source Counts (Zero Overlapping / Zero Cramped Badges) */}
+          {/* Honest Source Counts */}
           <div className="space-y-1.5">
-            <button
-              onClick={() => handleSelectFilter({ type: "all", value: null })}
-              className={`w-full h-9 flex items-center justify-between gap-2 px-3 rounded-lg text-xs transition cursor-pointer ${
-                activeTab === "library" && currentFilter?.type === "all"
-                  ? "bg-[var(--color-action)] text-white font-semibold"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:bg-[var(--color-control)] font-medium"
-              }`}
-            >
-              <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                <Layers className="w-4 h-4 shrink-0" />
-                <span className="truncate whitespace-nowrap">
-                  {isRtl ? "مكتبة الخطوط" : "Font Library"}
-                </span>
-              </div>
-              <span className="text-[10.5px] font-mono tabular-nums opacity-85 whitespace-nowrap shrink-0">
-                {totalCount.toLocaleString()}
-              </span>
-            </button>
-
             <div className="p-1.5 bg-[var(--color-back-subtle)]/70 rounded-xl border border-[var(--color-border-subtle)] space-y-0.5">
               {sourceFilterItems.map((item) => {
                 const Icon = item.icon;
@@ -709,92 +580,6 @@ export default function Sidebar({
                 </span>
               </div>
             </button>
-          </div>
-
-          {/* Collections Accordion */}
-          <div className="pt-2 border-t border-[var(--color-border-subtle)]">
-            <div className="flex items-center justify-between px-2.5 py-1">
-              <button
-                onClick={() => setCollectionsOpen(!collectionsOpen)}
-                className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] transition cursor-pointer"
-              >
-                {collectionsOpen ? (
-                  <ChevronDown className="w-3 h-3" />
-                ) : (
-                  <ChevronRight className="w-3 h-3" />
-                )}
-                <span>{isRtl ? "المجموعات" : "Collections"}</span>
-              </button>
-              <button
-                onClick={() => setIsAddingCollection(true)}
-                className="text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] transition cursor-pointer p-0.5 rounded hover:bg-[var(--color-control)]"
-                title={isRtl ? "إنشاء مجموعة جديدة" : "New Collection"}
-              >
-                <span className="text-xs font-bold leading-none">+</span>
-              </button>
-            </div>
-
-            {collectionsOpen && (
-              <div className="mt-0.5 space-y-0.5 pr-2 rtl:pr-0 rtl:pl-2">
-                {isAddingCollection && (
-                  <form onSubmit={handleCreateCollection} className="px-2 py-1">
-                    <input
-                      type="text"
-                      value={newCollectionName}
-                      onChange={(e: any) =>
-                        setNewCollectionName(e.target.value)
-                      }
-                      placeholder={
-                        isRtl ? "اسم المجموعة..." : "Collection name..."
-                      }
-                      className="w-full bg-[var(--color-back-main)] border border-[var(--color-action)] rounded-lg px-2.5 py-1 text-xs text-[var(--color-text-header)] outline-none"
-                      autoFocus
-                      onBlur={() =>
-                        !newCollectionName && setIsAddingCollection(false)
-                      }
-                    />
-                  </form>
-                )}
-
-                {Object.keys(collections || {}).map((cName) => {
-                  const count = collections[cName]?.length || 0;
-                  return (
-                    <div
-                      key={cName}
-                      className={`group flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[12px] transition cursor-pointer ${
-                        isFilterActive("collection", cName)
-                          ? "bg-[var(--color-action)]/20 text-[var(--color-text-header)] font-semibold"
-                          : "text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:bg-[var(--color-control)]"
-                      }`}
-                      onClick={() =>
-                        handleSelectFilter({ type: "collection", value: cName })
-                      }
-                    >
-                      <span className="truncate">
-                        {getCollectionName(cName)}
-                      </span>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-[10px] font-mono tabular-nums text-[var(--color-text-dim)]">
-                          {count}
-                        </span>
-                        {onDeleteCollection && (
-                          <button
-                            onClick={(e: any) => {
-                              e.stopPropagation();
-                              onDeleteCollection(cName);
-                            }}
-                            className="opacity-0 group-hover:opacity-100 p-0.5 hover:text-rose-400 text-[var(--color-text-dim)] transition"
-                            title={isRtl ? "حذف المجموعة" : "Delete"}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
         </div>
       )}
