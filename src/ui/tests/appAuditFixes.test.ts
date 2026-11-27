@@ -395,8 +395,10 @@ describe("Fontivo App UI Audit Fixes Regression Suite", () => {
       );
 
       expect(html).toContain("Ahmed Fahmy");
+      expect(html).toContain("Software Engineer");
       expect(html).toContain("ahmed-fahmy.engineer");
       expect(html).toContain("Mohamed Elashwah");
+      expect(html).toContain("Graphic Designer");
       expect(html).toContain("mohamed-elashwah.me");
       expect(html).toContain("Software License");
       expect(html).toContain("MIT License");

@@ -154,4 +154,28 @@ describe("Sidebar Component & Navigation Tests", () => {
     expect(htmlWithOverride).toContain("Downloaded Google");
     expect(htmlWithOverride).toContain("50");
   });
+
+  it("does not duplicate totalCount in the top sidebar header", () => {
+    const html = renderToString(
+      React.createElement(Sidebar, {
+        activeTab: "library",
+        setActiveTab: () => {},
+        currentFilter: { type: "all", value: null },
+        setFilter: () => {},
+        stats: {
+          total: 10939,
+          activeCount: 5,
+          favoritesCount: 2,
+          googleCount: 10,
+          systemCount: 100,
+          localCount: 20,
+        },
+        t: translations.ar,
+        isRtl: true,
+      }),
+    );
+
+    const matches = html.match(/10,939/g) || [];
+    expect(matches.length).toBe(2); // Once on Font Library button, once on All filter row — NOT in top header
+  });
 });

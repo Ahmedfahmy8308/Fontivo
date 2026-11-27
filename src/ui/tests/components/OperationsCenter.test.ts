@@ -8,6 +8,8 @@ import {
   getLiveOperations,
   clearCompletedOperations,
   removeLiveOperation,
+  isOperationDismissed,
+  resetDismissedOperations,
   formatTransferMb,
   formatTransferSpeed,
 } from "../../src/utils/operationsBus";
@@ -15,9 +17,11 @@ import { safeFetchJson } from "../../src/utils/safeFetch";
 
 describe("OperationsCenter & Live Progress Bus Tests", () => {
   beforeEach(() => {
+    resetDismissedOperations();
     for (const op of getLiveOperations()) {
       removeLiveOperation(op.id);
     }
+    resetDismissedOperations();
   });
 
   it("tracks live operations with 0-100% progress, MB transfer, items count, and speed", () => {
@@ -111,6 +115,39 @@ describe("OperationsCenter & Live Progress Bus Tests", () => {
     const remaining = getLiveOperations();
     expect(remaining.length).toBe(1);
     expect(remaining[0].id).toBe("op-2");
+    expect(isOperationDismissed("op-1")).toBe(true);
+    expect(isOperationDismissed("op-2")).toBe(false);
+  });
+
+  it("keeps cleared completed/failed operations dismissed unless restarted as running", () => {
+    upsertLiveOperation({
+      id: "dl-pack-003",
+      title: "Pack 003",
+      category: "download",
+      status: "completed",
+      progressPercent: 100,
+    });
+    upsertLiveOperation({
+      id: "op-failed-1",
+      title: "Failed Op",
+      category: "system",
+      status: "failed",
+      progressPercent: 20,
+    });
+
+    clearCompletedOperations();
+    expect(isOperationDismissed("dl-pack-003")).toBe(true);
+    expect(isOperationDismissed("op-failed-1")).toBe(true);
+
+    // Restarting an operation with the same ID as running un-dismisses it
+    upsertLiveOperation({
+      id: "dl-pack-003",
+      title: "Pack 003",
+      category: "download",
+      status: "running",
+      progressPercent: 10,
+    });
+    expect(isOperationDismissed("dl-pack-003")).toBe(false);
   });
 
   it("safeFetchJson returns fallback safely when network is offline or times out", async () => {

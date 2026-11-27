@@ -36,8 +36,55 @@ export interface LiveOperationItem {
 
 const OPERATIONS_EVENT = "fontivo:operations-update";
 const OPEN_CENTER_EVENT = "fontivo:operations-open";
+const DISMISSED_STORAGE_KEY = "fontivo:dismissed-operations";
 
 let operationsStore: Record<string, LiveOperationItem> = {};
+
+function loadDismissedOperationIds(): Set<string> {
+  if (typeof localStorage === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(DISMISSED_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed.map(String)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+const dismissedOperationIds: Set<string> = loadDismissedOperationIds();
+
+function persistDismissedOperationIds(): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(
+      DISMISSED_STORAGE_KEY,
+      JSON.stringify(Array.from(dismissedOperationIds)),
+    );
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+export function isOperationDismissed(id: string): boolean {
+  return dismissedOperationIds.has(id);
+}
+
+export function dismissOperationIds(ids: string[]): void {
+  let changed = false;
+  for (const id of ids) {
+    if (id && !dismissedOperationIds.has(id)) {
+      dismissedOperationIds.add(id);
+      changed = true;
+    }
+  }
+  if (changed) persistDismissedOperationIds();
+}
+
+export function resetDismissedOperations(): void {
+  dismissedOperationIds.clear();
+  persistDismissedOperationIds();
+}
 
 export function getLiveOperations(): LiveOperationItem[] {
   return Object.values(operationsStore).sort(
@@ -48,6 +95,12 @@ export function getLiveOperations(): LiveOperationItem[] {
 export function upsertLiveOperation(
   partial: Partial<LiveOperationItem> & { id: string; title?: string },
 ): LiveOperationItem {
+  const nextStatus = partial.status;
+  if (nextStatus === "running" || nextStatus === "queued") {
+    if (dismissedOperationIds.delete(partial.id)) {
+      persistDismissedOperationIds();
+    }
+  }
   const now = Date.now();
   const existing = operationsStore[partial.id];
   const updated: LiveOperationItem = {
@@ -99,11 +152,15 @@ export function upsertLiveOperation(
 
 export function clearCompletedOperations(): void {
   const next: Record<string, LiveOperationItem> = {};
+  const clearedIds: string[] = [];
   for (const [k, v] of Object.entries(operationsStore)) {
     if (v.status === "running" || v.status === "queued") {
       next[k] = v;
+    } else {
+      clearedIds.push(k);
     }
   }
+  dismissOperationIds(clearedIds);
   operationsStore = next;
   if (
     typeof window !== "undefined" &&
@@ -120,6 +177,13 @@ export function clearCompletedOperations(): void {
 }
 
 export function removeLiveOperation(id: string): void {
+  const existing = operationsStore[id];
+  if (
+    existing &&
+    (existing.status === "completed" || existing.status === "failed")
+  ) {
+    dismissOperationIds([id]);
+  }
   const { [id]: _, ...rest } = operationsStore;
   operationsStore = rest;
   if (

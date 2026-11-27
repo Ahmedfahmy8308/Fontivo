@@ -331,5 +331,7 @@ describe("Segmented Local & Custom Fonts Organization & Filtering", () => {
     expect(customViewHtml).toContain('data-testid="local-bucket-tab-cloud"');
     expect(customViewHtml).toContain('data-testid="local-bucket-tab-google"');
     expect(customViewHtml).toContain("الكل (المحلية والسحابية)");
+    expect(appSource).toContain('data-testid="local-folder-selector"');
+    expect(appSource).not.toContain('data-testid="local-folder-chips"');
   });
 });

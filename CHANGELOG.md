@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.6] - 2026-11-27
+
+### Fixed & Improved
+- **Workspaces Tasks, Brand Identity Sheet & Designs/ PSD Workflow**: Cleaned up Workspaces headings, placed the Add Task input on its own full-width row (`w-full`) with resilient optimistic persistence, upgraded the Brand Identity card into a live Identity Sheet with `Guidelines/styleguide.html` auto-generation on request (`GET /api/workspaces/:id/asset?path=Guidelines/styleguide.html`) and inline modal fallback, removed `BRAND_FOLDER_TEMPLATES`, fixed `open_workspace_folder` (`normalize_workspace_root_folder`) so opening `Designs/` never creates nested `Fonts/`/`Designs/`/`Palettes/`/`Guidelines/` subfolders, increased `upload_workspace_design` streaming limit to `512 MB`, and added `POST /api/workspaces/:id/import-design-dialog` for zero-HTTP-overhead local `.PSD`/`.AI` imports.
+- **Minimal Titlebar & Sidebar Count Cleanup**: Streamlined `HeaderBar.tsx` to only the Fontivo icon, title, and window controls (`minimize`, `maximize`, `close`), and removed the duplicate total font count badge from the top of `Sidebar.tsx`.
+- **Persistent Operations Clear**: Added `POST /api/system/operations/clear` (`DownloadManager::clear_finished_jobs` + `AppState::clear_finished_operations`) and `localStorage`-backed dismissed operation filtering in `operationsBus.ts` / `OperationsCenter.tsx` so cleared completed/failed/cancelled operations never reappear on subsequent polls.
+- **Compact Local & Custom Folder Selector & Team Roles**: Replaced the multi-row `local-folder-chips` wall in `App.tsx` with a compact `local-folder-selector` dropdown with inline Activate/Deactivate/Delete actions, fixed RTL/LTR isolation on the `SystemHealthView` timestamp, and updated developer role badges (`Software Engineer` & `Graphic Designer`) in `LicensesView.tsx` and `AboutDeveloperModal.tsx`.
+
+---
+
 ## [1.1.5] - 2026-11-27
 
 ### Added & Improved

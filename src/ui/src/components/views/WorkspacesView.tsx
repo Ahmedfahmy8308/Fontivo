@@ -122,44 +122,6 @@ export const SWATCH_ROLE_OPTIONS = [
   { id: "muted", en: "Muted", ar: "محايد" },
 ] as const;
 
-export const BRAND_FOLDER_TEMPLATES = [
-  {
-    id: "facebook-meta",
-    label: "Facebook & Meta",
-    folderPath: "Designs/Facebook-Meta",
-  },
-  {
-    id: "instagram",
-    label: "Instagram",
-    folderPath: "Designs/Instagram",
-  },
-  {
-    id: "reels-stories",
-    label: "Reels & Stories",
-    folderPath: "Designs/Reels-Stories",
-  },
-  {
-    id: "print-packaging",
-    label: "Print & Packaging",
-    folderPath: "Designs/Print-Packaging",
-  },
-  {
-    id: "logos-marks",
-    label: "Logos & Marks",
-    folderPath: "Designs/Logos-Marks",
-  },
-  {
-    id: "presentations",
-    label: "Presentations",
-    folderPath: "Designs/Presentations",
-  },
-  {
-    id: "source-files",
-    label: "Source Files",
-    folderPath: "Designs/Source-Files",
-  },
-] as const;
-
 export const PALETTE_STARTER_PRESETS: Record<
   string,
   { id: string; en: string; ar: string; swatches: ColorSwatch[] }
@@ -497,11 +459,6 @@ interface ModalSwatchDraft {
 }
 
 const getFriendlyFolderLabel = (relFolder: string): string => {
-  const norm = relFolder.replace(/\\/g, "/").toLowerCase();
-  const tpl = BRAND_FOLDER_TEMPLATES.find(
-    (t) => t.folderPath.toLowerCase() === norm,
-  );
-  if (tpl) return tpl.label;
   return relFolder.split("/").pop() || relFolder;
 };
 
@@ -510,6 +467,28 @@ const getDesignAssetKey = (design: WorkspaceDesignFile): string =>
   (design.subfolder ? `${design.subfolder}/${design.name}` : "") ||
   design.path ||
   design.name;
+
+function escapeHtmlAttr(raw: string): string {
+  return (raw || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function buildClientStyleGuideHtml(ws: Workspace, isRtl: boolean): string {
+  const dir = isRtl ? "rtl" : "ltr";
+  const swatchesHtml = (ws.palette || [])
+    .map(
+      (sw) =>
+        `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #33293a;border-radius:10px;background:#1e1624;"><span style="width:28px;height:28px;border-radius:8px;background:${escapeHtmlAttr(sw.hex)};border:1px solid rgba(255,255,255,0.15);display:inline-block;"></span><div><div style="font-weight:700;font-size:13px;">${escapeHtmlAttr(sw.name)}</div><div style="font-family:monospace;font-size:12px;color:#b8adc4;" dir="ltr">${escapeHtmlAttr(sw.hex)}</div></div></div>`,
+    )
+    .join("");
+  const heading = getFontDisplayName(ws.typography?.headingFont) || "—";
+  const body = getFontDisplayName(ws.typography?.bodyFont) || "—";
+  const accent = getFontDisplayName(ws.typography?.accentFont) || "";
+  return `<!doctype html><html lang="${isRtl ? "ar" : "en"}" dir="${dir}"><head><meta charset="utf-8"/><title>${escapeHtmlAttr(ws.name)} — StyleGuide</title></head><body style="margin:0;padding:32px;background:#140d18;color:#f4eef8;font-family:system-ui,-apple-system,sans-serif;line-height:1.6;"><div style="max-width:860px;margin:0 auto;"><h1 style="margin:0 0 6px;font-size:26px;">${escapeHtmlAttr(ws.name)}</h1><p style="margin:0 0 24px;color:#b8adc4;font-size:14px;">${escapeHtmlAttr(ws.client || "")} ${ws.category ? `• ${escapeHtmlAttr(ws.category)}` : ""}</p><h2 style="font-size:15px;margin:24px 0 10px;">${isRtl ? "لوحة الألوان" : "Brand Colors"}</h2><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;">${swatchesHtml || `<p style="color:#8b7f99;">${isRtl ? "لا توجد ألوان" : "No swatches"}</p>`}</div><h2 style="font-size:15px;margin:24px 0 10px;">${isRtl ? "الخطوط المعتمدة" : "Brand Typography"}</h2><div style="padding:14px;border:1px solid #33293a;border-radius:12px;background:#1e1624;font-size:13px;"><div><strong>${isRtl ? "العناوين" : "Heading"}:</strong> ${escapeHtmlAttr(heading)}</div><div><strong>${isRtl ? "النصوص" : "Body"}:</strong> ${escapeHtmlAttr(body)}</div>${accent ? `<div><strong>${isRtl ? "التمييز" : "Accent"}:</strong> ${escapeHtmlAttr(accent)}</div>` : ""}</div><h2 style="font-size:15px;margin:24px 0 10px;">${isRtl ? "التوجيه الفني والملاحظات" : "Art Direction & Notes"}</h2><div style="padding:14px;border:1px solid #33293a;border-radius:12px;background:#1e1624;white-space:pre-wrap;font-size:13px;">${escapeHtmlAttr(ws.notes || (isRtl ? "لا توجد ملاحظات" : "No notes yet."))}</div></div></body></html>`;
+}
 
 const INITIAL_WORKSPACES: Workspace[] = [
   {
@@ -912,6 +891,11 @@ export default function WorkspacesView({
   const [newSubfolderName, setNewSubfolderName] = useState("");
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
   const [uploadingDesign, setUploadingDesign] = useState(false);
+  const [importingDesign, setImportingDesign] = useState(false);
+  const [openingStyleGuide, setOpeningStyleGuide] = useState(false);
+  const [styleGuidePreviewHtml, setStyleGuidePreviewHtml] = useState<
+    string | null
+  >(null);
   const [confirmDeleteWsId, setConfirmDeleteWsId] = useState<string | null>(
     null,
   );
@@ -1133,18 +1117,48 @@ export default function WorkspacesView({
   const formatLibraryFontOptionLabel = (f: any) =>
     `${f.family || f.name} — ${f.style || "Regular"}`;
 
-  const persistWorkspace = async (nextWs: Workspace) => {
-    if (!nextWs?.id) return;
-    setWorkspaces((prev) => prev.map((w) => (w.id === nextWs.id ? nextWs : w)));
+  const persistWorkspace = async (
+    nextWs: Workspace,
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!nextWs?.id) return { ok: false, error: "Missing workspace id" };
+    setWorkspaces((prev) =>
+      prev.some((w) => w.id === nextWs.id)
+        ? prev.map((w) => (w.id === nextWs.id ? nextWs : w))
+        : [...prev, nextWs],
+    );
     try {
       const payload: any = { ...nextWs };
       delete payload.subfolders;
-      const saved = await safeFetchJson<any>(`/api/workspaces/${nextWs.id}`, {
+      const res = await safeFetch(`/api/workspaces/${nextWs.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         timeoutMs: 5000,
       });
+      if (!res) {
+        return {
+          ok: false,
+          error: isRtl
+            ? "تعذر الاتصال بالخادم — تم الحفظ محلياً."
+            : "Server unreachable — saved locally.",
+        };
+      }
+      let saved: any = null;
+      try {
+        saved = await res.json();
+      } catch {
+        saved = null;
+      }
+      if (!res.ok) {
+        return {
+          ok: false,
+          error:
+            saved?.error ||
+            (isRtl
+              ? `تعذر مزامنة المشروع (${res.status}) — تم الحفظ محلياً.`
+              : `Failed to sync workspace (${res.status}) — saved locally.`),
+        };
+      }
       if (saved && saved.id) {
         setWorkspaces((prev) =>
           prev.map((w) =>
@@ -1152,14 +1166,23 @@ export default function WorkspacesView({
               ? {
                   ...w,
                   ...saved,
+                  tasks: Array.isArray(saved.tasks)
+                    ? saved.tasks
+                    : nextWs.tasks,
                   subfolders: w.subfolders || nextWs.subfolders,
                 }
               : w,
           ),
         );
       }
+      return { ok: true };
     } catch {
-      // Keep local update if offline
+      return {
+        ok: false,
+        error: isRtl
+          ? "حدث خطأ أثناء المزامنة — تم الحفظ محلياً."
+          : "Sync error — saved locally.",
+      };
     }
   };
 
@@ -1593,7 +1616,7 @@ export default function WorkspacesView({
   const handleOpenInExplorer = async (
     subfolder?: "Fonts" | "Designs" | "Palettes" | "Guidelines" | string,
   ) => {
-    const targetPath = subfolder
+    const displayTarget = subfolder
       ? `${physicalPath}\\${subfolder.replace(/\//g, "\\")}`
       : physicalPath;
     await safeFetchJson<any>("/api/workspaces/open-folder", {
@@ -1602,7 +1625,7 @@ export default function WorkspacesView({
       body: JSON.stringify({
         workspaceId: activeWorkspace.id,
         id: activeWorkspace.id,
-        folderPath: targetPath,
+        folderPath: physicalPath,
         subfolder: subfolder || null,
       }),
       timeoutMs: 5000,
@@ -1611,7 +1634,7 @@ export default function WorkspacesView({
       type: "success",
       text: isRtl
         ? `تم فتح مجلد "${subfolder ? `${activeWorkspace.name} / ${subfolder}` : activeWorkspace.name}" في مستكشف ويندوز (Explorer).`
-        : `Opened "${targetPath}" in Windows Explorer.`,
+        : `Opened "${displayTarget}" in Windows Explorer.`,
     });
   };
 
@@ -2324,10 +2347,27 @@ export default function WorkspacesView({
     };
     setNewTaskText("");
     setNewTaskDueDate("");
-    await persistWorkspace({
+    const result = await persistWorkspace({
       ...activeWorkspace,
       tasks: [...(activeWorkspace.tasks || []), newTask],
     });
+    if (result.ok) {
+      setNotification({
+        type: "success",
+        text: isRtl
+          ? "تمت إضافة المهمة وحفظها بنجاح."
+          : "Task added and saved.",
+      });
+    } else {
+      setNotification({
+        type: "error",
+        text:
+          result.error ||
+          (isRtl
+            ? "تمت إضافة المهمة محلياً، لكن تعذر الحفظ على الخادم."
+            : "Task added locally, but failed to sync to backend."),
+      });
+    }
   };
 
   const startInlineEditTask = (task: WorkspaceTask) => {
@@ -2658,19 +2698,6 @@ export default function WorkspacesView({
     await createFolderAtPath(relativePath);
   };
 
-  const handleTemplateFolderClick = async (
-    tpl: (typeof BRAND_FOLDER_TEMPLATES)[number],
-  ) => {
-    const exists = workspaceFoldersList.some(
-      (f) => f.toLowerCase() === tpl.folderPath.toLowerCase(),
-    );
-    if (exists) {
-      setCurrentFolderPath(tpl.folderPath);
-      return;
-    }
-    await createFolderAtPath(tpl.folderPath, tpl.label);
-  };
-
   const handleDeleteSubfolder = async (relFolder: string) => {
     if (!activeWorkspace || isProtectedRootFolder(relFolder)) return;
     const res = await safeFetchJson<any>(
@@ -2726,47 +2753,97 @@ export default function WorkspacesView({
     });
   };
 
+  const appendUploadedDesigns = (newDesigns: WorkspaceDesignFile[]) => {
+    if (!activeWorkspace || newDesigns.length === 0) return;
+    setWorkspaces((prev) =>
+      prev.map((w) => {
+        if (w.id !== activeWorkspace.id) return w;
+        const prevSub = w.subfolders || {
+          fonts: [],
+          designs: [],
+          palettes: [],
+          guidelines: [],
+        };
+        const existingKeys = new Set(
+          (prevSub.designs || []).map((d) => getDesignAssetKey(d)),
+        );
+        const dedupedNew = newDesigns.filter(
+          (d) => !existingKeys.has(getDesignAssetKey(d)),
+        );
+        return {
+          ...w,
+          subfolders: {
+            ...prevSub,
+            designs: [...dedupedNew, ...(prevSub.designs || [])],
+          },
+        };
+      }),
+    );
+  };
+
   const handleUploadDesigns = async (fileList?: FileList | File[] | null) => {
     if (!activeWorkspace || !fileList || fileList.length === 0) return;
     const files = Array.from(fileList);
     setUploadingDesign(true);
     const uploadedDesigns: WorkspaceDesignFile[] = [];
+    const failedFiles: string[] = [];
+    let lastError = "";
     try {
       for (const file of files) {
         const res = await safeFetch(
-          `/api/workspaces/${activeWorkspace.id}/upload-design?fileName=${encodeURIComponent(file.name)}&subfolder=${encodeURIComponent(currentFolderPath || "Designs")}`,
+          `/api/workspaces/${encodeURIComponent(activeWorkspace.id)}/upload-design?fileName=${encodeURIComponent(file.name)}&subfolder=${encodeURIComponent(currentFolderPath || "Designs")}`,
           {
             method: "POST",
             body: file,
-            timeoutMs: 20000,
+            timeoutMs: 30000,
           },
         );
-        if (res && res.ok) {
-          const data = await res.json();
-          if (data?.success && data.design) {
-            uploadedDesigns.push(data.design);
-          }
+        if (!res) {
+          failedFiles.push(file.name);
+          lastError = isRtl
+            ? "تعذر الاتصال بالخادم أو انتهت المهلة"
+            : "Server unreachable or request timed out";
+          continue;
+        }
+        let data: any = null;
+        try {
+          data = await res.json();
+        } catch {
+          data = null;
+        }
+        if (!res.ok) {
+          failedFiles.push(file.name);
+          lastError =
+            data?.error || res.statusText || `HTTP ${res.status}`;
+          continue;
+        }
+        if (data?.success && data.design) {
+          uploadedDesigns.push(data.design);
+        } else {
+          failedFiles.push(file.name);
+          lastError =
+            data?.error ||
+            (isRtl ? "استجابة غير متوقعة من الخادم" : "Unexpected server response");
         }
       }
       if (uploadedDesigns.length > 0) {
-        setWorkspaces((prev) =>
-          prev.map((w) => {
-            if (w.id !== activeWorkspace.id) return w;
-            const prevSub = w.subfolders || {
-              fonts: [],
-              designs: [],
-              palettes: [],
-              guidelines: [],
-            };
-            return {
-              ...w,
-              subfolders: {
-                ...prevSub,
-                designs: [...uploadedDesigns, ...(prevSub.designs || [])],
-              },
-            };
-          }),
-        );
+        appendUploadedDesigns(uploadedDesigns);
+      }
+      if (failedFiles.length > 0 && uploadedDesigns.length === 0) {
+        setNotification({
+          type: "error",
+          text: isRtl
+            ? `فشل رفع ملف التصميم (${failedFiles.join(", ")}): ${lastError}`
+            : `Failed to upload design file(s) (${failedFiles.join(", ")}): ${lastError}`,
+        });
+      } else if (failedFiles.length > 0 && uploadedDesigns.length > 0) {
+        setNotification({
+          type: "error",
+          text: isRtl
+            ? `تم رفع ${uploadedDesigns.length} ملف، وفشل رفع: ${failedFiles.join(", ")} (${lastError})`
+            : `Uploaded ${uploadedDesigns.length} file(s), failed: ${failedFiles.join(", ")} (${lastError})`,
+        });
+      } else if (uploadedDesigns.length > 0) {
         setNotification({
           type: "success",
           text: isRtl
@@ -2776,6 +2853,104 @@ export default function WorkspacesView({
       }
     } finally {
       setUploadingDesign(false);
+    }
+  };
+
+  const handleImportDesignDialog = async () => {
+    if (!activeWorkspace || importingDesign) return;
+    setImportingDesign(true);
+    try {
+      const res = await safeFetch(
+        `/api/workspaces/${encodeURIComponent(activeWorkspace.id)}/import-design-dialog`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            subfolder: currentFolderPath || "Designs",
+          }),
+          timeoutMs: 60000,
+        },
+      );
+      if (!res || res.status === 404 || res.status === 501) {
+        // Web preview / non-desktop fallback
+        designInputRef.current?.click();
+        return;
+      }
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+      if (!res.ok) {
+        setNotification({
+          type: "error",
+          text:
+            data?.error ||
+            (isRtl
+              ? `فشل استيراد ملف التصميم (${res.status}).`
+              : `Failed to import design file (${res.status}).`),
+        });
+        return;
+      }
+      if (data?.cancelled) return;
+      if (data?.fallback) {
+        designInputRef.current?.click();
+        return;
+      }
+      const imported: WorkspaceDesignFile[] = Array.isArray(data?.designs)
+        ? data.designs
+        : data?.design
+          ? [data.design]
+          : [];
+      if (data?.success && imported.length > 0) {
+        appendUploadedDesigns(imported);
+        setNotification({
+          type: "success",
+          text: isRtl
+            ? `تم استيراد ${imported.length} ملف تصميم إلى مجلد "${currentFolderPath || "Designs"}" بنجاح!`
+            : `Imported ${imported.length} design file(s) into "${currentFolderPath || "Designs"}"!`,
+        });
+      } else {
+        setNotification({
+          type: "error",
+          text:
+            data?.error ||
+            (isRtl
+              ? "تعذر استيراد ملف التصميم المحدد."
+              : "Could not import selected design file."),
+        });
+      }
+    } finally {
+      setImportingDesign(false);
+    }
+  };
+
+  const handleOpenStyleGuide = async () => {
+    if (!activeWorkspace || openingStyleGuide) return;
+    setOpeningStyleGuide(true);
+    try {
+      let res = await safeFetch(styleGuideAssetUrl, { timeoutMs: 5000 });
+      if (res && res.status === 404) {
+        await persistWorkspace(activeWorkspace);
+        res = await safeFetch(styleGuideAssetUrl, { timeoutMs: 5000 });
+      }
+      if (res && res.ok) {
+        const htmlText = await res.text();
+        const win =
+          typeof window !== "undefined"
+            ? window.open(styleGuideAssetUrl, "_blank", "noopener,noreferrer")
+            : null;
+        if (!win) {
+          setStyleGuidePreviewHtml(htmlText);
+        }
+        return;
+      }
+      setStyleGuidePreviewHtml(
+        buildClientStyleGuideHtml(activeWorkspace, isRtl),
+      );
+    } finally {
+      setOpeningStyleGuide(false);
     }
   };
 
@@ -4639,27 +4814,39 @@ export default function WorkspacesView({
                   <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 leading-snug">
                     <FileCheck className="w-4 h-4 text-[var(--color-action)] shrink-0" />
                     <span>
-                      {isRtl ? (
-                        <>
-                          ملفات التصميم والمجلدات الفرعية (
-                          <bdi dir="ltr">Designs/</bdi>)
-                        </>
-                      ) : (
-                        "Discovered Design Files & Brand Folders (Designs/)"
-                      )}
+                      {isRtl
+                        ? "ملفات التصميم والمجلدات الفرعية"
+                        : "Design Files & Subfolders"}
                     </span>
                   </h3>
                   <p className="text-[11px] font-sans text-[var(--color-text-dim)] mt-0.5 leading-snug">
                     {isRtl
-                      ? "نظم ملفات العميل في قوالب مجلدات جاهزة أو أنشئ مجلدات متداخلة مع بحث ومعاينة وتثبيت الملفات"
-                      : "Organize client deliverables in 1-click brand folder templates, search assets, pin key files, and open directly"}
+                      ? "نظم ملفات العميل في مجلدات فرعية مخصصة مع بحث ومعاينة وتثبيت الملفات"
+                      : "Organize client deliverables in custom subfolders, search assets, pin key files, and open directly"}
                   </p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleImportDesignDialog}
+                    disabled={uploadingDesign || importingDesign}
+                    className="h-8 px-3 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[var(--color-text-header)] text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  >
+                    <FolderSearch className="w-3.5 h-3.5 text-[var(--color-action)] shrink-0" />
+                    <span>
+                      {importingDesign
+                        ? isRtl
+                          ? "جاري الاستيراد..."
+                          : "Importing..."
+                        : isRtl
+                          ? "استيراد ملف تصميم (.PSD / .AI)"
+                          : "Import Design (.PSD / .AI)"}
+                    </span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => designInputRef.current?.click()}
-                    disabled={uploadingDesign}
+                    disabled={uploadingDesign || importingDesign}
                     className="h-8 px-3 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
                   >
                     <Upload className="w-3.5 h-3.5 shrink-0" />
@@ -4795,56 +4982,6 @@ export default function WorkspacesView({
                       <FolderPlus className="w-3 h-3 text-[var(--color-action)] shrink-0" />
                       <span>{isRtl ? "مجلد داخلي" : "Add Subfolder"}</span>
                     </button>
-                  </div>
-                </div>
-
-                {/* 1-Click Ready-Made Brand Folder Templates */}
-                <div className="pt-2 border-t border-[var(--color-border-subtle)] space-y-1.5">
-                  <div className="text-[10px] font-sans font-semibold text-[var(--color-text-dim)]">
-                    {isRtl
-                      ? "قوالب مجلدات الهوية الجاهزة (ضغطة واحدة للإنشاء والفتح):"
-                      : "1-Click Brand Folder Templates:"}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {BRAND_FOLDER_TEMPLATES.map((tpl) => {
-                      const isCreated = workspaceFoldersList.some(
-                        (f) => f.toLowerCase() === tpl.folderPath.toLowerCase(),
-                      );
-                      const isActive =
-                        currentFolderPath.toLowerCase() ===
-                        tpl.folderPath.toLowerCase();
-                      return (
-                        <button
-                          key={tpl.id}
-                          type="button"
-                          onClick={() => handleTemplateFolderClick(tpl)}
-                          disabled={creatingSubfolder}
-                          className={`h-7 px-2.5 rounded-lg border text-[11px] font-sans font-semibold inline-flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap ${
-                            isActive
-                              ? "bg-[var(--color-action)]/18 border-[var(--color-action)] text-[var(--color-action)]"
-                              : isCreated
-                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:border-emerald-400"
-                                : "bg-[var(--color-control)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:border-[var(--color-action)]/50"
-                          }`}
-                          title={
-                            isCreated
-                              ? isRtl
-                                ? `فتح مجلد ${tpl.folderPath}`
-                                : `Open ${tpl.folderPath}`
-                              : isRtl
-                                ? `إنشاء مجلد ${tpl.folderPath} بضغطة واحدة`
-                                : `Create ${tpl.folderPath} in 1 click`
-                          }
-                        >
-                          {isCreated ? (
-                            <Check className="w-3 h-3 shrink-0" />
-                          ) : (
-                            <FolderPlus className="w-3 h-3 shrink-0 text-[var(--color-action)]" />
-                          )}
-                          <span dir="ltr">{tpl.label}</span>
-                        </button>
-                      );
-                    })}
                   </div>
                 </div>
 
@@ -5147,14 +5284,9 @@ export default function WorkspacesView({
                     <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2">
                       <CheckCircle2 className="w-4 h-4 text-[var(--color-action)] shrink-0" />
                       <span>
-                        {isRtl ? (
-                          <>
-                            مهام المشروع ومواعيد التسليم (
-                            <bdi dir="ltr">Guidelines/</bdi>)
-                          </>
-                        ) : (
-                          "Project Checklist & Deadlines (Guidelines/)"
-                        )}
+                        {isRtl
+                          ? "مهام المشروع ومواعيد التسليم"
+                          : "Project Checklist & Deadlines"}
                       </span>
                     </h3>
                     <span
@@ -5198,10 +5330,7 @@ export default function WorkspacesView({
                 </div>
 
                 {/* Add Task Form with Priority & Due Date */}
-                <form
-                  onSubmit={handleAddTask}
-                  className="flex flex-wrap items-center gap-2"
-                >
+                <form onSubmit={handleAddTask} className="space-y-2">
                   <input
                     type="text"
                     dir="auto"
@@ -5212,47 +5341,51 @@ export default function WorkspacesView({
                         ? "إضافة مهمة جديدة للمشروع (اضغط Enter)..."
                         : "Add new project task (press Enter)..."
                     }
-                    className="flex-1 min-w-[180px] bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] text-xs text-[var(--color-text-header)] placeholder-[var(--color-text-dim)] px-3 py-2 rounded-xl outline-none transition"
+                    className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] text-xs text-[var(--color-text-header)] placeholder-[var(--color-text-dim)] px-3 py-2 rounded-xl outline-none transition"
                   />
-                  <div className="relative">
-                    <select
-                      value={newTaskPriority}
-                      style={SELECT_APPEARANCE_STYLE}
-                      onChange={(e) =>
-                        setNewTaskPriority(
-                          e.target.value as WorkspaceTaskPriority,
-                        )
-                      }
-                      aria-label={isRtl ? "أولوية المهمة" : "Task priority"}
-                      className="h-[34px] appearance-none !appearance-none bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-xl ps-2.5 pe-7 text-[11px] font-sans font-semibold text-[var(--color-text-header)] outline-none cursor-pointer"
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="relative">
+                        <select
+                          value={newTaskPriority}
+                          style={SELECT_APPEARANCE_STYLE}
+                          onChange={(e) =>
+                            setNewTaskPriority(
+                              e.target.value as WorkspaceTaskPriority,
+                            )
+                          }
+                          aria-label={isRtl ? "أولوية المهمة" : "Task priority"}
+                          className="h-[34px] appearance-none !appearance-none bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-xl ps-2.5 pe-7 text-[11px] font-sans font-semibold text-[var(--color-text-header)] outline-none cursor-pointer"
+                        >
+                          <option value="high">
+                            {isRtl ? "أولوية عالية" : "High"}
+                          </option>
+                          <option value="medium">
+                            {isRtl ? "متوسطة" : "Medium"}
+                          </option>
+                          <option value="low">
+                            {isRtl ? "منخفضة" : "Low"}
+                          </option>
+                        </select>
+                        <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2" />
+                      </div>
+                      <input
+                        type="date"
+                        dir="ltr"
+                        value={newTaskDueDate}
+                        onChange={(e) => setNewTaskDueDate(e.target.value)}
+                        aria-label={isRtl ? "تاريخ الاستحقاق" : "Task due date"}
+                        title={isRtl ? "تاريخ استحقاق المهمة" : "Due Date"}
+                        className="h-[34px] bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-xl px-2.5 text-[11px] font-mono text-[var(--color-text-header)] outline-none"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="h-[34px] px-4 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-header)] border border-[var(--color-border)] text-xs font-semibold cursor-pointer shrink-0"
                     >
-                      <option value="high">
-                        {isRtl ? "أولوية عالية" : "High"}
-                      </option>
-                      <option value="medium">
-                        {isRtl ? "متوسطة" : "Medium"}
-                      </option>
-                      <option value="low">
-                        {isRtl ? "منخفضة" : "Low"}
-                      </option>
-                    </select>
-                    <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2" />
+                      {isRtl ? "إضافة" : "Add"}
+                    </button>
                   </div>
-                  <input
-                    type="date"
-                    dir="ltr"
-                    value={newTaskDueDate}
-                    onChange={(e) => setNewTaskDueDate(e.target.value)}
-                    aria-label={isRtl ? "تاريخ الاستحقاق" : "Task due date"}
-                    title={isRtl ? "تاريخ استحقاق المهمة" : "Due Date"}
-                    className="h-[34px] bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-xl px-2.5 text-[11px] font-mono text-[var(--color-text-header)] outline-none"
-                  />
-                  <button
-                    type="submit"
-                    className="h-[34px] px-3.5 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-header)] border border-[var(--color-border)] text-xs font-semibold cursor-pointer shrink-0"
-                  >
-                    {isRtl ? "إضافة" : "Add"}
-                  </button>
                 </form>
 
                 <div className="space-y-2 max-h-80 overflow-y-auto pe-1">
@@ -5466,21 +5599,16 @@ export default function WorkspacesView({
                 </div>
               </div>
 
-              {/* Right (5 cols): Brand Guidelines & Art Direction Card */}
+              {/* Right (5 cols): Live Brand Identity Sheet & Art Direction Card */}
               <div className="xl:col-span-5 p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs min-w-0 flex flex-col justify-between">
                 <div className="space-y-3.5">
                   <div className="flex items-start sm:items-center justify-between gap-2 flex-wrap">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
                       <FileCode className="w-4 h-4 text-[var(--color-action)] shrink-0" />
                       <span>
-                        {isRtl ? (
-                          <>
-                            دليل الهوية والتوجيه الفني (
-                            <bdi dir="ltr">Guidelines/</bdi>)
-                          </>
-                        ) : (
-                          "Brand Guidelines & Notes (Guidelines/)"
-                        )}
+                        {isRtl
+                          ? "دليل الهوية والتوجيه الفني"
+                          : "Brand Identity & Art Direction"}
                       </span>
                     </h3>
                     <button
@@ -5531,21 +5659,140 @@ export default function WorkspacesView({
                       href={styleGuideAssetUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="h-8 px-3 rounded-lg bg-[var(--color-action)]/15 hover:bg-[var(--color-action)]/25 border border-[var(--color-action)]/40 text-[11px] font-sans font-bold text-[var(--color-action)] inline-flex items-center gap-1.5 transition whitespace-nowrap"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handleOpenStyleGuide();
+                      }}
+                      className="h-8 px-3 rounded-lg bg-[var(--color-action)]/15 hover:bg-[var(--color-action)]/25 border border-[var(--color-action)]/40 text-[11px] font-sans font-bold text-[var(--color-action)] inline-flex items-center gap-1.5 transition whitespace-nowrap cursor-pointer"
                     >
                       <ExternalLink className="w-3.5 h-3.5 shrink-0" />
                       <span>
-                        {isRtl
-                          ? "فتح دليل الهوية (StyleGuide.html)"
-                          : "Open StyleGuide.html"}
+                        {openingStyleGuide
+                          ? isRtl
+                            ? "جاري الفتح..."
+                            : "Opening..."
+                          : isRtl
+                            ? "فتح دليل الهوية (StyleGuide.html)"
+                            : "Open StyleGuide.html"}
                       </span>
                     </a>
                   </div>
 
+                  {/* Live Brand Identity Sheet: Colors + Typography */}
+                  <div className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] space-y-3">
+                    {/* Active Brand Colors */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-dim)]">
+                        <span className="flex items-center gap-1">
+                          <Palette className="w-3 h-3 text-[var(--color-action)]" />
+                          {isRtl ? "ألوان الهوية النشطة" : "Brand Colors"}
+                        </span>
+                        <span dir="ltr" className="font-mono">
+                          {(activeWorkspace.palette || []).length}
+                        </span>
+                      </div>
+                      {(activeWorkspace.palette || []).length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {(activeWorkspace.palette || []).map((sw, idx) => (
+                            <button
+                              key={`${sw.hex}-${idx}`}
+                              type="button"
+                              onClick={() => handleCopyHex(sw.hex)}
+                              title={
+                                isRtl
+                                  ? `نسخ ${sw.hex}`
+                                  : `Copy ${sw.hex}`
+                              }
+                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[var(--color-back-card)] border border-[var(--color-border-subtle)] hover:border-[var(--color-action)]/60 text-[10px] transition cursor-pointer"
+                            >
+                              <span
+                                className="w-3 h-3 rounded-sm border border-white/20 shrink-0"
+                                style={{ backgroundColor: sw.hex }}
+                              />
+                              <span className="font-semibold text-[var(--color-text-header)] max-w-[90px] truncate">
+                                {sw.name}
+                              </span>
+                              <span
+                                dir="ltr"
+                                className="font-mono text-[var(--color-text-dim)]"
+                              >
+                                {sw.hex}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-[var(--color-text-dim)]">
+                          {isRtl
+                            ? "لا توجد ألوان مضافة بعد."
+                            : "No brand colors defined yet."}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Active Brand Typography Roles */}
+                    <div className="pt-2 border-t border-[var(--color-border-subtle)] space-y-1.5">
+                      <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-dim)]">
+                        <Type className="w-3 h-3 text-[var(--color-action)]" />
+                        <span>
+                          {isRtl ? "خطوط الهوية المعتمدة" : "Brand Typography"}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
+                        <div className="px-2.5 py-1.5 rounded-lg bg-[var(--color-back-card)] border border-[var(--color-border-subtle)] min-w-0">
+                          <div className="text-[9px] text-[var(--color-text-dim)]">
+                            {isRtl ? "العناوين" : "Heading"}
+                          </div>
+                          <div className="font-semibold text-[var(--color-text-header)] truncate">
+                            {getFontDisplayName(
+                              activeWorkspace.typography?.headingFont,
+                            ) || "—"}
+                          </div>
+                        </div>
+                        <div className="px-2.5 py-1.5 rounded-lg bg-[var(--color-back-card)] border border-[var(--color-border-subtle)] min-w-0">
+                          <div className="text-[9px] text-[var(--color-text-dim)]">
+                            {isRtl ? "النصوص" : "Body"}
+                          </div>
+                          <div className="font-semibold text-[var(--color-text-header)] truncate">
+                            {getFontDisplayName(
+                              activeWorkspace.typography?.bodyFont,
+                            ) || "—"}
+                          </div>
+                        </div>
+                        {activeWorkspace.typography?.accentFont && (
+                          <div className="px-2.5 py-1.5 rounded-lg bg-[var(--color-back-card)] border border-[var(--color-border-subtle)] min-w-0">
+                            <div className="text-[9px] text-[var(--color-text-dim)]">
+                              {isRtl ? "التمييز" : "Accent"}
+                            </div>
+                            <div className="font-semibold text-[var(--color-text-header)] truncate">
+                              {getFontDisplayName(
+                                activeWorkspace.typography.accentFont,
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {(activeWorkspace.customFonts || []).map((cf) => (
+                          <div
+                            key={cf.id}
+                            className="px-2.5 py-1.5 rounded-lg bg-[var(--color-back-card)] border border-[var(--color-border-subtle)] min-w-0"
+                          >
+                            <div className="text-[9px] text-[var(--color-text-dim)] truncate">
+                              {cf.label}
+                            </div>
+                            <div className="font-semibold text-[var(--color-text-header)] truncate">
+                              {getFontDisplayName(cf) || "—"}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Project Notes / Art Direction (Editable Inline) */}
                   {isEditingNotes ? (
                     <div className="space-y-2">
                       <textarea
-                        rows={6}
+                        rows={5}
                         dir="auto"
                         value={notesDraft}
                         onChange={(e) => setNotesDraft(e.target.value)}
@@ -5580,7 +5827,7 @@ export default function WorkspacesView({
                   ) : (
                     <div
                       dir="auto"
-                      className="p-4 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] text-xs text-[var(--color-text-main)] leading-relaxed break-words min-h-[120px] whitespace-pre-wrap"
+                      className="p-3.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] text-xs text-[var(--color-text-main)] leading-relaxed break-words min-h-[88px] whitespace-pre-wrap"
                     >
                       {activeWorkspace.notes ||
                         (isRtl
@@ -6399,6 +6646,65 @@ export default function WorkspacesView({
           return canPortal
             ? createPortal(modalNode, document.body)
             : modalNode;
+        })()}
+
+      {/* StyleGuide.html Inline Preview Modal (WebView / Offline Safe Fallback) */}
+      {styleGuidePreviewHtml &&
+        (() => {
+          const previewNode = (
+            <div
+              onClick={() => setStyleGuidePreviewHtml(null)}
+              className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 sm:p-8"
+              dir={isRtl ? "rtl" : "ltr"}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-5xl h-[85dvh] bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+              >
+                <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-back-side)] flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileCode className="w-4 h-4 text-[var(--color-action)] shrink-0" />
+                    <span className="text-xs font-bold text-[var(--color-text-header)] truncate">
+                      {isRtl
+                        ? `دليل الهوية — ${activeWorkspace.name}`
+                        : `Brand StyleGuide — ${activeWorkspace.name}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <a
+                      href={styleGuideAssetUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="h-7 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-semibold text-[var(--color-text-header)] inline-flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      <span>{isRtl ? "فتح في نافذة" : "New Tab"}</span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setStyleGuidePreviewHtml(null)}
+                      aria-label={isRtl ? "إغلاق" : "Close"}
+                      className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-rose-500/20 text-[var(--color-text-muted)] hover:text-rose-400 flex items-center justify-center cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <iframe
+                  title={`${activeWorkspace.name} StyleGuide`}
+                  srcDoc={styleGuidePreviewHtml}
+                  className="w-full flex-1 border-0 bg-[#140d18]"
+                />
+              </div>
+            </div>
+          );
+          const canPortal =
+            typeof window !== "undefined" &&
+            typeof document !== "undefined" &&
+            typeof document.querySelector === "function";
+          return canPortal
+            ? createPortal(previewNode, document.body)
+            : previewNode;
         })()}
     </div>
   );

@@ -608,14 +608,11 @@ export default function SystemHealthView({
               {lastUpdated && (
                 <span
                   data-testid="ram-last-updated"
-                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-[var(--color-control)] border border-[var(--color-border)] text-[var(--color-text-muted)]"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-[var(--color-control)] border border-[var(--color-border)] text-[var(--color-text-muted)] whitespace-nowrap shrink-0"
                 >
                   <Clock className="w-3 h-3 shrink-0 text-[#B7A1D9]" />
-                  <span>
-                    {isRtl
-                      ? `آخر تحديث: ${lastUpdated}`
-                      : `Updated: ${lastUpdated}`}
-                  </span>
+                  <span>{isRtl ? "آخر تحديث:" : "Updated:"}</span>
+                  <span dir="ltr">{lastUpdated}</span>
                 </span>
               )}
             </div>

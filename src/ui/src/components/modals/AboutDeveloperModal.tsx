@@ -107,11 +107,7 @@ export default function AboutDeveloperModal({
                     </h4>
                     <span className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-full bg-[#B7A1D9]/15 border border-[#B7A1D9]/30 text-[#B7A1D9] text-[10px] font-bold">
                       <Code2 className="w-3 h-3" />
-                      <span>
-                        {isRtl
-                          ? "مسؤول التكنولوجيا والبرمجة"
-                          : "Technology & Programming"}
-                      </span>
+                      <span>Software Engineer</span>
                     </span>
                   </div>
                 </div>
@@ -122,8 +118,8 @@ export default function AboutDeveloperModal({
                 >
                   <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
                     {isRtl
-                      ? "تطوير محرك التطبيق بلغة Rust، وتفعيل الخطوط بالذاكرة، وجسر ربط Adobe CC، ومنصة Fontivo."
-                      : "Built the native Rust desktop engine, in-memory font activation, Adobe CC bridge, and web platform."}
+                      ? "بناء معمارية تطبيق سطح المكتب الأصلية بلغة Rust وReact، وتفعيل الخطوط الفوري بالذاكرة، وجسر ربط Adobe CC، ومحرك مساحات العمل والأصول، ومنظومة الويب."
+                      : "Engineered the native desktop architecture, instant in-memory font activation, Adobe CC integration, workspace & asset engine, and web ecosystem."}
                   </p>
                 </div>
               </div>
@@ -155,11 +151,7 @@ export default function AboutDeveloperModal({
                     </h4>
                     <span className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-full bg-[#F16B50]/15 border border-[#F16B50]/30 text-[#F16B50] text-[10px] font-bold">
                       <Palette className="w-3 h-3" />
-                      <span>
-                        {isRtl
-                          ? "مسؤول الهوية والخطوط"
-                          : "Brand Identity & Fonts"}
-                      </span>
+                      <span>Graphic Designer</span>
                     </span>
                   </div>
                 </div>
@@ -170,8 +162,8 @@ export default function AboutDeveloperModal({
                 >
                   <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
                     {isRtl
-                      ? "تصميم الهوية البصرية والشعار وأنظمة الألوان وتنسيق وتنظيم حزم الخطوط العربية والعالمية."
-                      : "Designed the visual identity, brand mark, color system, and curated multi-script font packs."}
+                      ? "تصميم الهوية البصرية وتوجيه واجهات وتجربة المستخدم (UI/UX)، ونظام الألوان، وانتقاء وتصنيف مكتبة الـ 10,939 خطاً للمصممين والاستوديوهات."
+                      : "Directed visual identity, UI/UX design, color system, and typographic curation & categorization of the 10,939-font library for designers and studios."}
                   </p>
                 </div>
               </div>

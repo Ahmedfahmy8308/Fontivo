@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -2888,6 +2888,58 @@ pub fn inspect_ase(
     }
 }
 
+/// Strips trailing workspace subfolder segments (e.g. `\Designs`, `\Fonts`, `\Palettes`, `\Guidelines`,
+/// or the requested `subfolder`) so a subfolder path is never treated as a workspace root.
+pub fn normalize_workspace_root_folder(
+    raw: Option<&str>,
+    subfolder: Option<&str>,
+) -> Option<String> {
+    let s = raw?.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let mut trimmed = s.trim_end_matches(['/', '\\']).to_string();
+
+    if let Some(sub) = subfolder
+        .map(|v| v.trim().trim_matches(['/', '\\']))
+        .filter(|v| !v.is_empty())
+    {
+        let norm_sub = sub.replace('\\', "/").to_ascii_lowercase();
+        let norm_trimmed = trimmed.replace('\\', "/").to_ascii_lowercase();
+        if norm_trimmed.ends_with(&format!("/{}", norm_sub)) {
+            let new_len = trimmed.len().saturating_sub(norm_sub.len() + 1);
+            trimmed = trimmed[..new_len].trim_end_matches(['/', '\\']).to_string();
+        }
+    }
+
+    let known_subs = ["designs", "fonts", "palettes", "guidelines"];
+    loop {
+        let path = Path::new(&trimmed);
+        let Some(last) = path.file_name().and_then(|n| n.to_str()) else {
+            break;
+        };
+        if known_subs.contains(&last.to_ascii_lowercase().as_str()) {
+            if let Some(parent) = path.parent() {
+                let parent_str = parent
+                    .to_string_lossy()
+                    .trim_end_matches(['/', '\\'])
+                    .to_string();
+                if !parent_str.is_empty() {
+                    trimmed = parent_str;
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
 /// POST /api/workspaces/open-folder: opens physical workspace folder or subfolder in Windows Explorer
 pub fn open_workspace_folder(
     mut req: Request,
@@ -2941,16 +2993,24 @@ pub fn open_workspace_folder(
         }
     };
 
-    // Sync workspace physical files first if workspace exists
-    {
+    // Always resolve the true workspace root from disk (`ws.folder_path` or default workspace dir),
+    // never accepting a subfolder path (e.g. `<root>\Designs`) as `base_dir`.
+    let resolved_custom_folder = {
         let st = state.read().unwrap();
         let dir = get_workspaces_dir(&st.data_dir);
         if let Some(ws) = load_workspace_from_disk(&dir, safe_id) {
-            let _ = sync_workspace_physical_files(&ws, &st.fonts, parsed.folder_path.as_deref());
+            let root_override = normalize_workspace_root_folder(ws.folder_path.as_deref(), None);
+            let _ = sync_workspace_physical_files(&ws, &st.fonts, root_override.as_deref());
+            root_override
+        } else {
+            normalize_workspace_root_folder(
+                parsed.folder_path.as_deref(),
+                parsed.subfolder.as_deref(),
+            )
         }
-    }
+    };
 
-    let base_dir = match ensure_workspace_physical_dir(safe_id, parsed.folder_path.as_deref()) {
+    let base_dir = match ensure_workspace_physical_dir(safe_id, resolved_custom_folder.as_deref()) {
         Ok(d) => d,
         Err(e) => {
             respond_json(
@@ -3562,7 +3622,81 @@ pub fn create_workspace_folder(
     );
 }
 
-/// POST /api/workspaces/:id/upload-design?fileName=...&subfolder=...
+pub const MAX_DESIGN_UPLOAD_BYTES: usize = 512 * 1024 * 1024;
+
+fn is_supported_design_ext(ext: &str) -> bool {
+    matches!(
+        ext,
+        "psd" | "ai" | "indd" | "pdf" | "svg" | "png" | "jpg" | "jpeg" | "webp" | "fig" | "xd"
+    )
+}
+
+fn sanitize_design_filename(raw_name: &str) -> String {
+    Path::new(raw_name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Design.png")
+        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'], "_")
+}
+
+fn build_design_metadata(
+    safe_id: &str,
+    clean_sub: &str,
+    clean_name: &str,
+    ext: &str,
+    dest_path: &Path,
+    file_size: u64,
+    fonts_snapshot: &[crate::server::state::FontRecord],
+) -> serde_json::Value {
+    let used_fonts = if matches!(ext, "psd" | "ai" | "indd" | "pdf" | "svg") {
+        crate::scanner::AdobeScanner::extract_font_names(dest_path).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let mut missing_fonts = Vec::new();
+    for ufont in &used_fonts {
+        let ulow = ufont.to_ascii_lowercase();
+        let active_match = fonts_snapshot.iter().any(|f| {
+            f.is_active
+                && (f.name.to_ascii_lowercase().contains(&ulow)
+                    || f.family
+                        .as_deref()
+                        .map(|fam| fam.to_ascii_lowercase().contains(&ulow))
+                        .unwrap_or(false))
+        });
+        if !active_match {
+            missing_fonts.push(ufont.clone());
+        }
+    }
+
+    let rel_file = format!("{}/{}", clean_sub, clean_name);
+    let is_image = matches!(ext, "png" | "jpg" | "jpeg" | "webp" | "svg");
+    let preview_url = if is_image {
+        Some(format!(
+            "/api/workspaces/{}/asset?path={}",
+            safe_id,
+            encode_uri_component_safe(&rel_file)
+        ))
+    } else {
+        None
+    };
+
+    serde_json::json!({
+        "name": clean_name,
+        "path": dest_path.to_string_lossy().to_string(),
+        "relativePath": rel_file,
+        "subfolder": clean_sub,
+        "format": ext.to_uppercase(),
+        "size": file_size,
+        "usedFonts": used_fonts,
+        "missingFonts": missing_fonts,
+        "allActive": missing_fonts.is_empty(),
+        "previewUrl": preview_url
+    })
+}
+
+/// POST /api/workspaces/:id/upload-design?fileName=...&subfolder=...: streams a design/mockup file (up to 512 MB) into workspace folder and scans fonts
 pub fn upload_workspace_design(
     mut req: Request,
     state: &Arc<RwLock<AppState>>,
@@ -3590,21 +3724,14 @@ pub fn upload_workspace_design(
         .or_else(|| query_params.get("filename"))
         .cloned()
         .unwrap_or_else(|| "Design.png".to_string());
-    let clean_name = Path::new(&raw_name)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("Design.png")
-        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'], "_");
+    let clean_name = sanitize_design_filename(&raw_name);
     let ext = Path::new(&clean_name)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    if !matches!(
-        ext.as_str(),
-        "psd" | "ai" | "indd" | "pdf" | "svg" | "png" | "jpg" | "jpeg" | "webp" | "fig" | "xd"
-    ) {
+    if !is_supported_design_ext(&ext) {
         respond_json(
             req,
             400,
@@ -3636,35 +3763,6 @@ pub fn upload_workspace_design(
             return;
         }
     };
-
-    let mut bytes = Vec::new();
-    let cap = 64 * 1024 * 1024 + 1;
-    if req
-        .as_reader()
-        .take(cap as u64)
-        .read_to_end(&mut bytes)
-        .is_err()
-        || bytes.is_empty()
-    {
-        respond_json(
-            req,
-            400,
-            serde_json::json!({ "success": false, "error": "Empty or unreadable design upload" }),
-            cors_origin,
-            json_header,
-        );
-        return;
-    }
-    if bytes.len() > 64 * 1024 * 1024 {
-        respond_json(
-            req,
-            413,
-            serde_json::json!({ "success": false, "error": "Design file exceeds 64 MB limit" }),
-            cors_origin,
-            json_header,
-        );
-        return;
-    }
 
     let (data_dir, fonts_snapshot) = {
         let st = state.read().unwrap();
@@ -3705,40 +3803,97 @@ pub fn upload_workspace_design(
     }
 
     let dest_path = target_dir.join(&clean_name);
-    if let Err(e) = fs::write(&dest_path, &bytes) {
+    let temp_path = target_dir.join(format!(".{}.upload_part", clean_name));
+    let mut out_file = match fs::File::create(&temp_path) {
+        Ok(f) => f,
+        Err(e) => {
+            respond_json(
+                req,
+                500,
+                serde_json::json!({ "success": false, "error": format!("Failed to create design file: {}", e) }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let mut total_written: usize = 0;
+    let mut buf = [0u8; 64 * 1024];
+    let reader = req.as_reader();
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                total_written = total_written.saturating_add(n);
+                if total_written > MAX_DESIGN_UPLOAD_BYTES {
+                    drop(out_file);
+                    let _ = fs::remove_file(&temp_path);
+                    respond_json(
+                        req,
+                        413,
+                        serde_json::json!({ "success": false, "error": "Design file exceeds 512 MB limit" }),
+                        cors_origin,
+                        json_header,
+                    );
+                    return;
+                }
+                if let Err(e) = out_file.write_all(&buf[..n]) {
+                    drop(out_file);
+                    let _ = fs::remove_file(&temp_path);
+                    respond_json(
+                        req,
+                        500,
+                        serde_json::json!({ "success": false, "error": format!("Failed to write design file: {}", e) }),
+                        cors_origin,
+                        json_header,
+                    );
+                    return;
+                }
+            }
+            Err(_) => {
+                drop(out_file);
+                let _ = fs::remove_file(&temp_path);
+                respond_json(
+                    req,
+                    400,
+                    serde_json::json!({ "success": false, "error": "Empty or unreadable design upload" }),
+                    cors_origin,
+                    json_header,
+                );
+                return;
+            }
+        }
+    }
+    drop(out_file);
+
+    if total_written == 0 {
+        let _ = fs::remove_file(&temp_path);
         respond_json(
             req,
-            500,
-            serde_json::json!({ "success": false, "error": format!("Failed to save design file: {}", e) }),
+            400,
+            serde_json::json!({ "success": false, "error": "Empty or unreadable design upload" }),
             cors_origin,
             json_header,
         );
         return;
     }
 
-    let used_fonts = if matches!(ext.as_str(), "psd" | "ai" | "indd" | "pdf" | "svg") {
-        crate::scanner::AdobeScanner::extract_font_names(&dest_path).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    let mut missing_fonts = Vec::new();
-    for ufont in &used_fonts {
-        let ulow = ufont.to_ascii_lowercase();
-        let active_match = fonts_snapshot.iter().any(|f| {
-            f.is_active
-                && (f.name.to_ascii_lowercase().contains(&ulow)
-                    || f.family
-                        .as_deref()
-                        .map(|fam| fam.to_ascii_lowercase().contains(&ulow))
-                        .unwrap_or(false))
-        });
-        if !active_match {
-            missing_fonts.push(ufont.clone());
-        }
+    if dest_path.exists() {
+        let _ = fs::remove_file(&dest_path);
+    }
+    if let Err(e) = fs::rename(&temp_path, &dest_path) {
+        let _ = fs::remove_file(&temp_path);
+        respond_json(
+            req,
+            500,
+            serde_json::json!({ "success": false, "error": format!("Failed to finalize design file: {}", e) }),
+            cors_origin,
+            json_header,
+        );
+        return;
     }
 
-    let rel_file = format!("{}/{}", clean_sub, clean_name);
     if let Some(ref mut ws) = ws_opt {
         if !ws
             .folders
@@ -3750,38 +3905,198 @@ pub fn upload_workspace_design(
         }
     }
 
-    let is_image = matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "svg");
-    let preview_url = if is_image {
-        Some(format!(
-            "/api/workspaces/{}/asset?path={}",
-            safe_id,
-            encode_uri_component_safe(&rel_file)
-        ))
-    } else {
-        None
-    };
+    let design_json = build_design_metadata(
+        safe_id,
+        &clean_sub,
+        &clean_name,
+        &ext,
+        &dest_path,
+        total_written as u64,
+        &fonts_snapshot,
+    );
 
     respond_json(
         req,
         200,
         serde_json::json!({
             "success": true,
-            "design": {
-                "name": clean_name,
-                "path": dest_path.to_string_lossy().to_string(),
-                "relativePath": rel_file,
-                "subfolder": clean_sub,
-                "format": ext.to_uppercase(),
-                "size": bytes.len(),
-                "usedFonts": used_fonts,
-                "missingFonts": missing_fonts,
-                "allActive": missing_fonts.is_empty(),
-                "previewUrl": preview_url
-            }
+            "design": design_json
         }),
         cors_origin,
         json_header,
     );
+}
+
+/// Copies selected local design files directly on disk into a workspace subfolder, scans fonts,
+/// and returns their metadata without buffering large files over HTTP.
+pub fn import_local_design_files_into_workspace(
+    state: &Arc<RwLock<AppState>>,
+    safe_id: &str,
+    clean_sub: &str,
+    source_paths: &[PathBuf],
+) -> Result<Vec<serde_json::Value>, (u16, String)> {
+    let (data_dir, fonts_snapshot) = {
+        let st = state.read().unwrap();
+        (st.data_dir.clone(), st.fonts.clone())
+    };
+    let ws_dir = get_workspaces_dir(&data_dir);
+    let mut ws_opt = load_workspace_from_disk(&ws_dir, safe_id);
+    let phys_root = ensure_workspace_physical_dir(
+        safe_id,
+        ws_opt.as_ref().and_then(|w| w.folder_path.as_deref()),
+    )
+    .map_err(|e| (400, e))?;
+
+    let mut target_dir = phys_root;
+    for seg in clean_sub.split('/') {
+        target_dir = target_dir.join(seg);
+    }
+    fs::create_dir_all(&target_dir)
+        .map_err(|e| (500, format!("Failed to create target folder: {}", e)))?;
+
+    let mut designs = Vec::new();
+    for src in source_paths {
+        if !src.is_file() {
+            continue;
+        }
+        let raw_name = src
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Design.png");
+        let clean_name = sanitize_design_filename(raw_name);
+        let ext = Path::new(&clean_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !is_supported_design_ext(&ext) {
+            continue;
+        }
+
+        let dest_path = target_dir.join(&clean_name);
+        if src.canonicalize().ok() != dest_path.canonicalize().ok() {
+            fs::copy(src, &dest_path)
+                .map_err(|e| (500, format!("Failed to copy '{}': {}", clean_name, e)))?;
+        }
+        let size = fs::metadata(&dest_path).map(|m| m.len()).unwrap_or(0);
+        designs.push(build_design_metadata(
+            safe_id,
+            clean_sub,
+            &clean_name,
+            &ext,
+            &dest_path,
+            size,
+            &fonts_snapshot,
+        ));
+    }
+
+    if !designs.is_empty() {
+        if let Some(ref mut ws) = ws_opt {
+            if !ws
+                .folders
+                .iter()
+                .any(|f| f.eq_ignore_ascii_case(clean_sub))
+            {
+                ws.folders.push(clean_sub.to_string());
+                let _ = save_workspace_to_disk(&ws_dir, ws);
+            }
+        }
+    }
+
+    Ok(designs)
+}
+
+/// POST /api/workspaces/:id/import-design-dialog: opens native file picker and copies selected
+/// design files directly on disk into the target subfolder (zero HTTP memory overhead for huge PSDs).
+pub fn import_workspace_design_dialog(
+    mut req: Request,
+    state: &Arc<RwLock<AppState>>,
+    id: &str,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let safe_id = match validate_workspace_id(id) {
+        Ok(valid) => valid,
+        Err(err) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": err }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let body = read_body(&mut req);
+    #[derive(Deserialize, Default)]
+    #[serde(rename_all = "camelCase")]
+    struct ImportDesignDialogReq {
+        #[serde(default)]
+        subfolder: Option<String>,
+    }
+    let parsed = serde_json::from_str::<ImportDesignDialogReq>(&body).unwrap_or_default();
+    let sub_raw = parsed.subfolder.as_deref().unwrap_or("Designs");
+    let clean_sub = match validate_relative_subfolder(sub_raw) {
+        Ok(r) if !r.is_empty() => r,
+        Ok(_) => "Designs".to_string(),
+        Err(e) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": e }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let files_opt = rfd::FileDialog::new()
+        .set_title("Select Design Files to Import")
+        .add_filter(
+            "Design Files",
+            &[
+                "psd", "ai", "indd", "pdf", "svg", "png", "jpg", "jpeg", "webp", "fig", "xd",
+            ],
+        )
+        .pick_files();
+
+    let Some(files) = files_opt else {
+        respond_json(
+            req,
+            200,
+            serde_json::json!({ "success": false, "cancelled": true, "designs": [] }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    };
+
+    match import_local_design_files_into_workspace(state, safe_id, &clean_sub, &files) {
+        Ok(designs) => {
+            respond_json(
+                req,
+                200,
+                serde_json::json!({
+                    "success": true,
+                    "designs": designs
+                }),
+                cors_origin,
+                json_header,
+            );
+        }
+        Err((status, err)) => {
+            respond_json(
+                req,
+                status,
+                serde_json::json!({ "success": false, "error": err }),
+                cors_origin,
+                json_header,
+            );
+        }
+    }
 }
 
 /// POST /api/workspaces/save-palette: persists updated color palette + writes Palettes/palette.{ase,css,json}
@@ -4009,11 +4324,11 @@ pub fn serve_workspace_asset(
         }
     };
 
-    let data_dir = {
+    let (data_dir, fonts_snapshot) = {
         let st = state.read().unwrap();
-        st.data_dir.clone()
+        (st.data_dir.clone(), st.fonts.clone())
     };
-    let (_, root) = match resolve_existing_workspace_root(&data_dir, safe_id) {
+    let (ws_opt, root) = match resolve_existing_workspace_root(&data_dir, safe_id) {
         Ok(r) => r,
         Err(_) => {
             let mut res = tiny_http::Response::from_string("Workspace not found")
@@ -4027,6 +4342,24 @@ pub fn serve_workspace_asset(
     let mut target = root.clone();
     for seg in clean_rel.split('/') {
         target = target.join(seg);
+    }
+
+    if clean_rel.eq_ignore_ascii_case("Guidelines/styleguide.html") && !target.is_file() {
+        if let Some(ref ws) = ws_opt {
+            let _ = sync_workspace_physical_files(ws, &fonts_snapshot, ws.folder_path.as_deref());
+        }
+        if !target.is_file() {
+            let fallback_ws = ws_opt.clone().unwrap_or_else(|| Workspace {
+                id: safe_id.to_string(),
+                name: safe_id.to_string(),
+                ..Default::default()
+            });
+            if let Some(parent) = target.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let html = generate_standalone_styleguide_html(&fallback_ws);
+            let _ = fs::write(&target, html);
+        }
     }
 
     let ok_contained = match (root.canonicalize(), target.canonicalize()) {

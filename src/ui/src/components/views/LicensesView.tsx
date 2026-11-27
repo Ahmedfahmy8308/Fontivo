@@ -321,7 +321,7 @@ export default function LicensesView({
                       className="inline-flex items-center gap-1.5 mt-1 px-2.5 py-0.5 rounded-full bg-[var(--color-action)]/12 border border-[var(--color-action)]/30 text-[var(--color-action)] text-[11px] font-semibold"
                     >
                       <Terminal className="w-3 h-3 shrink-0" />
-                      <span>Technology &amp; Programming</span>
+                      <span>Software Engineer</span>
                     </div>
                   </div>
                 </div>
@@ -329,8 +329,8 @@ export default function LicensesView({
                 <div className="p-4 rounded-xl bg-[var(--color-back-subtle)] border border-[var(--color-border-subtle)] text-xs text-[var(--color-text-main)] leading-relaxed space-y-2.5">
                   <p>
                     {isRtl
-                      ? "تطوير البنية التحتية والتطبيق الأصلي بلغة Rust مع واجهة React الحديثة، وبناء آلية تفعيل الخطوط المؤقت بالذاكرة (Win32 FR_PRIVATE) دون التعديل على ملفات النظام أو الريجستري، بالإضافة إلى جسر المزامنة الفوري مع Adobe Creative Cloud ومنصة Fontivo."
-                      : "Built the native Rust core engine and modern React 19 desktop interface, implementing transient Win32 FR_PRIVATE memory font virtualization with zero registry bloat, alongside real-time Adobe Creative Cloud bridging and the Fontivo web ecosystem."}
+                      ? "تطوير البنية التحتية والتطبيق الأصلي لسطح المكتب بلغة Rust وواجهة React 19، وبناء محرك تفعيل الخطوط الفوري في الذاكرة (Win32 FR_PRIVATE) دون المساس بالريجستري، بالإضافة إلى جسر التكامل مع Adobe CC ومحرك مساحات العمل والأصول ومنظومة Fontivo على الويب."
+                      : "Architected the native Rust desktop engine and modern React 19 interface, implementing instant Win32 FR_PRIVATE in-memory font activation with zero registry bloat, alongside the Adobe Creative Cloud bridge, workspace & asset engine, and Fontivo web ecosystem."}
                   </p>
                   <div
                     className="flex flex-wrap gap-1.5 pt-1 font-mono text-[10px]"
@@ -392,7 +392,7 @@ export default function LicensesView({
                       className="inline-flex items-center gap-1.5 mt-1 px-2.5 py-0.5 rounded-full bg-[#B7A1D9]/12 border border-[#B7A1D9]/30 text-[#B7A1D9] text-[11px] font-semibold"
                     >
                       <Brush className="w-3 h-3 shrink-0" />
-                      <span>Brand Identity &amp; Fonts</span>
+                      <span>Graphic Designer</span>
                     </div>
                   </div>
                 </div>
@@ -400,8 +400,8 @@ export default function LicensesView({
                 <div className="p-4 rounded-xl bg-[var(--color-back-subtle)] border border-[var(--color-border-subtle)] text-xs text-[var(--color-text-main)] leading-relaxed space-y-2.5">
                   <p>
                     {isRtl
-                      ? "تصميم الهوية البصرية الكاملة لـ Fontivo والشعار الثنائي الأنيق ونظام الألوان الموحد، إلى جانب انتقاء وتصنيف وتنظيم مكتبة الخطوط العربية والفارسية والأردية واللاتينية (10,939 خطاً في 15 حزمة) بما يلائم احتياجات المصممين ودور النشر."
-                      : "Crafted the complete visual identity, dual-ribbon brand mark, and Plum/Coral/Lavender design system, along with curating, deduplicating, and classifying the 10,939-font multi-script library across 15 ready-to-use packs for designers and studios."}
+                      ? "تصميم الهوية البصرية الكاملة لـ Fontivo والشعار وتوجيه تجربة وواجهات المستخدم (UI/UX) ونظام الألوان الموحد، إلى جانب انتقاء وتصنيف وتنظيم مكتبة الـ 10,939 خطاً (عربي ولاتيني ومتعدد اللغات) في حزم احترافية مهيأة للمصممين والاستوديوهات."
+                      : "Led the complete Fontivo visual identity, UI/UX direction, and unified Plum/Coral/Lavender color system, while curating, deduplicating, and categorizing the 10,939-font multi-script library into studio-ready packs for designers."}
                   </p>
                   <div
                     className="flex flex-wrap gap-1.5 pt-1 font-mono text-[10px]"

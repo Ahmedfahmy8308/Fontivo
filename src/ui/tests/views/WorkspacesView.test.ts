@@ -3,7 +3,6 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 import "../setup";
 import WorkspacesView, {
-  BRAND_FOLDER_TEMPLATES,
   buildSyncedProjectFonts,
   extractPaletteFromImageData,
   getDeadlineMeta,
@@ -226,7 +225,7 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain('dir="auto"');
   });
 
-  it("renders redesigned palette cards, preset brand folder templates, Open File / Pin controls, StyleGuide.html link, and non-mono Arabic filters", () => {
+  it("renders redesigned palette cards, freeform Design Files & Import (.PSD / .AI), Live Brand Identity Sheet, full-width Add Task input, StyleGuide.html link, and non-mono Arabic filters", () => {
     const html = renderToString(
       React.createElement(WorkspacesView, {
         fonts: [],
@@ -243,10 +242,25 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain("ابحث في كامل مكتبة الخطوط لإضافة خط إلى المشروع");
     expect(html).toContain("بحث في ملفات التصميم...");
 
-    // Preset Brand Folder Templates
-    for (const tpl of BRAND_FOLDER_TEMPLATES) {
-      expect(html).toContain(tpl.label.replace(/&/g, "&amp;"));
-    }
+    // Preset Brand Folder Templates removed; Import Design (.PSD / .AI) button added
+    expect(html).not.toContain("قوالب مجلدات الهوية الجاهزة");
+    expect(html).not.toContain("1-Click Brand Folder Templates");
+    expect(html).toContain("استيراد ملف تصميم (.PSD / .AI)");
+    expect(html).toContain("ملفات التصميم والمجلدات الفرعية");
+    expect(html).not.toContain("ملفات التصميم والمجلدات الفرعية (");
+
+    // Tasks heading without (Guidelines/) and full-width Add Task input
+    expect(html).toContain("مهام المشروع ومواعيد التسليم");
+    expect(html).not.toContain("مهام المشروع ومواعيد التسليم (");
+    expect(html).toContain("إضافة مهمة جديدة للمشروع (اضغط Enter)...");
+    expect(html).toContain('class="w-full bg-[var(--color-back-main)]');
+
+    // Live Brand Identity Sheet without (Guidelines/)
+    expect(html).toContain("دليل الهوية والتوجيه الفني");
+    expect(html).not.toContain("دليل الهوية والتوجيه الفني (");
+    expect(html).toContain("ألوان الهوية النشطة");
+    expect(html).toContain("خطوط الهوية المعتمدة");
+    expect(html).toContain("#F16B50");
 
     // Open File & StyleGuide.html button
     expect(html).toContain("فتح الملف");

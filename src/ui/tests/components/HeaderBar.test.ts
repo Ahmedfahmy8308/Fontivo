@@ -51,8 +51,7 @@ describe("HeaderBar Component & Window Controls Tests", () => {
     expect(sendWindowEvent).toHaveBeenCalledWith("close");
   });
 
-  it("displays RAM indicator and theme toggle in header controls", () => {
-    const toggleTheme = vi.fn();
+  it("renders minimal clean titlebar with Fontivo title and window controls only", () => {
     const html = renderToString(
       React.createElement(HeaderBar, {
         searchQuery: "",
@@ -63,11 +62,23 @@ describe("HeaderBar Component & Window Controls Tests", () => {
         setShowSortMenu: () => {},
         ramMb: 45,
         theme: "dark",
-        toggleTheme,
-        isRtl: false,
+        toggleTheme: () => {},
+        currentLanguage: "ar",
+        onSetLanguage: () => {},
+        onToggleSidebar: () => {},
+        onOpenOperations: () => {},
+        activeTab: "library",
+        isRtl: true,
       }),
     );
 
-    expect(html).toContain("45");
+    expect(html).toContain("Fontivo");
+    expect(html).toContain('title="Minimize"');
+    expect(html).toContain('title="Maximize"');
+    expect(html).toContain('title="Close"');
+    expect(html).not.toContain("45 MB");
+    expect(html).not.toContain("عربي");
+    expect(html).not.toContain("استوديو الخطوط");
+    expect(html).not.toContain("مكتبة الخطوط");
   });
 });

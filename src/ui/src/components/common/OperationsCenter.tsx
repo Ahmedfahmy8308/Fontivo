@@ -21,6 +21,7 @@ import {
   upsertLiveOperation,
   clearCompletedOperations,
   removeLiveOperation,
+  isOperationDismissed,
   formatTransferMb,
   formatTransferSpeed,
   OPERATIONS_EVENT,
@@ -104,24 +105,34 @@ export default function OperationsCenter({
       if (Array.isArray(list)) {
         list.forEach((op: any) => {
           if (!op || !op.id) return;
+          const opId = String(op.id);
           const normStatus = String(op.status || "").toLowerCase();
           const normPhase = String(op.phase || "").toLowerCase();
+          const mappedStatus =
+            normStatus === "completed" || normPhase === "completed"
+              ? "completed"
+              : normStatus === "failed" ||
+                  normStatus === "cancelled" ||
+                  normPhase === "failed" ||
+                  normPhase === "cancelled"
+                ? "failed"
+                : normStatus === "queued" || normPhase === "queued"
+                  ? "queued"
+                  : "running";
+
+          if (
+            (mappedStatus === "completed" || mappedStatus === "failed") &&
+            isOperationDismissed(opId)
+          ) {
+            return;
+          }
+
           upsertLiveOperation({
-            id: String(op.id),
+            id: opId,
             title: op.title || op.name || "System Operation",
             titleAr: op.titleAr || op.title || op.name || "عملية النظام",
             category: op.category || "system",
-            status:
-              normStatus === "completed" || normPhase === "completed"
-                ? "completed"
-                : normStatus === "failed" ||
-                    normStatus === "cancelled" ||
-                    normPhase === "failed" ||
-                    normPhase === "cancelled"
-                  ? "failed"
-                  : normStatus === "queued" || normPhase === "queued"
-                    ? "queued"
-                    : "running",
+            status: mappedStatus,
             progressPercent: op.progressPercent ?? op.progress ?? 0,
             stepLabel: op.stepLabel || op.phase || op.message,
             stepLabelAr: op.stepLabelAr || op.stepLabel || op.phase,
@@ -156,6 +167,13 @@ export default function OperationsCenter({
                 : normPhase === "queued" || normStatus === "queued"
                   ? "queued"
                   : "running";
+          const dlId = `dl-${id}`;
+          if (
+            (mappedStatus === "completed" || mappedStatus === "failed") &&
+            isOperationDismissed(dlId)
+          ) {
+            return;
+          }
 
           const stepAr =
             normPhase === "queued"
@@ -220,7 +238,16 @@ export default function OperationsCenter({
   const runningOps = operations.filter(
     (op) => op.status === "running" || op.status === "queued",
   );
-  const completedOps = operations.filter((op) => op.status === "completed");
+  const completedOps = operations.filter(
+    (op) => op.status === "completed" || op.status === "failed",
+  );
+
+  const handleClearCompleted = useCallback(() => {
+    clearCompletedOperations();
+    if (typeof fetch === "function") {
+      fetch("/api/system/operations/clear", { method: "POST" }).catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     if (!isExpanded && runningOps.length === 0) return;
@@ -342,7 +369,8 @@ export default function OperationsCenter({
         <div className="flex items-center gap-1">
           {completedOps.length > 0 && (
             <button
-              onClick={clearCompletedOperations}
+              onClick={handleClearCompleted}
+              data-testid="operations-clear-btn"
               className="p-1 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:bg-[var(--color-control)] transition cursor-pointer"
               title={isRtl ? "مسح العمليات المكتملة" : "Clear completed"}
             >

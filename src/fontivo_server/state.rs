@@ -2370,6 +2370,21 @@ impl AppState {
         list
     }
 
+    /// Clears all completed, failed, or cancelled operations from both `operations`
+    /// and `download_manager`, returning the total number of cleared items.
+    pub fn clear_finished_operations(&mut self) -> usize {
+        let before_ops = self.operations.len();
+        self.operations.retain(|op| {
+            !matches!(
+                op.status.to_ascii_lowercase().as_str(),
+                "completed" | "failed" | "cancelled" | "error" | "done"
+            )
+        });
+        let removed_ops = before_ops.saturating_sub(self.operations.len());
+        let removed_jobs = self.download_manager.clear_finished_jobs();
+        removed_ops + removed_jobs
+    }
+
     pub fn save_favorites(&self) {
         let path = self.data_dir.join("favorites.json");
         if let Ok(json) = serde_json::to_string_pretty(&self.favorite_font_ids) {

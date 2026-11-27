@@ -78,6 +78,34 @@ impl DownloadManager {
         jobs.values().map(|p| p.read().unwrap().clone()).collect()
     }
 
+    /// Inserts or updates a tracked download job entry.
+    pub fn upsert_job(&self, progress: DownloadProgress) {
+        let job_id = progress.job_id.clone();
+        let mut jobs = self.jobs.write().unwrap();
+        jobs.insert(job_id, Arc::new(RwLock::new(progress)));
+    }
+
+    /// Removes all completed, failed, or cancelled download jobs and returns the number removed.
+    pub fn clear_finished_jobs(&self) -> usize {
+        let mut jobs = self.jobs.write().unwrap();
+        let mut cancels = self.cancellations.write().unwrap();
+        let mut to_remove = Vec::new();
+        for (job_id, prog_arc) in jobs.iter() {
+            let phase = prog_arc.read().unwrap().phase.clone();
+            if matches!(
+                phase,
+                JobPhase::Completed | JobPhase::Failed | JobPhase::Cancelled
+            ) {
+                to_remove.push(job_id.clone());
+            }
+        }
+        for job_id in &to_remove {
+            jobs.remove(job_id);
+            cancels.remove(job_id);
+        }
+        to_remove.len()
+    }
+
     /// Signals cancellation for an active job
     pub fn cancel(&self, job_id: &str) -> bool {
         let cancels = self.cancellations.read().unwrap();

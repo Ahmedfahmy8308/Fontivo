@@ -253,22 +253,17 @@ export default function Sidebar({
             aria-label={`${totalCount.toLocaleString()} Fonts`}
           />
         ) : (
-          <>
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-[11px] font-bold tracking-wider uppercase text-[var(--color-text-muted)] font-sans truncate">
-                {sidebarMode === "settings"
-                  ? isRtl
-                    ? "الإعدادات والنظام"
-                    : "Settings & System"
-                  : isRtl
-                    ? "استوديو الخطوط"
-                    : "Fontivo Studio"}
-              </span>
-            </div>
-            <span className="text-[11px] font-mono tabular-nums text-[var(--color-text-muted)] font-bold shrink-0">
-              {totalCount.toLocaleString()}
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[11px] font-bold tracking-wider uppercase text-[var(--color-text-muted)] font-sans truncate">
+              {sidebarMode === "settings"
+                ? isRtl
+                  ? "الإعدادات والنظام"
+                  : "Settings & System"
+                : isRtl
+                  ? "استوديو الخطوط"
+                  : "Fontivo Studio"}
             </span>
-          </>
+          </div>
         )}
       </div>
 

@@ -1408,100 +1408,9 @@ export default function App({
                 />
               ) : (
                 <>
-                  {/* Google Fonts & Custom Fonts First Quick-Bar with Universal Search */}
+                  {/* Contextual Smart Actions Strip per Active Filter */}
                   <div className="px-4 py-2 bg-[var(--color-back-header)]/60 border-b border-[var(--color-border-subtle)] flex flex-wrap items-center justify-between gap-3 shrink-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <button
-                        onClick={() => setFilter({ type: "all", value: null })}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                          filter.type === "all"
-                            ? "bg-[var(--color-action)] text-[#130C16] shadow-2xs"
-                            : "bg-[var(--color-control)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)]"
-                        }`}
-                      >
-                        <Layers className="w-3 h-3 shrink-0" />
-                        <span>{isRtl ? "كافة الخطوط" : "All Fonts"}</span>
-                      </button>
-
-                      <button
-                        onClick={() =>
-                          setFilter({ type: "google", value: null })
-                        }
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                          filter.type === "google"
-                            ? "bg-[var(--color-action)] text-[#130C16] shadow-2xs"
-                            : "bg-[var(--color-control)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)]"
-                        }`}
-                      >
-                        <Globe className="w-3 h-3 shrink-0" />
-                        <span>
-                          {isRtl ? "جوجل المحمّلة" : "Downloaded Google"}
-                        </span>
-                      </button>
-
-                      <button
-                        onClick={() =>
-                          setFilter({ type: "system", value: null })
-                        }
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                          filter.type === "system"
-                            ? "bg-[var(--color-action)] text-[#130C16] shadow-2xs"
-                            : "bg-[var(--color-control)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)]"
-                        }`}
-                      >
-                        <Monitor className="w-3 h-3 shrink-0" />
-                        <span>{isRtl ? "خطوط النظام" : "System Fonts"}</span>
-                      </button>
-
-                      <button
-                        onClick={() =>
-                          setFilter({ type: "custom", value: null })
-                        }
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                          filter.type === "custom"
-                            ? "bg-[var(--color-action)] text-[#130C16] shadow-2xs"
-                            : "bg-[var(--color-control)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)]"
-                        }`}
-                      >
-                        <FolderOpen className="w-3 h-3 shrink-0" />
-                        <span>
-                          {isRtl ? "المحلية والخاصة" : "Local & Custom"}
-                        </span>
-                      </button>
-
-                      <button
-                        onClick={() =>
-                          setFilter({ type: "favorites", value: null })
-                        }
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                          filter.type === "favorites"
-                            ? "bg-[var(--color-action)] text-[#130C16] shadow-2xs"
-                            : "bg-[var(--color-control)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)]"
-                        }`}
-                      >
-                        <Bookmark className="w-3 h-3 shrink-0" />
-                        <span>{isRtl ? "المفضلة" : "Favorites"}</span>
-                      </button>
-
-                      <button
-                        onClick={() =>
-                          setFilter({ type: "active", value: null })
-                        }
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                          filter.type === "active"
-                            ? "bg-[var(--color-action)] text-[#130C16] shadow-2xs"
-                            : "bg-[var(--color-control)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)]"
-                        }`}
-                      >
-                        <Zap className="w-3 h-3 shrink-0" />
-                        <span>
-                          {isRtl ? "المفعلة بالرام" : "Active in RAM"}
-                        </span>
-                      </button>
-                    </div>
-
-                    {/* Contextual Smart Actions Strip per Active Filter */}
-                    <div className="w-full flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[var(--color-border-subtle)]/70">
+                    <div className="w-full flex flex-wrap items-center justify-between gap-2">
                       {filter.type === "custom" ? (
                         <div
                           data-testid="local-segmented-panel"
@@ -1668,192 +1577,185 @@ export default function App({
                             </div>
                           )}
 
-                          {/* Row 2: Clickable Grouped Folder Chips (Imported/<Name>, Packs/<Name>, Custom, Google) */}
-                          {visibleCustomFolders.length > 0 && (
-                            <div
-                              data-testid="local-folder-chips"
-                              className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-[var(--color-border-subtle)]/50"
-                            >
-                              {customFolderPath && (
-                                <button
-                                  onClick={() => setCustomFolderPath(null)}
-                                  className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-sans font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] cursor-pointer whitespace-nowrap"
-                                >
-                                  <X className="w-3 h-3 shrink-0" />
-                                  <span>
-                                    {isRtl ? "كل المجلدات" : "All Folders"}
-                                  </span>
-                                </button>
-                              )}
-                              {visibleCustomFolders.map((folder) => {
-                                const allActive =
-                                  folder.total > 0 &&
-                                  folder.active >= folder.total;
-                                const isSelected =
+                          {/* Row 2: Compact Folder / Pack Dropdown Selector (replaces multi-row chip wall) */}
+                          {visibleCustomFolders.length > 0 && (() => {
+                            const selectedCustomFolder =
+                              visibleCustomFolders.find(
+                                (f) =>
                                   Boolean(customFolderPath) &&
                                   normalizeFolderPath(customFolderPath!) ===
-                                    normalizeFolderPath(folder.path);
-                                const isConfirmingDelete =
-                                  confirmDeleteFolderPath === folder.path;
-                                const isDeleting =
-                                  deletingFolderPath === folder.path;
-                                const FolderBadgeIcon =
-                                  folder.bucket === "cloud"
-                                    ? Package
-                                    : folder.bucket === "google"
-                                      ? Globe
-                                      : FolderOpen;
+                                    normalizeFolderPath(f.path),
+                              ) || null;
+                            const allActive =
+                              selectedCustomFolder &&
+                              selectedCustomFolder.total > 0 &&
+                              selectedCustomFolder.active >=
+                                selectedCustomFolder.total;
+                            const isConfirmingDelete =
+                              selectedCustomFolder &&
+                              confirmDeleteFolderPath ===
+                                selectedCustomFolder.path;
+                            const isDeleting =
+                              selectedCustomFolder &&
+                              deletingFolderPath === selectedCustomFolder.path;
 
-                                return (
-                                  <div
-                                    key={folder.path}
-                                    data-testid="local-folder-chip"
-                                    onClick={() => {
-                                      if (isConfirmingDelete || isDeleting)
-                                        return;
-                                      setCustomFolderPath(
-                                        isSelected ? null : folder.path,
-                                      );
-                                    }}
-                                    role="button"
-                                    tabIndex={0}
-                                    onKeyDown={(e) => {
-                                      if (
-                                        (e.key === "Enter" || e.key === " ") &&
-                                        !isConfirmingDelete &&
-                                        !isDeleting
-                                      ) {
-                                        e.preventDefault();
-                                        setCustomFolderPath(
-                                          isSelected ? null : folder.path,
-                                        );
-                                      }
-                                    }}
-                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] transition cursor-pointer select-none ${
-                                      isSelected
-                                        ? "bg-[var(--color-action)]/15 border-[var(--color-action)] text-[var(--color-text-header)] ring-1 ring-[var(--color-action)]/40 shadow-2xs"
-                                        : "bg-[var(--color-back-card)] border-[var(--color-border)] hover:border-[var(--color-action)]/50 text-[var(--color-text-main)]"
-                                    }`}
-                                    title={folder.path}
+                            return (
+                              <div
+                                data-testid="local-folder-selector"
+                                className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-[var(--color-border-subtle)]/50"
+                              >
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  <FolderOpen className="w-3.5 h-3.5 text-[#B7A1D9] shrink-0" />
+                                  <label
+                                    htmlFor="local-folder-select"
+                                    className="text-[11px] font-sans font-semibold text-[var(--color-text-muted)] whitespace-nowrap shrink-0"
                                   >
-                                    <FolderBadgeIcon
-                                      className={`w-3.5 h-3.5 shrink-0 ${
-                                        isSelected
-                                          ? "text-[var(--color-action)]"
-                                          : "text-[#B7A1D9]"
-                                      }`}
-                                    />
-                                    <span
-                                      dir="auto"
-                                      className="font-sans font-semibold text-[var(--color-text-header)] truncate max-w-[180px]"
+                                    {isRtl
+                                      ? "تصفية حسب المجلد أو الحزمة:"
+                                      : "Filter by Folder or Pack:"}
+                                  </label>
+                                  <select
+                                    id="local-folder-select"
+                                    data-testid="local-folder-select"
+                                    value={selectedCustomFolder?.path || ""}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setConfirmDeleteFolderPath(null);
+                                      setCustomFolderPath(val ? val : null);
+                                    }}
+                                    className="h-8 px-2.5 rounded-lg bg-[var(--color-back-card)] border border-[var(--color-border)] hover:border-[var(--color-action)]/50 focus:border-[var(--color-action)] text-[11px] font-sans font-semibold text-[var(--color-text-header)] outline-none cursor-pointer min-w-[200px] max-w-sm truncate"
+                                  >
+                                    <option value="">
+                                      {isRtl
+                                        ? `كل المجلدات والحزم (${visibleCustomFolders.length})`
+                                        : `All Folders & Packs (${visibleCustomFolders.length})`}
+                                    </option>
+                                    {visibleCustomFolders.map((folder) => (
+                                      <option
+                                        key={folder.path}
+                                        value={folder.path}
+                                      >
+                                        {folder.displayLabel} ({folder.active}/
+                                        {folder.total})
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {selectedCustomFolder && (
+                                    <button
+                                      onClick={() => {
+                                        setConfirmDeleteFolderPath(null);
+                                        setCustomFolderPath(null);
+                                      }}
+                                      className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-sans font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] cursor-pointer whitespace-nowrap shrink-0"
+                                      title={
+                                        isRtl ? "كل المجلدات" : "All Folders"
+                                      }
                                     >
-                                      {folder.displayLabel}
-                                    </span>
-                                    <span
-                                      dir="ltr"
-                                      className="font-mono tabular-nums text-[10px] text-[var(--color-text-muted)] px-1 py-0.5 rounded bg-[var(--color-control)]"
-                                    >
-                                      {folder.active}/{folder.total}
-                                    </span>
+                                      <X className="w-3 h-3 shrink-0" />
+                                      <span>
+                                        {isRtl ? "مسح التصفية" : "Clear"}
+                                      </span>
+                                    </button>
+                                  )}
+                                </div>
 
-                                    <div
-                                      className="inline-flex items-center gap-1 shrink-0"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      {!allActive ? (
-                                        <button
-                                          onClick={() =>
-                                            handleContextualBatch(
-                                              "activate-folder",
-                                              folder.path,
-                                            )
-                                          }
-                                          disabled={
-                                            contextBatchBusy || isDeleting
-                                          }
-                                          className="px-2 py-0.5 rounded bg-[var(--color-action)]/15 hover:bg-[var(--color-action)] text-[var(--color-action)] hover:text-[#130C16] font-sans font-bold transition cursor-pointer text-[10px] whitespace-nowrap"
-                                        >
-                                          {isRtl ? "تفعيل بالرام" : "Activate"}
-                                        </button>
-                                      ) : (
-                                        <button
-                                          onClick={() =>
-                                            handleContextualBatch(
-                                              "deactivate-folder",
-                                              folder.path,
-                                            )
-                                          }
-                                          disabled={
-                                            contextBatchBusy || isDeleting
-                                          }
-                                          className="px-2 py-0.5 rounded bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] font-sans font-semibold transition cursor-pointer text-[10px] whitespace-nowrap"
-                                        >
-                                          {isRtl ? "إلغاء" : "Deactivate"}
-                                        </button>
-                                      )}
+                                {selectedCustomFolder && (
+                                  <div className="inline-flex items-center gap-1.5 shrink-0">
+                                    {!allActive ? (
+                                      <button
+                                        onClick={() =>
+                                          handleContextualBatch(
+                                            "activate-folder",
+                                            selectedCustomFolder.path,
+                                          )
+                                        }
+                                        disabled={
+                                          contextBatchBusy || Boolean(isDeleting)
+                                        }
+                                        className="h-8 px-2.5 rounded-lg bg-[var(--color-action)]/15 hover:bg-[var(--color-action)] text-[var(--color-action)] hover:text-[#130C16] font-sans font-bold transition cursor-pointer text-[11px] whitespace-nowrap"
+                                      >
+                                        {isRtl
+                                          ? "تفعيل المجلد بالرام"
+                                          : "Activate Folder"}
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={() =>
+                                          handleContextualBatch(
+                                            "deactivate-folder",
+                                            selectedCustomFolder.path,
+                                          )
+                                        }
+                                        disabled={
+                                          contextBatchBusy || Boolean(isDeleting)
+                                        }
+                                        className="h-8 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] font-sans font-semibold transition cursor-pointer text-[11px] whitespace-nowrap border border-[var(--color-border)]"
+                                      >
+                                        {isRtl
+                                          ? "إلغاء تفعيل المجلد"
+                                          : "Deactivate Folder"}
+                                      </button>
+                                    )}
 
-                                      {isConfirmingDelete ? (
-                                        <div
-                                          data-testid="folder-delete-confirm-pill"
-                                          className="inline-flex items-center gap-1 ps-1 ms-0.5 border-s border-[var(--color-border-subtle)]"
-                                        >
-                                          <button
-                                            onClick={() =>
-                                              onConfirmDeleteFolder(folder)
-                                            }
-                                            disabled={isDeleting}
-                                            className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-sans font-bold text-[10px] cursor-pointer whitespace-nowrap disabled:opacity-50"
-                                          >
-                                            {isDeleting
-                                              ? isRtl
-                                                ? "جاري الحذف..."
-                                                : "Deleting..."
-                                              : isRtl
-                                                ? "تأكيد الحذف"
-                                                : "Confirm Delete"}
-                                          </button>
-                                          <button
-                                            onClick={() =>
-                                              setConfirmDeleteFolderPath(null)
-                                            }
-                                            disabled={isDeleting}
-                                            className="px-1.5 py-0.5 rounded bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] font-sans font-semibold text-[10px] cursor-pointer whitespace-nowrap"
-                                          >
-                                            {isRtl ? "إلغاء" : "Cancel"}
-                                          </button>
-                                        </div>
-                                      ) : (
+                                    {isConfirmingDelete ? (
+                                      <div
+                                        data-testid="folder-delete-confirm-pill"
+                                        className="inline-flex items-center gap-1 ps-1.5 border-s border-[var(--color-border-subtle)]"
+                                      >
                                         <button
                                           onClick={() =>
-                                            setConfirmDeleteFolderPath(
-                                              folder.path,
+                                            onConfirmDeleteFolder(
+                                              selectedCustomFolder,
                                             )
                                           }
-                                          disabled={
-                                            contextBatchBusy || isDeleting
-                                          }
-                                          data-testid="folder-delete-trigger"
-                                          className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-rose-500/12 transition cursor-pointer shrink-0"
-                                          title={
-                                            isRtl
-                                              ? "حذف المجلد"
-                                              : "Delete Folder"
-                                          }
-                                          aria-label={
-                                            isRtl
-                                              ? "حذف المجلد"
-                                              : "Delete Folder"
-                                          }
+                                          disabled={Boolean(isDeleting)}
+                                          className="h-8 px-2.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-sans font-bold text-[11px] cursor-pointer whitespace-nowrap disabled:opacity-50"
                                         >
-                                          <Trash2 className="w-3 h-3" />
+                                          {isDeleting
+                                            ? isRtl
+                                              ? "جاري الحذف..."
+                                              : "Deleting..."
+                                            : isRtl
+                                              ? "تأكيد الحذف"
+                                              : "Confirm Delete"}
                                         </button>
-                                      )}
-                                    </div>
+                                        <button
+                                          onClick={() =>
+                                            setConfirmDeleteFolderPath(null)
+                                          }
+                                          disabled={Boolean(isDeleting)}
+                                          className="h-8 px-2 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] font-sans font-semibold text-[11px] cursor-pointer whitespace-nowrap"
+                                        >
+                                          {isRtl ? "إلغاء" : "Cancel"}
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() =>
+                                          setConfirmDeleteFolderPath(
+                                            selectedCustomFolder.path,
+                                          )
+                                        }
+                                        disabled={
+                                          contextBatchBusy || Boolean(isDeleting)
+                                        }
+                                        data-testid="folder-delete-trigger"
+                                        className="h-8 w-8 flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-rose-500/12 border border-[var(--color-border)] transition cursor-pointer shrink-0"
+                                        title={
+                                          isRtl ? "حذف المجلد" : "Delete Folder"
+                                        }
+                                        aria-label={
+                                          isRtl ? "حذف المجلد" : "Delete Folder"
+                                        }
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
                                   </div>
-                                );
-                              })}
-                            </div>
-                          )}
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       ) : filter.type === "google" ||
                         filter.type === "favorites" ? (

@@ -303,7 +303,8 @@ impl ApiServer {
                             )
                         }
                         ("GET", "/api/github/download-pack/status")
-                        | ("GET", "/api/download/status") => {
+                        | ("GET", "/api/download/status")
+                        | ("GET", "/api/catalog/download-status") => {
                             routes::fonts::handle_download_pack_status(
                                 req,
                                 &state,
@@ -760,6 +761,20 @@ impl ApiServer {
                         }
                         ("POST", p)
                             if p.starts_with("/api/workspaces/")
+                                && p.ends_with("/import-design-dialog") =>
+                        {
+                            let id = &p
+                                ["/api/workspaces/".len()..p.len() - "/import-design-dialog".len()];
+                            routes::workspaces::import_workspace_design_dialog(
+                                req,
+                                &state,
+                                id,
+                                cors_origin,
+                                json_header,
+                            );
+                        }
+                        ("POST", p)
+                            if p.starts_with("/api/workspaces/")
                                 && p.ends_with("/activate-ram") =>
                         {
                             let id = &p["/api/workspaces/".len()..p.len() - "/activate-ram".len()];
@@ -930,6 +945,14 @@ impl ApiServer {
                         }
                         ("GET", "/api/system/operations") => {
                             routes::system::handle_system_operations(
+                                req,
+                                &state,
+                                cors_origin,
+                                json_header,
+                            )
+                        }
+                        ("POST", "/api/system/operations/clear") => {
+                            routes::system::handle_clear_system_operations(
                                 req,
                                 &state,
                                 cors_origin,

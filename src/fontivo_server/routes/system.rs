@@ -544,6 +544,43 @@ pub fn handle_system_operations(
     );
 }
 
+pub fn handle_clear_system_operations(
+    req: Request,
+    state: &Arc<RwLock<AppState>>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let (cleared_count, remaining_operations) = {
+        let mut st = state.write().unwrap();
+        let cleared = st.clear_finished_operations();
+        let remaining = st.get_unified_operations();
+        (cleared, remaining)
+    };
+    let active_count = remaining_operations
+        .iter()
+        .filter(|o| {
+            matches!(
+                o.status.as_str(),
+                "queued" | "running" | "downloading" | "verifying" | "extracting" | "indexing"
+            )
+        })
+        .count();
+
+    respond_json(
+        req,
+        200,
+        serde_json::json!({
+            "success": true,
+            "clearedCount": cleared_count,
+            "activeCount": active_count,
+            "totalCount": remaining_operations.len(),
+            "operations": remaining_operations
+        }),
+        cors_origin,
+        json_header,
+    );
+}
+
 pub fn handle_ram_status(req: Request, cors_origin: Header, json_header: Header) {
     let round1 = |v: f64| (v * 10.0).round() / 10.0;
     let ram = round1(SystemHealthChecker::get_current_process_ram_mb());
