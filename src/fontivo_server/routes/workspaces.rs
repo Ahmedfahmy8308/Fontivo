@@ -213,6 +213,10 @@ pub struct WorkspaceTask {
     pub priority: Option<String>, // "high", "medium", "low"
     #[serde(default)]
     pub category: Option<String>, // milestone phase
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub checklist: Option<Vec<String>>,
 }
 
 fn default_task_status() -> String {

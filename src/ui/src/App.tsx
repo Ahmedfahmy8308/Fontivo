@@ -86,7 +86,7 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
-  Sparkles,
+  ArrowUpCircle,
   FolderPlus,
   Trash2,
   HardDrive,
@@ -932,7 +932,7 @@ export default function App({
           >
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-6 h-6 rounded-lg bg-[#F16B50]/20 flex items-center justify-center shrink-0">
-                <Sparkles className="w-3.5 h-3.5 text-[#F16B50] shrink-0" />
+                <ArrowUpCircle className="w-3.5 h-3.5 text-[#F16B50] shrink-0" />
               </div>
               <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 min-w-0">
                 <span className="font-bold truncate text-[13px]">
@@ -1036,7 +1036,7 @@ export default function App({
             importBanner.importedCount === 0 ? (
               <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
             ) : (
-              <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             )}
             <div className="truncate">
               <span className="font-bold">

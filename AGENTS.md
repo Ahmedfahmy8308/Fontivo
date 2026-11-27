@@ -3,7 +3,7 @@
 > **Document Classification:** Core Engineering Standard, Cross-Repo Contract & Operational Handbook  
 > **Target Audience:** AI Agents (Coding Assistants, Autonomous Agents, Swarm Workers) & Human Contributors  
 > **Repository:** [Ahmedfahmy8308/Fontivo](https://github.com/Ahmedfahmy8308/Fontivo)  
-> **Official Website:** [ahmedfahmy8308.github.io/Fontivo-Site](https://ahmedfahmy8308.github.io/Fontivo-Site/)  
+> **Official Website:** [fontivo-app.github.io](https://fontivo-app.github.io/)  
 > **Developers & Ownership:**
 > - **Eng. Ahmed Fahmy** — Software Engineer ([GitHub (@Ahmedfahmy8308)](https://github.com/Ahmedfahmy8308) • [Portfolio](https://ahmed-fahmy.engineer/))
 > - **Eng. Mohamed Elashwah** — Graphic Designer ([Portfolio](https://mohamed-elashwah.me/))
@@ -44,7 +44,7 @@ flowchart LR
     direction TB
     APP["Fontivo-App<br>Native Rust Core + React 19 UI<br>(Ports 3920 & 27715)"]
     FONTS["Fontivo-Fonts (v1.0.3)<br>10,939 Fonts / 4,430 Families / 15 Packs<br>SHA-256 Verified Archives"]
-    SITE["Fontivo-Site<br>Next.js 15 Bilingual Web Portal<br>(ahmedfahmy8308.github.io/Fontivo-Site)"]
+    SITE["Fontivo-Site<br>Next.js 15 Bilingual Web Portal<br>(fontivo-app.github.io)"]
   end
 
   APP <-->|Catalog Sync & Downloads| FONTS

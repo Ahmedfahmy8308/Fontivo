@@ -14,7 +14,6 @@ import {
   Download,
   RefreshCw,
   ArrowUpCircle,
-  Sparkles,
   Layers,
   Zap,
   AlertCircle,
@@ -167,7 +166,7 @@ export default function LicensesView({
         {/* Software Updates & Version Verification Section */}
         <div className="space-y-3 w-full">
           <div className="flex items-center gap-2 text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-            <Sparkles className="w-4 h-4 text-[var(--color-action)]" />
+            <ShieldCheck className="w-4 h-4 text-[var(--color-action)]" />
             <span>
               {isRtl
                 ? "التحقق من التحديثات وحالة الإصدار"

@@ -372,6 +372,8 @@ fn test_styleguide_html_escapes_all_xss_payloads_and_sanitizes_hex() {
             due_date: Some(r#"2026-12-31<script>alert(9)</script>"#.into()),
             priority: Some("high".into()),
             category: Some(r#"Phase<script>alert(10)</script>"#.into()),
+            notes: None,
+            checklist: None,
         }],
         notes: r#"Notes <iframe src="javascript:alert(8)"></iframe>"#.into(),
         success: Some(true),

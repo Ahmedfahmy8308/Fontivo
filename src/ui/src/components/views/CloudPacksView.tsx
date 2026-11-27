@@ -15,7 +15,7 @@ import {
   RotateCcw,
   Clock,
   ShieldCheck,
-  Sparkles,
+  Layers,
 } from "lucide-react";
 import { safeFetchJson } from "../../utils/safeFetch";
 import {
@@ -1067,7 +1067,7 @@ export default function CloudPacksView({
                           ) : state.phase === "Verifying" ? (
                             <ShieldCheck className="w-3 h-3 animate-pulse shrink-0" />
                           ) : state.phase === "Indexing" ? (
-                            <Sparkles className="w-3 h-3 animate-pulse shrink-0" />
+                            <Layers className="w-3 h-3 animate-pulse shrink-0" />
                           ) : (
                             <RefreshCw className="w-3 h-3 animate-spin shrink-0" />
                           )}

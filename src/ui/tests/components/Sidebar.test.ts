@@ -34,6 +34,7 @@ describe("Sidebar Component & Navigation Tests", () => {
     );
 
     expect(html).toContain("Import Font Folder");
+    expect(html).toContain("All Fonts");
     expect(html).toContain("Active in RAM");
     expect(html).toContain("Settings &amp; System");
     expect(html).not.toContain("Quick RAM Boost");
@@ -116,6 +117,8 @@ describe("Sidebar Component & Navigation Tests", () => {
       }),
     );
 
+    expect(htmlAr).toContain("كافة الخطوط");
+    expect(htmlAr).toContain("776");
     expect(htmlAr).not.toContain("تسريع الرام السريع");
     expect(htmlAr).not.toContain("مكتبة الخطوط");
     expect(htmlAr).not.toContain("المجموعات");
@@ -180,6 +183,6 @@ describe("Sidebar Component & Navigation Tests", () => {
     );
 
     const matches = html.match(/10,939/g) || [];
-    expect(matches.length).toBe(0);
+    expect(matches.length).toBe(1);
   });
 });

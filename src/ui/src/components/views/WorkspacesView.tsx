@@ -27,7 +27,6 @@ import {
   ChevronLeft,
   ChevronDown,
   Pencil,
-  Sparkles,
   PanelLeftClose,
   PanelLeftOpen,
   Calendar,
@@ -852,20 +851,22 @@ export default function WorkspacesView({
     text: string;
   } | null>(null);
 
-  // Tasks & inline task edit state
+  // Tasks & Task Details Modal state
   const [taskFilter, setTaskFilter] = useState("all");
-  const [newTaskText, setNewTaskText] = useState("");
-  const [newTaskPriority, setNewTaskPriority] =
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [editingTaskModalId, setEditingTaskModalId] = useState<string | null>(
+    null,
+  );
+  const [taskModalTitle, setTaskModalTitle] = useState("");
+  const [taskModalNotes, setTaskModalNotes] = useState("");
+  const [taskModalCategory, setTaskModalCategory] = useState("typography");
+  const [taskModalPriority, setTaskModalPriority] =
     useState<WorkspaceTaskPriority>("medium");
-  const [newTaskDueDate, setNewTaskDueDate] = useState("");
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [editTaskText, setEditTaskText] = useState("");
-  const [editTaskPriority, setEditTaskPriority] =
-    useState<WorkspaceTaskPriority>("medium");
-  const [editTaskDueDate, setEditTaskDueDate] = useState("");
-  const [editTaskStatus, setEditTaskStatus] = useState<
+  const [taskModalStatus, setTaskModalStatus] = useState<
     "todo" | "in_progress" | "done"
   >("todo");
+  const [taskModalDueDate, setTaskModalDueDate] = useState("");
+  const [taskModalChecklistText, setTaskModalChecklistText] = useState("");
 
   // Swatch editor & quick add state
   const [newSwatchHex, setNewSwatchHex] = useState("#F16B50");
@@ -1223,7 +1224,8 @@ export default function WorkspacesView({
   useEffect(() => {
     setConfirmDeleteWsId(null);
     setEditingSwatchIdx(null);
-    setEditingTaskId(null);
+    setIsTaskModalOpen(false);
+    setEditingTaskModalId(null);
     setLightboxDesign(null);
     setIsEditingNotes(false);
     setNotesDraft(activeWorkspace?.notes || "");
@@ -2481,29 +2483,103 @@ export default function WorkspacesView({
     await persistWorkspace({ ...activeWorkspace, tasks: updatedTasks });
   };
 
-  const handleAddTask = async (e: any) => {
+  const TASK_CATEGORIES = [
+    { id: "typography", ar: "الخطوط والتايبوغرافي", en: "Typography" },
+    { id: "palette", ar: "الألوان والهوية", en: "Colors & Brand" },
+    { id: "designs", ar: "التصاميم والملفات", en: "Design Assets" },
+    { id: "review", ar: "مراجعة العميل", en: "Client Review" },
+    { id: "delivery", ar: "التسليم النهائي", en: "Final Delivery" },
+  ];
+
+  const getTaskCategoryLabel = (catId?: string) => {
+    const found = TASK_CATEGORIES.find((c) => c.id === catId);
+    if (found) return isRtl ? found.ar : found.en;
+    return catId || (isRtl ? "عام" : "General");
+  };
+
+  const openAddTaskModal = () => {
+    setEditingTaskModalId(null);
+    setTaskModalTitle("");
+    setTaskModalNotes("");
+    setTaskModalCategory("typography");
+    setTaskModalPriority("medium");
+    setTaskModalStatus("todo");
+    setTaskModalDueDate("");
+    setTaskModalChecklistText("");
+    setIsTaskModalOpen(true);
+  };
+
+  const openEditTaskModal = (task: WorkspaceTask) => {
+    setEditingTaskModalId(task.id);
+    setTaskModalTitle(task.text || "");
+    setTaskModalNotes(task.notes || "");
+    setTaskModalCategory(task.category || "typography");
+    setTaskModalPriority(
+      (task.priority as WorkspaceTaskPriority) || "medium",
+    );
+    setTaskModalStatus(task.status || "todo");
+    setTaskModalDueDate(task.dueDate || "");
+    setTaskModalChecklistText(
+      Array.isArray(task.checklist) ? task.checklist.join("\n") : "",
+    );
+    setIsTaskModalOpen(true);
+  };
+
+  const handleSaveTaskModal = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTaskText.trim() || !activeWorkspace) return;
-    const newTask: WorkspaceTask = {
-      id: `task-${Date.now()}`,
-      text: newTaskText.trim(),
-      status: "todo",
-      priority: newTaskPriority || "medium",
-      dueDate: newTaskDueDate.trim() || undefined,
-      createdAt: Math.floor(Date.now() / 1000),
-    };
-    setNewTaskText("");
-    setNewTaskDueDate("");
+    if (!activeWorkspace || !taskModalTitle.trim()) return;
+    const checklistItems = taskModalChecklistText
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    let updatedTasks: WorkspaceTask[];
+    if (editingTaskModalId) {
+      updatedTasks = (activeWorkspace.tasks || []).map((t) =>
+        t.id === editingTaskModalId
+          ? {
+              ...t,
+              text: taskModalTitle.trim(),
+              notes: taskModalNotes.trim() || undefined,
+              category: taskModalCategory || undefined,
+              priority: taskModalPriority,
+              status: taskModalStatus,
+              dueDate: taskModalDueDate.trim() || undefined,
+              checklist: checklistItems.length > 0 ? checklistItems : undefined,
+            }
+          : t,
+      );
+    } else {
+      const newTask: WorkspaceTask = {
+        id: `task-${Date.now()}`,
+        text: taskModalTitle.trim(),
+        notes: taskModalNotes.trim() || undefined,
+        category: taskModalCategory || undefined,
+        status: taskModalStatus,
+        priority: taskModalPriority,
+        dueDate: taskModalDueDate.trim() || undefined,
+        checklist: checklistItems.length > 0 ? checklistItems : undefined,
+        createdAt: Math.floor(Date.now() / 1000),
+      };
+      updatedTasks = [...(activeWorkspace.tasks || []), newTask];
+    }
+
+    setIsTaskModalOpen(false);
+    setEditingTaskModalId(null);
     const result = await persistWorkspace({
       ...activeWorkspace,
-      tasks: [...(activeWorkspace.tasks || []), newTask],
+      tasks: updatedTasks,
     });
     if (result.ok) {
       setNotification({
         type: "success",
-        text: isRtl
-          ? "تمت إضافة المهمة وحفظها بنجاح."
-          : "Task added and saved.",
+        text: editingTaskModalId
+          ? isRtl
+            ? "تم تحديث المهمة وحفظها بنجاح."
+            : "Task updated and saved."
+          : isRtl
+            ? "تمت إضافة المهمة وحفظها بنجاح."
+            : "Task added and saved.",
       });
     } else {
       setNotification({
@@ -2511,42 +2587,18 @@ export default function WorkspacesView({
         text:
           result.error ||
           (isRtl
-            ? "تمت إضافة المهمة محلياً، لكن تعذر الحفظ على الخادم."
-            : "Task added locally, but failed to sync to backend."),
+            ? "تم حفظ المهمة محلياً، لكن تعذر المزامنة مع الخادم."
+            : "Task saved locally, but failed to sync to backend."),
       });
     }
   };
 
-  const startInlineEditTask = (task: WorkspaceTask) => {
-    setEditingTaskId(task.id);
-    setEditTaskText(task.text);
-    setEditTaskPriority(
-      (task.priority as WorkspaceTaskPriority) || "medium",
-    );
-    setEditTaskDueDate(task.dueDate || "");
-    setEditTaskStatus(task.status || "todo");
-  };
-
-  const handleSaveInlineTask = async (taskId: string) => {
-    if (!activeWorkspace || !editTaskText.trim()) return;
-    const updatedTasks = (activeWorkspace.tasks || []).map((task) =>
-      task.id === taskId
-        ? {
-            ...task,
-            text: editTaskText.trim(),
-            priority: editTaskPriority,
-            dueDate: editTaskDueDate.trim() || undefined,
-            status: editTaskStatus,
-          }
-        : task,
-    );
-    setEditingTaskId(null);
-    await persistWorkspace({ ...activeWorkspace, tasks: updatedTasks });
-  };
-
   const handleDeleteTask = async (taskId: string) => {
     if (!activeWorkspace) return;
-    if (editingTaskId === taskId) setEditingTaskId(null);
+    if (editingTaskModalId === taskId) {
+      setIsTaskModalOpen(false);
+      setEditingTaskModalId(null);
+    }
     const updatedTasks = (activeWorkspace.tasks || []).filter(
       (task) => task.id !== taskId,
     );
@@ -5323,66 +5375,25 @@ export default function WorkspacesView({
                   />
                 </div>
 
-                {/* Add Task Form with Priority & Due Date */}
-                <form onSubmit={handleAddTask} className="space-y-2">
-                  <input
-                    type="text"
-                    dir="auto"
-                    value={newTaskText}
-                    onChange={(e: any) => setNewTaskText(e.target.value)}
-                    placeholder={
-                      isRtl
-                        ? "إضافة مهمة جديدة للمشروع (اضغط Enter)..."
-                        : "Add new project task (press Enter)..."
-                    }
-                    className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] text-xs text-[var(--color-text-header)] placeholder-[var(--color-text-dim)] px-3 py-2 rounded-xl outline-none transition"
-                  />
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="relative">
-                        <select
-                          value={newTaskPriority}
-                          style={SELECT_APPEARANCE_STYLE}
-                          onChange={(e) =>
-                            setNewTaskPriority(
-                              e.target.value as WorkspaceTaskPriority,
-                            )
-                          }
-                          aria-label={isRtl ? "أولوية المهمة" : "Task priority"}
-                          className="h-[34px] appearance-none !appearance-none bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-xl ps-2.5 pe-7 text-[11px] font-sans font-semibold text-[var(--color-text-header)] outline-none cursor-pointer"
-                        >
-                          <option value="high">
-                            {isRtl ? "أولوية عالية" : "High"}
-                          </option>
-                          <option value="medium">
-                            {isRtl ? "متوسطة" : "Medium"}
-                          </option>
-                          <option value="low">
-                            {isRtl ? "منخفضة" : "Low"}
-                          </option>
-                        </select>
-                        <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2" />
-                      </div>
-                      <input
-                        type="date"
-                        dir="ltr"
-                        value={newTaskDueDate}
-                        onChange={(e) => setNewTaskDueDate(e.target.value)}
-                        aria-label={isRtl ? "تاريخ الاستحقاق" : "Task due date"}
-                        title={isRtl ? "تاريخ استحقاق المهمة" : "Due Date"}
-                        className="h-[34px] bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-xl px-2.5 text-[11px] font-mono text-[var(--color-text-header)] outline-none"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      className="h-[34px] px-4 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-header)] border border-[var(--color-border)] text-xs font-semibold cursor-pointer shrink-0"
-                    >
-                      {isRtl ? "إضافة" : "Add"}
-                    </button>
-                  </div>
-                </form>
+                {/* Open Rich Task Modal Button */}
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)]">
+                  <span className="text-xs text-[var(--color-text-muted)]">
+                    {isRtl
+                      ? "أضف مهام المشروع مع التعليمات، التصنيف، الأولوية، وقائمة التحقق"
+                      : "Create structured tasks with instructions, category, priority, and checklist"}
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="open-add-task-modal-btn"
+                    onClick={openAddTaskModal}
+                    className="h-9 px-4 rounded-xl bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 transition"
+                  >
+                    <Plus className="w-4 h-4 shrink-0" />
+                    <span>{isRtl ? "إضافة مهمة" : "Add Task"}</span>
+                  </button>
+                </div>
 
-                <div className="space-y-2 max-h-80 overflow-y-auto pe-1">
+                <div className="space-y-2.5 max-h-96 overflow-y-auto pe-1">
                   {filteredTasks.length === 0 ? (
                     <div className="text-center py-8 text-xs text-[var(--color-text-dim)] border border-dashed border-[var(--color-border)] rounded-xl">
                       {isRtl
@@ -5398,106 +5409,11 @@ export default function WorkspacesView({
                         isDone,
                         isRtl,
                       );
-                      const isEditingThisTask = editingTaskId === task.id;
-
-                      if (isEditingThisTask) {
-                        return (
-                          <div
-                            key={task.id}
-                            className="p-3 rounded-xl border border-[var(--color-action)] bg-[var(--color-back-main)] space-y-2"
-                          >
-                            <input
-                              type="text"
-                              dir="auto"
-                              value={editTaskText}
-                              onChange={(e) => setEditTaskText(e.target.value)}
-                              className="w-full h-8 bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
-                            />
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <div className="relative">
-                                  <select
-                                    value={editTaskPriority}
-                                    style={SELECT_APPEARANCE_STYLE}
-                                    onChange={(e) =>
-                                      setEditTaskPriority(
-                                        e.target.value as WorkspaceTaskPriority,
-                                      )
-                                    }
-                                    className="h-7 appearance-none !appearance-none bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg ps-2 pe-6 text-[11px] font-sans font-semibold text-[var(--color-text-header)] outline-none cursor-pointer"
-                                  >
-                                    <option value="high">
-                                      {isRtl ? "أولوية عالية" : "High"}
-                                    </option>
-                                    <option value="medium">
-                                      {isRtl ? "متوسطة" : "Medium"}
-                                    </option>
-                                    <option value="low">
-                                      {isRtl ? "منخفضة" : "Low"}
-                                    </option>
-                                  </select>
-                                  <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-1.5" />
-                                </div>
-                                <div className="relative">
-                                  <select
-                                    value={editTaskStatus}
-                                    style={SELECT_APPEARANCE_STYLE}
-                                    onChange={(e) =>
-                                      setEditTaskStatus(
-                                        e.target
-                                          .value as WorkspaceTask["status"],
-                                      )
-                                    }
-                                    className="h-7 appearance-none !appearance-none bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg ps-2 pe-6 text-[11px] font-sans font-semibold text-[var(--color-text-header)] outline-none cursor-pointer"
-                                  >
-                                    <option value="todo">
-                                      {isRtl ? "قيد الانتظار" : "Todo"}
-                                    </option>
-                                    <option value="in_progress">
-                                      {isRtl ? "جاري العمل" : "In Progress"}
-                                    </option>
-                                    <option value="done">
-                                      {isRtl ? "مكتمل" : "Done"}
-                                    </option>
-                                  </select>
-                                  <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-1.5" />
-                                </div>
-                                <input
-                                  type="date"
-                                  dir="ltr"
-                                  value={editTaskDueDate}
-                                  onChange={(e) =>
-                                    setEditTaskDueDate(e.target.value)
-                                  }
-                                  className="h-7 bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg px-2 text-[11px] font-mono text-[var(--color-text-header)] outline-none"
-                                />
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingTaskId(null)}
-                                  className="h-7 px-2.5 rounded-lg bg-[var(--color-control)] text-[11px] font-sans text-[var(--color-text-muted)] cursor-pointer"
-                                >
-                                  {isRtl ? "إلغاء" : "Cancel"}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleSaveInlineTask(task.id)}
-                                  className="h-7 px-2.5 rounded-lg bg-[var(--color-action)] text-white text-[11px] font-sans font-bold cursor-pointer flex items-center gap-1"
-                                >
-                                  <Check className="w-3 h-3" />
-                                  <span>{isRtl ? "حفظ" : "Save"}</span>
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      }
 
                       return (
                         <div
                           key={task.id}
-                          className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition ${
+                          className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-start justify-between gap-3 transition ${
                             isDone
                               ? "bg-[var(--color-back-main)]/50 border-[var(--color-border-subtle)] text-[var(--color-text-dim)]"
                               : isInProgress
@@ -5508,24 +5424,53 @@ export default function WorkspacesView({
                           <button
                             type="button"
                             onClick={() => handleToggleTaskStatus(task.id)}
-                            className="flex items-center gap-2.5 flex-1 cursor-pointer group min-w-0"
+                            className="flex items-start gap-2.5 flex-1 cursor-pointer group min-w-0 text-start"
                           >
                             {isDone ? (
-                              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                             ) : isInProgress ? (
-                              <Clock className="w-4 h-4 text-[var(--color-action)] shrink-0 animate-pulse" />
+                              <Clock className="w-4 h-4 text-[var(--color-action)] shrink-0 animate-pulse mt-0.5" />
                             ) : (
-                              <Circle className="w-4 h-4 text-[var(--color-text-dim)] group-hover:text-[var(--color-text-header)] shrink-0" />
+                              <Circle className="w-4 h-4 text-[var(--color-text-dim)] group-hover:text-[var(--color-text-header)] shrink-0 mt-0.5" />
                             )}
-                            <span
-                              dir="auto"
-                              className={`flex-1 min-w-0 text-start text-xs break-words ${isDone ? "line-through opacity-75" : "font-medium"}`}
-                            >
-                              {task.text}
-                            </span>
+                            <div className="flex-1 min-w-0 space-y-1">
+                              <div
+                                dir="auto"
+                                className={`text-xs break-words ${isDone ? "line-through opacity-75" : "font-semibold"}`}
+                              >
+                                {task.text}
+                              </div>
+                              {task.notes && (
+                                <p
+                                  dir="auto"
+                                  className="text-[11px] text-[var(--color-text-muted)] leading-relaxed break-words whitespace-pre-line"
+                                >
+                                  {task.notes}
+                                </p>
+                              )}
+                              {Array.isArray(task.checklist) &&
+                                task.checklist.length > 0 && (
+                                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                    {task.checklist.map((step, sIdx) => (
+                                      <span
+                                        key={`${task.id}-chk-${sIdx}`}
+                                        dir="auto"
+                                        className="text-[10px] px-2 py-0.5 rounded-md bg-[var(--color-control)] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)]"
+                                      >
+                                        • {step}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                            </div>
                           </button>
 
                           <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                            {task.category && (
+                              <span className="px-2 py-0.5 rounded-md bg-[#B7A1D9]/12 border border-[#B7A1D9]/30 text-[#B7A1D9] text-[10px] font-sans font-semibold whitespace-nowrap">
+                                {getTaskCategoryLabel(task.category)}
+                              </span>
+                            )}
                             {renderPriorityBadge(task.priority)}
                             {dueMeta && (
                               <span
@@ -5570,7 +5515,7 @@ export default function WorkspacesView({
                             </button>
                             <button
                               type="button"
-                              onClick={() => startInlineEditTask(task)}
+                              onClick={() => openEditTaskModal(task)}
                               aria-label={isRtl ? "تعديل المهمة" : "Edit task"}
                               title={isRtl ? "تعديل المهمة" : "Edit task"}
                               className="text-[var(--color-text-dim)] hover:text-[var(--color-action)] p-1 transition cursor-pointer"
@@ -6111,7 +6056,7 @@ export default function WorkspacesView({
                             disabled={extractingLogoPalette}
                             className="h-8 px-3 rounded-lg bg-[#B7A1D9]/15 hover:bg-[#B7A1D9]/25 border border-[#B7A1D9]/40 text-[#B7A1D9] font-sans font-bold text-[11px] flex items-center gap-1.5 cursor-pointer whitespace-nowrap disabled:opacity-50"
                           >
-                            <Sparkles className="w-3.5 h-3.5" />
+                            <Palette className="w-3.5 h-3.5" />
                             <span>
                               {isRtl
                                 ? "استخراج الألوان من الشعار"
@@ -6356,7 +6301,7 @@ export default function WorkspacesView({
                       type="submit"
                       className="px-5 py-2 rounded-xl bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white font-bold cursor-pointer flex items-center gap-1.5"
                     >
-                      <Sparkles className="w-3.5 h-3.5" />
+                      <Check className="w-3.5 h-3.5" />
                       <span>
                         {editingWorkspaceId
                           ? isRtl
@@ -6438,6 +6383,245 @@ export default function WorkspacesView({
           return canPortal
             ? createPortal(previewNode, document.body)
             : previewNode;
+        })()}
+      {/* Rich Task Add / Edit Details Modal */}
+      {isTaskModalOpen &&
+        (() => {
+          const taskModalNode = (
+            <div
+              data-testid="task-details-modal"
+              onClick={() => setIsTaskModalOpen(false)}
+              className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+              dir={isRtl ? "rtl" : "ltr"}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-xl bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90dvh]"
+              >
+                <div className="px-5 py-4 border-b border-[var(--color-border)] bg-[var(--color-back-side)] flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-[var(--color-action)]/15 border border-[var(--color-action)]/35 flex items-center justify-center text-[var(--color-action)] shrink-0">
+                      <CheckCircle2 className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-bold text-[var(--color-text-header)] truncate">
+                        {editingTaskModalId
+                          ? isRtl
+                            ? "تعديل تفاصيل المهمة"
+                            : "Edit Task Details"
+                          : isRtl
+                            ? "إضافة مهمة جديدة للمشروع"
+                            : "Add New Project Task"}
+                      </h3>
+                      <p className="text-[11px] text-[var(--color-text-muted)] truncate">
+                        {activeWorkspace.name}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsTaskModalOpen(false)}
+                    aria-label={isRtl ? "إغلاق" : "Close"}
+                    className="h-8 w-8 rounded-lg bg-[var(--color-control)] hover:bg-rose-500/20 text-[var(--color-text-muted)] hover:text-rose-400 flex items-center justify-center cursor-pointer shrink-0"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <form
+                  onSubmit={handleSaveTaskModal}
+                  className="p-5 space-y-4 overflow-y-auto text-xs"
+                >
+                  <div>
+                    <label className="block font-semibold text-[var(--color-text-muted)] mb-1.5">
+                      {isRtl ? "عنوان المهمة *" : "Task Title *"}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      dir="auto"
+                      value={taskModalTitle}
+                      onChange={(e) => setTaskModalTitle(e.target.value)}
+                      placeholder={
+                        isRtl
+                          ? "مثال: مراجعة تباين الألوان وتصدير ملفات الطباعة..."
+                          : "e.g., Audit color contrast & prepare print deliverables..."
+                      }
+                      className="w-full h-10 bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 text-xs text-[var(--color-text-header)] outline-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-semibold text-[var(--color-text-muted)] mb-1.5">
+                        {isRtl ? "القسم / التصنيف" : "Category"}
+                      </label>
+                      <div className="relative">
+                        <select
+                          value={taskModalCategory}
+                          style={SELECT_APPEARANCE_STYLE}
+                          onChange={(e) => setTaskModalCategory(e.target.value)}
+                          className="w-full h-9 appearance-none !appearance-none bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-xl ps-3 pe-8 text-xs text-[var(--color-text-header)] outline-none cursor-pointer"
+                        >
+                          {TASK_CATEGORIES.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {isRtl ? c.ar : c.en}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2.5" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-[var(--color-text-muted)] mb-1.5">
+                        {isRtl ? "الأولوية" : "Priority"}
+                      </label>
+                      <div className="relative">
+                        <select
+                          value={taskModalPriority}
+                          style={SELECT_APPEARANCE_STYLE}
+                          onChange={(e) =>
+                            setTaskModalPriority(
+                              e.target.value as WorkspaceTaskPriority,
+                            )
+                          }
+                          className="w-full h-9 appearance-none !appearance-none bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-xl ps-3 pe-8 text-xs text-[var(--color-text-header)] outline-none cursor-pointer"
+                        >
+                          <option value="high">
+                            {isRtl ? "أولوية عالية" : "High"}
+                          </option>
+                          <option value="medium">
+                            {isRtl ? "متوسطة" : "Medium"}
+                          </option>
+                          <option value="low">
+                            {isRtl ? "منخفضة" : "Low"}
+                          </option>
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2.5" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-[var(--color-text-muted)] mb-1.5">
+                        {isRtl ? "الحالة" : "Status"}
+                      </label>
+                      <div className="relative">
+                        <select
+                          value={taskModalStatus}
+                          style={SELECT_APPEARANCE_STYLE}
+                          onChange={(e) =>
+                            setTaskModalStatus(
+                              e.target.value as WorkspaceTask["status"],
+                            )
+                          }
+                          className="w-full h-9 appearance-none !appearance-none bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-xl ps-3 pe-8 text-xs text-[var(--color-text-header)] outline-none cursor-pointer"
+                        >
+                          <option value="todo">
+                            {isRtl ? "قيد الانتظار" : "Todo"}
+                          </option>
+                          <option value="in_progress">
+                            {isRtl ? "جاري العمل" : "In Progress"}
+                          </option>
+                          <option value="done">
+                            {isRtl ? "مكتمل" : "Done"}
+                          </option>
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2.5" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-[var(--color-text-muted)] mb-1.5">
+                        {isRtl ? "تاريخ الاستحقاق" : "Due Date"}
+                      </label>
+                      <input
+                        type="date"
+                        dir="ltr"
+                        value={taskModalDueDate}
+                        onChange={(e) => setTaskModalDueDate(e.target.value)}
+                        className="w-full h-9 bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-xl px-3 text-xs font-mono text-[var(--color-text-header)] outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-[var(--color-text-muted)] mb-1.5">
+                      {isRtl
+                        ? "التعليمات والتفاصيل"
+                        : "Instructions & Notes"}
+                    </label>
+                    <textarea
+                      rows={3}
+                      dir="auto"
+                      value={taskModalNotes}
+                      onChange={(e) => setTaskModalNotes(e.target.value)}
+                      placeholder={
+                        isRtl
+                          ? "اكتب أي تعليمات فنية، ملاحظات العميل، أو مواصفات التنفيذ..."
+                          : "Write art direction instructions, client notes, or specs..."
+                      }
+                      className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-xs text-[var(--color-text-header)] outline-none resize-y"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-[var(--color-text-muted)] mb-1.5">
+                      {isRtl
+                        ? "نقاط التحقق / الخطوات الفرعية (سطر لكل خطوة)"
+                        : "Sub-steps / Checklist (one per line)"}
+                    </label>
+                    <textarea
+                      rows={3}
+                      dir="auto"
+                      value={taskModalChecklistText}
+                      onChange={(e) =>
+                        setTaskModalChecklistText(e.target.value)
+                      }
+                      placeholder={
+                        isRtl
+                          ? "مثال:\nتفعيل خطوط المشروع\nفحص الألوان في Illustrator\nتصدير PDF للطباعة"
+                          : "e.g.,\nActivate project fonts\nCheck swatches in Illustrator\nExport print-ready PDF"
+                      }
+                      className="w-full bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl px-3 py-2 text-xs text-[var(--color-text-header)] outline-none resize-y"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--color-border)]">
+                    <button
+                      type="button"
+                      onClick={() => setIsTaskModalOpen(false)}
+                      className="h-9 px-4 rounded-xl bg-[var(--color-control)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] font-semibold cursor-pointer"
+                    >
+                      {isRtl ? "إلغاء" : "Cancel"}
+                    </button>
+                    <button
+                      type="submit"
+                      className="h-9 px-5 rounded-xl bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>
+                        {editingTaskModalId
+                          ? isRtl
+                            ? "حفظ التعديلات"
+                            : "Save Task"
+                          : isRtl
+                            ? "حفظ وإضافة المهمة"
+                            : "Create Task"}
+                      </span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          );
+          const canPortal =
+            typeof window !== "undefined" &&
+            typeof document !== "undefined" &&
+            typeof document.querySelector === "function";
+          return canPortal
+            ? createPortal(taskModalNode, document.body)
+            : taskModalNode;
         })()}
     </div>
   );

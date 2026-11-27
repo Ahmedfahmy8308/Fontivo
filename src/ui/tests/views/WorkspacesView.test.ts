@@ -278,11 +278,11 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain("ملفات التصميم والمجلدات الفرعية");
     expect(html).not.toContain("ملفات التصميم والمجلدات الفرعية (");
 
-    // Tasks heading without (Guidelines/) and full-width Add Task input
+    // Tasks heading without (Guidelines/) and rich Add Task modal trigger
     expect(html).toContain("مهام المشروع ومواعيد التسليم");
     expect(html).not.toContain("مهام المشروع ومواعيد التسليم (");
-    expect(html).toContain("إضافة مهمة جديدة للمشروع (اضغط Enter)...");
-    expect(html).toContain('class="w-full bg-[var(--color-back-main)]');
+    expect(html).toContain('data-testid="open-add-task-modal-btn"');
+    expect(html).toContain("إضافة مهمة");
 
     // Open File button
     expect(html).toContain("فتح الملف");
@@ -329,7 +329,7 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain("pe-9");
     expect(html).toContain('dir="auto"');
     expect(html).toContain('appearance:none');
-    expect(html).toContain('flex-1 min-w-0 text-start text-xs break-words');
+    expect(html).toContain('data-testid="open-add-task-modal-btn"');
   });
 
   it("syncs heading, body, accent, and custom font roles cleanly into deduplicated projectFonts", () => {

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.8] - 2026-11-27
+
+### Added & Improved
+- **Rich Workspace Task Details Modal (`WorkspacesView`)**: Replaced the compact inline task add bar with a dedicated React Portal task creation & editing modal supporting task title, category (`Typography`, `Colors & Brand`, `Design Assets`, `Client Review`, `Final Delivery`), priority, status, due date, detailed instructions/notes, and multi-line sub-step checklists rendered cleanly on each task card.
+- **Unified `All Fonts` (`كافة الخطوط`) Filter in Sidebar (`Sidebar`)**: Restored a single clean top filter button (`كافة الخطوط` / `All Fonts`) with the live total font count right above `Active in RAM` without duplicating the count in the sidebar header.
+- **Clean Iconography Across All Repositories**: Removed every `Sparkles` icon across `Fontivo-App`, `Fontivo-Site`, and `Fontivo-Fonts`, replacing them with domain-specific icons (`Layers`, `Palette`, `Check`, `CheckCircle2`, `ShieldCheck`, `ArrowUpCircle`).
+
+---
+
 ## [1.1.7] - 2026-11-27
 
 ### Added & Improved

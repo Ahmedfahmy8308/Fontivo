@@ -10,7 +10,7 @@ import {
   AlertTriangle,
   ShieldCheck,
   RefreshCw,
-  Sparkles,
+  Layers,
   FileWarning,
 } from "lucide-react";
 
@@ -399,7 +399,7 @@ export default function ImportPreviewModal({
           {visibleSamples.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center gap-1.5 text-[11px] font-sans font-bold text-[var(--color-text-muted)]">
-                <Sparkles className="w-3.5 h-3.5 text-[#B7A1D9] shrink-0" />
+                <Layers className="w-3.5 h-3.5 text-[#B7A1D9] shrink-0" />
                 <span>
                   {isRtl
                     ? "عينة من عائلات الخطوط المكتشفة:"

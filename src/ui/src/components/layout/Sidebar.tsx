@@ -123,6 +123,14 @@ export default function Sidebar({
 
   const sourceFilterItems = [
     {
+      id: "all",
+      label: isRtl ? "كافة الخطوط" : "All Fonts",
+      count: totalCount,
+      icon: Layers,
+      iconClass: "text-[var(--color-action)]",
+      filter: { type: "all", value: null } as FontFilter,
+    },
+    {
       id: "active",
       label: isRtl ? "المفعلة بالرام" : "Active in RAM",
       count: activeCount,

@@ -35,6 +35,8 @@ export interface WorkspaceTask {
   dueDate?: string;
   priority?: WorkspaceTaskPriority | string;
   category?: string;
+  notes?: string;
+  checklist?: string[];
 }
 
 export interface WorkspaceDesignFile {
