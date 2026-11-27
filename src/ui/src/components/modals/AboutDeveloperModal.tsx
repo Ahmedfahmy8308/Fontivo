@@ -276,13 +276,13 @@ export default function AboutDeveloperModal({
             </a>
             <span className="text-zinc-600">•</span>
             <a
-              href="https://ahmedfahmy8308.github.io/Fontivo-Site/"
+              href="https://fontivo-app.github.io"
               target="_blank"
               rel="noopener noreferrer"
               className="text-[11px] text-amber-400 hover:text-amber-300 font-mono inline-flex items-center gap-1 transition-colors"
             >
               <Globe className="w-3.5 h-3.5" />
-              <span>ahmedfahmy8308.github.io/Fontivo-Site</span>
+              <span>fontivo-app.github.io</span>
             </a>
           </div>
 

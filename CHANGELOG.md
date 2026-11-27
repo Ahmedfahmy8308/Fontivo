@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.5] - 2026-11-27
+
+### Added & Improved
+- **Folder Import Preview & Custom Slice Naming (`ImportPreviewModal`)**: Added dry-run folder scanning (`POST /api/fonts/preview-folder`, `POST /api/dialog/pick-folder-preview`) that validates OpenType headers and checks SHA-256 duplicates before copying, letting users inspect new/duplicate/invalid counts, total MB, and sample families, and customize the slice name (`customFolderName`) before copying into `%LOCALAPPDATA%\Fontivo\Fonts\Imported\<name>\`.
+- **Imported Folder Slice Rename & ZIP Export**: Added safe direct-child folder renaming (`POST /api/fonts/rename-folder`) updating disk paths, indexed font records, and collections, plus sandboxed ZIP export (`GET /api/fonts/export-folder?folderPath=...`) for user folders under `Fonts/Imported/` and `Fonts/Custom/`.
+- **Storage Breakdown & Safe Cache Cleanup**: Added `GET /api/system/storage-breakdown` (exact byte sizes and file counts across `Imported`, `Custom`, `Google`, `Packs`, `Workspaces`, `Backups`, and `Cache`) and 1-click `POST /api/system/cleanup-cache` to safely purge temporary `.zip`/`.part`/`.tmp` files in `Cache/PackArchives`.
+- **Workspace Handover ZIP Bundle, Logo Palette Auto-Extractor & Live `@font-face` Specimen**: Added `GET /api/workspaces/:id/export-bundle` (`<workspace-id>-handover.zip` packaging `Fonts/`, `Palettes/palette.ase`, `Guidelines/styleguide.html`, and `Designs/`), pure Canvas 5-color logo palette extraction (`extractPaletteFromImageData`), and live `@font-face` interactive typography specimen previews with adjustable size (`16px–44px`) and editable text.
+- **Performance & Canonical Website Migration**: Split heavy secondary views via `React.lazy` + `<Suspense>` for faster initial bundle load, and migrated canonical website & CDN manifest fallback URLs to `https://fontivo-app.github.io` while preserving GitHub repository links on `Ahmedfahmy8308/Fontivo` and `Ahmedfahmy8308/Fontivo-Fonts`.
+
+---
+
 ## [1.1.4] - 2026-11-27
 
 ### Fixed & Improved

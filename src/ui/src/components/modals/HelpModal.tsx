@@ -86,8 +86,17 @@ export default function HelpModal({
           </div>
         </div>
 
-        <div className="p-3 bg-[var(--color-back-side)] border-t border-[var(--color-border)] text-center text-[11px] text-[var(--color-text-muted)] font-mono">
-          Fontivo v{APP_VERSION} • Open Source Community
+        <div className="p-3 bg-[var(--color-back-side)] border-t border-[var(--color-border)] flex flex-wrap items-center justify-center gap-2 text-[11px] text-[var(--color-text-muted)] font-mono">
+          <span>Fontivo v{APP_VERSION} • Open Source Community</span>
+          <span>•</span>
+          <a
+            href="https://fontivo-app.github.io"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[var(--color-action)] hover:underline"
+          >
+            fontivo-app.github.io
+          </a>
         </div>
       </div>
     </div>

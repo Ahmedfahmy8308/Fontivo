@@ -37,12 +37,16 @@ import {
   Maximize2,
   Search,
   X,
+  Package,
+  Archive,
+  Wand2,
 } from "lucide-react";
 import {
   getContrastRatio,
   getWcagRating,
   generateHarmonies,
 } from "../../utils/colorUtils";
+import { extractPaletteFromImageDataUrl } from "../../utils/logoPaletteExtractor";
 import {
   downloadAseFile,
   exportToCssVariables,
@@ -251,6 +255,116 @@ export function normalizeHexColor(raw: string, fallback = "#F16B50"): string {
     return `#${a}${a}${b}${b}${c}${c}`.toUpperCase();
   }
   return fallback.toUpperCase();
+}
+
+/**
+ * Pure, unit-testable dominant color extractor for HTML5 Canvas RGBA pixel buffers.
+ * Quantizes opaque pixels into 4-bit-per-channel buckets, computes centroids,
+ * and filters near-duplicates via Euclidean RGB distance.
+ */
+export function extractPaletteFromImageData(
+  data: Uint8ClampedArray,
+  maxColors = 5,
+): string[] {
+  if (!data || data.length < 4 || maxColors <= 0) return [];
+
+  const buckets = new Map<
+    number,
+    { rSum: number; gSum: number; bSum: number; count: number }
+  >();
+  const totalPixels = Math.floor(data.length / 4);
+  const step = totalPixels > 10000 ? Math.floor(totalPixels / 10000) : 1;
+
+  for (let px = 0; px < totalPixels; px += step) {
+    const i = px * 4;
+    const a = data[i + 3];
+    if (a < 128) continue;
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+    const existing = buckets.get(key);
+    if (existing) {
+      existing.rSum += r;
+      existing.gSum += g;
+      existing.bSum += b;
+      existing.count += 1;
+    } else {
+      buckets.set(key, { rSum: r, gSum: g, bSum: b, count: 1 });
+    }
+  }
+
+  const sorted = Array.from(buckets.values())
+    .map((b) => ({
+      r: Math.round(b.rSum / b.count),
+      g: Math.round(b.gSum / b.count),
+      b: Math.round(b.bSum / b.count),
+      count: b.count,
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  const MIN_DIST_SQ = 44 * 44;
+  const chosen: Array<{ r: number; g: number; b: number }> = [];
+
+  for (const candidate of sorted) {
+    if (chosen.length >= maxColors) break;
+    const isNearDuplicate = chosen.some((c) => {
+      const dr = c.r - candidate.r;
+      const dg = c.g - candidate.g;
+      const db = c.b - candidate.b;
+      return dr * dr + dg * dg + db * db < MIN_DIST_SQ;
+    });
+    if (!isNearDuplicate) {
+      chosen.push(candidate);
+    }
+  }
+
+  const toHex = (n: number) =>
+    Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0").toUpperCase();
+  return chosen.map((c) => `#${toHex(c.r)}${toHex(c.g)}${toHex(c.b)}`);
+}
+
+async function extractPaletteFromLogoUrl(
+  logoDataUrl: string,
+  maxColors = 5,
+): Promise<string[]> {
+  if (
+    !logoDataUrl ||
+    typeof document === "undefined" ||
+    typeof Image === "undefined"
+  ) {
+    return [];
+  }
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const maxDim = 96;
+        const scale = Math.min(
+          1,
+          maxDim / Math.max(img.width || 1, img.height || 1),
+        );
+        const w = Math.max(1, Math.round((img.width || maxDim) * scale));
+        const h = Math.max(1, Math.round((img.height || maxDim) * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve([]);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        const imageData = ctx.getImageData(0, 0, w, h);
+        resolve(extractPaletteFromImageData(imageData.data, maxColors));
+      } catch {
+        resolve([]);
+      }
+    };
+    img.onerror = () => resolve([]);
+    img.src = logoDataUrl;
+  });
 }
 
 export function getDeadlineMeta(
@@ -743,6 +857,17 @@ export default function WorkspacesView({
   const [scanningFolder, setScanningFolder] = useState(false);
   const [savingPalette, setSavingPalette] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportingZip, setExportingZip] = useState(false);
+  const [extractingLogoPalette, setExtractingLogoPalette] = useState(false);
+  const [specimenText, setSpecimenText] = useState("");
+  const [specimenSize, setSpecimenSize] = useState(24);
+  const [loadedHeadingFamily, setLoadedHeadingFamily] = useState<string | null>(
+    null,
+  );
+  const [loadedBodyFamily, setLoadedBodyFamily] = useState<string | null>(null);
+  const [loadedAccentFamily, setLoadedAccentFamily] = useState<string | null>(
+    null,
+  );
   const [notification, setNotification] = useState<{
     type: string;
     text: string;
@@ -916,6 +1041,67 @@ export default function WorkspacesView({
     (activeWorkspace.path as string | undefined) ||
     `%LOCALAPPDATA%\\Fontivo\\Workspaces\\${activeWorkspace.id}`;
 
+  // Dynamically load actual font files via FontFace API for live Typography Specimen Preview
+  useEffect(() => {
+    setLoadedHeadingFamily(null);
+    setLoadedBodyFamily(null);
+    setLoadedAccentFamily(null);
+
+    if (
+      typeof window === "undefined" ||
+      typeof FontFace === "undefined" ||
+      typeof document === "undefined" ||
+      !document.fonts
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const extractFontId = (slot: any): string | number | null => {
+      if (slot && typeof slot === "object" && slot.fontId != null && slot.fontId !== "") {
+        return slot.fontId;
+      }
+      return null;
+    };
+
+    const loadSlot = async (
+      slotName: "heading" | "body" | "accent",
+      slotValue: any,
+      setter: (family: string | null) => void,
+    ) => {
+      const fontId = extractFontId(slotValue);
+      if (fontId == null) return;
+      const safeId = String(activeWorkspace.id).replace(/[^a-zA-Z0-9_-]/g, "");
+      const familyName = `FontivoWs_${safeId}_${slotName}_${fontId}`;
+      try {
+        const face = new FontFace(
+          familyName,
+          `url('/api/fonts/${encodeURIComponent(String(fontId))}/file')`,
+        );
+        const loaded = await face.load();
+        if (!cancelled && document.fonts) {
+          document.fonts.add(loaded);
+          setter(familyName);
+        }
+      } catch {
+        // Offline / missing font file — safely fall back to system/CSS stack
+      }
+    };
+
+    loadSlot("heading", activeWorkspace.typography?.headingFont, setLoadedHeadingFamily);
+    loadSlot("body", activeWorkspace.typography?.bodyFont, setLoadedBodyFamily);
+    loadSlot("accent", activeWorkspace.typography?.accentFont, setLoadedAccentFamily);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeWorkspace.id,
+    activeWorkspace.typography?.headingFont,
+    activeWorkspace.typography?.bodyFont,
+    activeWorkspace.typography?.accentFont,
+  ]);
+
   const effectiveFonts = React.useMemo(() => {
     const propList = Array.isArray(fonts) ? fonts : [];
     if (propList.length === 0) return fetchedLibraryFonts;
@@ -1022,6 +1208,87 @@ export default function WorkspacesView({
     setProjectFontQuery("");
     setDesignSearchQuery("");
   }, [activeWorkspace?.id]);
+
+  // Resolve numeric font IDs for Heading & Body slots and dynamically load @font-face
+  const resolveSlotFontId = React.useCallback(
+    (slot: TypographyFontObject | string | undefined): number | null => {
+      if (!slot) return null;
+      if (
+        typeof slot === "object" &&
+        typeof slot.fontId === "number" &&
+        slot.fontId > 0
+      ) {
+        return slot.fontId;
+      }
+      const rawName =
+        typeof slot === "string"
+          ? slot
+          : slot.family || slot.name || "";
+      const candidates = rawName
+        .split(/[\/—,]/)
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      if (candidates.length === 0) return null;
+      const match = effectiveFonts.find((f: any) => {
+        const fam = String(f.family || "").trim().toLowerCase();
+        const nm = String(f.name || "").trim().toLowerCase();
+        const disp = String(f.displayName || "").trim().toLowerCase();
+        return candidates.some(
+          (c) => c === fam || c === nm || c === disp,
+        );
+      });
+      const idNum = match ? Number(match.id) : NaN;
+      return Number.isFinite(idNum) && idNum > 0 ? idNum : null;
+    },
+    [effectiveFonts],
+  );
+
+  const headingFontId = resolveSlotFontId(
+    activeWorkspace?.typography?.headingFont,
+  );
+  const bodyFontId = resolveSlotFontId(activeWorkspace?.typography?.bodyFont);
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      typeof document === "undefined" ||
+      typeof FontFace === "undefined" ||
+      !document.fonts ||
+      (typeof navigator !== "undefined" &&
+        /jsdom|happy-dom/i.test(navigator.userAgent || ""))
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const loadSlotFace = async (
+      id: number | null,
+      prefix: string,
+      setter: (fam: string | null) => void,
+    ) => {
+      if (!id) {
+        setter(null);
+        return;
+      }
+      const familyName = `${prefix}-${id}`;
+      try {
+        const face = new FontFace(familyName, `url("/api/fonts/${id}/file")`);
+        const loaded = await face.load();
+        if (cancelled) return;
+        document.fonts.add(loaded);
+        setter(familyName);
+      } catch {
+        if (!cancelled) setter(null);
+      }
+    };
+
+    loadSlotFace(headingFontId, "FontivoWsHeading", setLoadedHeadingFamily);
+    loadSlotFace(bodyFontId, "FontivoWsBody", setLoadedBodyFamily);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [headingFontId, bodyFontId]);
 
   const workspaceFoldersList: string[] = React.useMemo(() => {
     const base = ["Fonts", "Designs", "Palettes", "Guidelines"];
@@ -1887,6 +2154,147 @@ export default function WorkspacesView({
     }
   };
 
+  const handleExportHandoverZip = async () => {
+    if (!activeWorkspace || exportingZip) return;
+    setExportingZip(true);
+    const url = `/api/workspaces/${encodeURIComponent(activeWorkspace.id)}/export-zip`;
+    const filename = `${activeWorkspace.id}-handover.zip`;
+    try {
+      const res = await safeFetch(url, { timeoutMs: 25000 });
+      if (res && res.ok) {
+        const blob = await res.blob();
+        if (
+          typeof URL !== "undefined" &&
+          typeof URL.createObjectURL === "function" &&
+          typeof document !== "undefined"
+        ) {
+          const objUrl = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = objUrl;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          setTimeout(() => URL.revokeObjectURL(objUrl), 2500);
+        }
+        setNotification({
+          type: "success",
+          text: isRtl
+            ? `تم تصدير حزمة تسليم المشروع (${filename}) بنجاح!`
+            : `Project handover bundle (${filename}) exported successfully!`,
+        });
+      } else {
+        // Fallback direct browser download navigation
+        if (typeof document !== "undefined") {
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+        setNotification({
+          type: "info",
+          text: isRtl
+            ? `تم إرسال طلب تنزيل حزمة المشروع (${filename}).`
+            : `Triggered handover archive download (${filename}).`,
+        });
+      }
+    } catch (e: any) {
+      setNotification({
+        type: "error",
+        text:
+          e?.message ||
+          (isRtl ? "تعذر تصدير حزمة المشروع (.ZIP)" : "Failed to export project ZIP bundle"),
+      });
+    } finally {
+      setExportingZip(false);
+    }
+  };
+
+  const handleExtractLogoPaletteForModal = async (overrideUrl?: string) => {
+    const src = overrideUrl || formLogoDataUrl;
+    if (!src || extractingLogoPalette) return;
+    setExtractingLogoPalette(true);
+    try {
+      const extracted = await extractPaletteFromImageDataUrl(src, 5);
+      if (extracted.length > 0) {
+        setFormPalette(
+          extracted.map((c, idx) => ({
+            id: `logo-sw-${Date.now()}-${idx}`,
+            name: c.name,
+            hex: c.hex,
+            role: c.role,
+          })),
+        );
+        setNotification({
+          type: "success",
+          text: isRtl
+            ? `تم استخراج ${extracted.length} ألوان مميزة من الشعار بنجاح!`
+            : `Extracted ${extracted.length} brand colors from logo!`,
+        });
+      } else {
+        setNotification({
+          type: "error",
+          text: isRtl
+            ? "تعذر استخراج ألوان واضحة من هذا الشعار."
+            : "Could not extract distinct colors from this logo.",
+        });
+      }
+    } finally {
+      setExtractingLogoPalette(false);
+    }
+  };
+
+  const handleExtractLogoPaletteForActiveWorkspace = async () => {
+    if (!activeWorkspace?.logoDataUrl || extractingLogoPalette) return;
+    setExtractingLogoPalette(true);
+    try {
+      const extracted = await extractPaletteFromImageDataUrl(
+        activeWorkspace.logoDataUrl,
+        5,
+      );
+      if (extracted.length > 0) {
+        const existing = activeWorkspace.palette || [];
+        const existingHexes = new Set(
+          existing.map((s) => normalizeHexColor(s.hex)),
+        );
+        const toAppend: ColorSwatch[] = extracted
+          .filter((c) => !existingHexes.has(normalizeHexColor(c.hex)))
+          .map((c) => ({
+            name: c.name,
+            hex: c.hex,
+            role: c.role,
+          }));
+        const nextPalette =
+          toAppend.length > 0 ? [...existing, ...toAppend] : existing;
+        await persistWorkspaceWithPalette({
+          ...activeWorkspace,
+          palette: nextPalette,
+        });
+        setNotification({
+          type: "success",
+          text: isRtl
+            ? toAppend.length > 0
+              ? `تمت إضافة ${toAppend.length} ألوان مستخرجة من الشعار إلى اللوحة!`
+              : "جميع ألوان الشعار موجودة مسبقاً في اللوحة."
+            : toAppend.length > 0
+              ? `Added ${toAppend.length} colors extracted from logo to palette!`
+              : "All extracted logo colors are already in this palette.",
+        });
+      } else {
+        setNotification({
+          type: "error",
+          text: isRtl
+            ? "تعذر استخراج ألوان واضحة من شعار المشروع."
+            : "Could not extract distinct colors from the workspace logo.",
+        });
+      }
+    } finally {
+      setExtractingLogoPalette(false);
+    }
+  };
+
   // Task checklist handlers (persisted to disk)
   const handleToggleTaskStatus = async (taskId: string) => {
     if (!activeWorkspace) return;
@@ -2085,6 +2493,101 @@ export default function WorkspacesView({
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  const LOGO_EXTRACTED_ROLES = [
+    "primary",
+    "secondary",
+    "accent",
+    "surface",
+    "background",
+  ] as const;
+
+  const handleExtractPaletteInModal = async () => {
+    if (!formLogoDataUrl || extractingLogoPalette) return;
+    setExtractingLogoPalette(true);
+    try {
+      const hexes = await extractPaletteFromLogoUrl(formLogoDataUrl, 5);
+      if (hexes.length === 0) {
+        setNotification({
+          type: "info",
+          text: isRtl
+            ? "تعذر استخراج ألوان واضحة من الشعار."
+            : "Could not extract distinct colors from this logo.",
+        });
+        return;
+      }
+      setFormPalettePreset("");
+      setFormPalette(
+        hexes.map((hex, idx) => ({
+          id: `logo-sw-${Date.now()}-${idx}`,
+          name: isRtl ? `لون الشعار ${idx + 1}` : `Logo Tone ${idx + 1}`,
+          hex,
+          role: LOGO_EXTRACTED_ROLES[idx] || "accent",
+        })),
+      );
+      setNotification({
+        type: "success",
+        text: isRtl
+          ? `تم استخراج ${hexes.length} ألوان مميزة من الشعار بنجاح!`
+          : `Extracted ${hexes.length} distinct brand colors from logo!`,
+      });
+    } finally {
+      setExtractingLogoPalette(false);
+    }
+  };
+
+  const handleExtractPaletteFromActiveLogo = async () => {
+    if (!activeWorkspace?.logoDataUrl || extractingLogoPalette) return;
+    setExtractingLogoPalette(true);
+    try {
+      const hexes = await extractPaletteFromLogoUrl(
+        activeWorkspace.logoDataUrl,
+        5,
+      );
+      if (hexes.length === 0) {
+        setNotification({
+          type: "info",
+          text: isRtl
+            ? "تعذر استخراج ألوان واضحة من شعار المشروع."
+            : "Could not extract distinct colors from workspace logo.",
+        });
+        return;
+      }
+      const existing = activeWorkspace.palette || [];
+      const existingHexSet = new Set(
+        existing.map((c) => normalizeHexColor(c.hex)),
+      );
+      const additions: ColorSwatch[] = hexes
+        .filter((h) => !existingHexSet.has(h))
+        .map((hex, idx) => ({
+          name: isRtl ? `لون الشعار ${idx + 1}` : `Logo Tone ${idx + 1}`,
+          hex,
+          role: LOGO_EXTRACTED_ROLES[idx] || "accent",
+        }));
+
+      if (additions.length === 0) {
+        setNotification({
+          type: "info",
+          text: isRtl
+            ? "جميع ألوان الشعار المستخرجة موجودة بالفعل في لوحة الألوان."
+            : "All extracted logo colors are already in this palette.",
+        });
+        return;
+      }
+      await persistWorkspaceWithPalette({
+        ...activeWorkspace,
+        palette: [...existing, ...additions],
+      });
+      setNotification({
+        type: "success",
+        text: isRtl
+          ? `تم استخراج وإضافة ${additions.length} ألوان جديدة من شعار المشروع وحفظها في palette.ase!`
+          : `Extracted & added ${additions.length} brand colors from logo to palette.ase!`,
+      });
+    } finally {
+      setExtractingLogoPalette(false);
+    }
   };
 
   const createFolderAtPath = async (
@@ -3015,6 +3518,25 @@ export default function WorkspacesView({
                   </span>
                 </button>
 
+                <a
+                  href={`/api/workspaces/${encodeURIComponent(activeWorkspace.id)}/export-bundle`}
+                  download={`${activeWorkspace.id}-handover.zip`}
+                  data-testid="export-handover-zip-btn"
+                  className="h-9 px-3.5 rounded-xl bg-[#B7A1D9]/15 hover:bg-[#B7A1D9]/25 text-[#B7A1D9] border border-[#B7A1D9]/35 text-xs font-sans font-bold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap shrink-0"
+                  title={
+                    isRtl
+                      ? "تصدير حزمة التسليم الكاملة (الخطوط + الألوان + دليل الهوية + التصاميم) بصيغة ZIP"
+                      : "Download full client handover archive (Fonts, Palette, StyleGuide, Designs) as .ZIP"
+                  }
+                >
+                  <Package className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    {isRtl
+                      ? "تصدير حزمة التسليم (.ZIP)"
+                      : "Export Handover (.ZIP)"}
+                  </span>
+                </a>
+
                 <button
                   onClick={handleExportBundle}
                   disabled={exporting}
@@ -3217,6 +3739,26 @@ export default function WorkspacesView({
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 text-xs shrink-0">
+                  {activeWorkspace.logoDataUrl && (
+                    <button
+                      type="button"
+                      data-testid="workspace-extract-logo-palette-btn"
+                      onClick={handleExtractPaletteFromActiveLogo}
+                      disabled={extractingLogoPalette}
+                      className="h-8 px-3 rounded-lg text-[11px] font-sans font-bold bg-[#B7A1D9]/15 hover:bg-[#B7A1D9]/25 text-[#B7A1D9] border border-[#B7A1D9]/35 transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 disabled:opacity-50"
+                    >
+                      <Wand2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        {extractingLogoPalette
+                          ? isRtl
+                            ? "جاري الاستخراج..."
+                            : "Extracting..."
+                          : isRtl
+                            ? "استخراج الألوان من الشعار"
+                            : "Extract Palette from Logo"}
+                      </span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={handleSavePaletteToAse}
@@ -3586,46 +4128,119 @@ export default function WorkspacesView({
                     </div>
                   </div>
 
+                  {/* Live Specimen Controls: Editable Text + Font Size Slider (16px–44px) */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 p-2.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)]">
+                    <input
+                      type="text"
+                      dir="auto"
+                      data-testid="workspace-specimen-input"
+                      value={specimenText}
+                      onChange={(e) => setSpecimenText(e.target.value)}
+                      placeholder={
+                        isRtl
+                          ? "اكتب نصاً للمعاينة الحية (عربي أو إنجليزي)..."
+                          : "Type live Arabic or Latin specimen text..."
+                      }
+                      className="flex-1 min-w-0 h-8 bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
+                    />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <input
+                        type="range"
+                        min={16}
+                        max={44}
+                        step={1}
+                        data-testid="workspace-specimen-size-slider"
+                        aria-label={
+                          isRtl ? "حجم خط المعاينة" : "Specimen font size"
+                        }
+                        value={specimenSize}
+                        onChange={(e) =>
+                          setSpecimenSize(Number(e.target.value))
+                        }
+                        className="w-24 accent-[var(--color-action)] cursor-pointer"
+                      />
+                      <span
+                        dir="ltr"
+                        data-testid="workspace-specimen-size-value"
+                        className="text-[11px] font-mono tabular-nums text-[var(--color-text-muted)] w-10 text-end"
+                      >
+                        {specimenSize}px
+                      </span>
+                    </div>
+                  </div>
+
                   <div className="p-4 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] space-y-3.5">
                     <div>
                       <div
                         dir="ltr"
-                        className="text-[10px] font-mono text-[var(--color-text-dim)] uppercase tracking-wider mb-1"
+                        className="text-[10px] font-mono text-[var(--color-text-dim)] uppercase tracking-wider mb-1 flex items-center justify-between gap-2"
                       >
-                        Heading Font —{" "}
-                        {getFontDisplayName(
-                          activeWorkspace.typography?.headingFont,
+                        <span className="truncate">
+                          Heading Font —{" "}
+                          {getFontDisplayName(
+                            activeWorkspace.typography?.headingFont,
+                          )}
+                        </span>
+                        {loadedHeadingFamily && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold shrink-0">
+                            @font-face
+                          </span>
                         )}
                       </div>
                       <h2
                         dir="auto"
-                        className="text-xl font-bold text-[var(--color-text-header)] leading-tight tracking-tight"
+                        data-testid="workspace-specimen-heading"
+                        style={{
+                          fontFamily: loadedHeadingFamily
+                            ? `"${loadedHeadingFamily}", sans-serif`
+                            : undefined,
+                          fontSize: `${specimenSize}px`,
+                        }}
+                        className="font-bold text-[var(--color-text-header)] leading-tight tracking-tight break-words"
                       >
-                        {typeof activeWorkspace.typography?.previewHeading ===
-                        "string"
-                          ? activeWorkspace.typography.previewHeading
-                          : "Typographic Architecture & Hierarchy"}
+                        {specimenText.trim()
+                          ? specimenText
+                          : typeof activeWorkspace.typography
+                                ?.previewHeading === "string"
+                            ? activeWorkspace.typography.previewHeading
+                            : "Typographic Architecture & Hierarchy"}
                       </h2>
                     </div>
 
                     <div className="pt-2.5 border-t border-[var(--color-border-subtle)]">
                       <div
                         dir="ltr"
-                        className="text-[10px] font-mono text-[var(--color-text-dim)] uppercase tracking-wider mb-1"
+                        className="text-[10px] font-mono text-[var(--color-text-dim)] uppercase tracking-wider mb-1 flex items-center justify-between gap-2"
                       >
-                        Body Font —{" "}
-                        {getFontDisplayName(
-                          activeWorkspace.typography?.bodyFont,
+                        <span className="truncate">
+                          Body Font —{" "}
+                          {getFontDisplayName(
+                            activeWorkspace.typography?.bodyFont,
+                          )}
+                        </span>
+                        {loadedBodyFamily && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold shrink-0">
+                            @font-face
+                          </span>
                         )}
                       </div>
                       <p
                         dir="auto"
-                        className="text-xs text-[var(--color-text-main)] leading-relaxed opacity-90"
+                        data-testid="workspace-specimen-body"
+                        style={{
+                          fontFamily: loadedBodyFamily
+                            ? `"${loadedBodyFamily}", sans-serif`
+                            : undefined,
+                          fontSize: `${Math.max(12, Math.round(specimenSize * 0.62))}px`,
+                        }}
+                        className="text-[var(--color-text-main)] leading-relaxed opacity-90 break-words"
                       >
-                        {typeof activeWorkspace.typography?.previewBody ===
-                        "string"
-                          ? activeWorkspace.typography.previewBody
-                          : "High-performance legibility engineered for modern software surfaces, editorial spreads, and mathematical tabular systems."}
+                        {specimenText.trim()
+                          ? specimenText
+                          : typeof activeWorkspace.typography?.previewBody ===
+                              "string"
+                            ? activeWorkspace.typography.previewBody
+                            : "High-performance legibility engineered for modern software surfaces, editorial spreads, and mathematical tabular systems."}
                       </p>
                     </div>
 
@@ -3638,6 +4253,11 @@ export default function WorkspacesView({
                         </span>
                         <span
                           dir="auto"
+                          style={{
+                            fontFamily: loadedAccentFamily
+                              ? `"${loadedAccentFamily}", monospace`
+                              : undefined,
+                          }}
                           className="text-[var(--color-action)] font-sans font-semibold truncate"
                         >
                           {getFontDisplayName(
@@ -5177,13 +5797,33 @@ export default function WorkspacesView({
                         )}
                       </button>
                       {formLogoDataUrl && (
-                        <button
-                          type="button"
-                          onClick={() => setFormLogoDataUrl("")}
-                          className="text-[10px] text-rose-400 hover:underline cursor-pointer"
-                        >
-                          {isRtl ? "إزالة الشعار" : "Remove Logo"}
-                        </button>
+                        <div className="flex flex-col items-center gap-1.5">
+                          <button
+                            type="button"
+                            data-testid="modal-extract-logo-palette-btn"
+                            onClick={() => handleExtractLogoPaletteForModal()}
+                            disabled={extractingLogoPalette}
+                            className="px-2.5 py-1 rounded-lg bg-[#B7A1D9]/15 hover:bg-[#B7A1D9]/25 text-[#B7A1D9] border border-[#B7A1D9]/35 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer whitespace-nowrap disabled:opacity-50"
+                          >
+                            <Wand2 className="w-3 h-3 shrink-0" />
+                            <span>
+                              {extractingLogoPalette
+                                ? isRtl
+                                  ? "جاري الاستخراج..."
+                                  : "Extracting..."
+                                : isRtl
+                                  ? "استخراج ألوان من الشعار"
+                                  : "Extract Palette from Logo"}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFormLogoDataUrl("")}
+                            className="text-[10px] text-rose-400 hover:underline cursor-pointer"
+                          >
+                            {isRtl ? "إزالة الشعار" : "Remove Logo"}
+                          </button>
+                        </div>
                       )}
                     </div>
 
@@ -5482,18 +6122,36 @@ export default function WorkspacesView({
                             : "Apply a quick starter preset or customize each color role, hex, and name"}
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleAddModalSwatch}
-                        className="h-8 px-3 rounded-lg bg-[var(--color-action)]/15 hover:bg-[var(--color-action)]/25 border border-[var(--color-action)]/40 text-[var(--color-action)] font-sans font-bold text-[11px] flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>
-                          {isRtl
-                            ? "إضافة لون / ليبل جديد"
-                            : "Add Color / Label"}
-                        </span>
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {formLogoDataUrl && (
+                          <button
+                            type="button"
+                            data-testid="modal-extract-logo-palette-btn"
+                            onClick={handleExtractPaletteInModal}
+                            disabled={extractingLogoPalette}
+                            className="h-8 px-3 rounded-lg bg-[#B7A1D9]/15 hover:bg-[#B7A1D9]/25 border border-[#B7A1D9]/40 text-[#B7A1D9] font-sans font-bold text-[11px] flex items-center gap-1.5 cursor-pointer whitespace-nowrap disabled:opacity-50"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>
+                              {isRtl
+                                ? "استخراج الألوان من الشعار"
+                                : "Extract Palette from Logo"}
+                            </span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleAddModalSwatch}
+                          className="h-8 px-3 rounded-lg bg-[var(--color-action)]/15 hover:bg-[var(--color-action)]/25 border border-[var(--color-action)]/40 text-[var(--color-action)] font-sans font-bold text-[11px] flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>
+                            {isRtl
+                              ? "إضافة لون / ليبل جديد"
+                              : "Add Color / Label"}
+                          </span>
+                        </button>
+                      </div>
                     </div>
 
                     {/* Starter Presets */}

@@ -92,10 +92,12 @@ pub type UpdateCheckResult = UpdateStatus;
 pub struct AutoUpdater;
 
 impl AutoUpdater {
-    pub const CURRENT_VERSION: &'static str = "1.1.4";
+    pub const CURRENT_VERSION: &'static str = "1.1.5";
     pub const DEFAULT_MANIFEST_URL: &'static str =
         "https://api.github.com/repos/Ahmedfahmy8308/Fontivo/releases/latest";
     pub const DEFAULT_FALLBACK_MANIFEST_URL: &'static str =
+        "https://fontivo-app.github.io/api/manifest.json";
+    pub const SECONDARY_FALLBACK_MANIFEST_URL: &'static str =
         "https://ahmedfahmy8308.github.io/Fontivo-Site/api/manifest.json";
 
     /// Removes CI-generated CLI install / attestation trailers from GitHub release notes
@@ -524,7 +526,9 @@ impl AutoUpdater {
                 }
                 Err(primary_err) => {
                     if !custom_override {
-                        match fetch_and_parse(Self::DEFAULT_FALLBACK_MANIFEST_URL) {
+                        match fetch_and_parse(Self::DEFAULT_FALLBACK_MANIFEST_URL)
+                            .or_else(|_| fetch_and_parse(Self::SECONDARY_FALLBACK_MANIFEST_URL))
+                        {
                             Ok(fallback_parsed) => {
                                 discovered = fallback_parsed;
                             }

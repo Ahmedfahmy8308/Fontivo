@@ -537,10 +537,22 @@ export default function LicensesView({
                 : `Loaded font families: ${families.length.toLocaleString()}`}
             </span>
           </div>
-          <span className="text-[10px] font-mono text-[var(--color-text-dim)] shrink-0 flex items-center gap-1.5">
-            <Heart className="w-3.5 h-3.5 text-[var(--color-action)]" />
-            <span>© 2026 Fontivo Project</span>
-          </span>
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
+            <a
+              href="https://fontivo-app.github.io"
+              target="_blank"
+              rel="noopener noreferrer"
+              dir="ltr"
+              className="text-[11px] font-mono text-[var(--color-action)] hover:underline inline-flex items-center gap-1"
+            >
+              <Globe className="w-3.5 h-3.5 shrink-0" />
+              <span>fontivo-app.github.io</span>
+            </a>
+            <span className="text-[10px] font-mono text-[var(--color-text-dim)] flex items-center gap-1.5">
+              <Heart className="w-3.5 h-3.5 text-[var(--color-action)]" />
+              <span>© 2026 Fontivo Project</span>
+            </span>
+          </div>
         </div>
       </div>
     </div>

@@ -5,6 +5,7 @@ import "../setup";
 import WorkspacesView, {
   BRAND_FOLDER_TEMPLATES,
   buildSyncedProjectFonts,
+  extractPaletteFromImageData,
   getDeadlineMeta,
   isProtectedRootFolder,
   localizeSwatchRole,
@@ -345,5 +346,95 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
 
     expect(isProtectedRootFolder("Designs")).toBe(true);
     expect(isProtectedRootFolder("Designs/Instagram")).toBe(false);
+  });
+
+  it("extracts up to 5 distinct non-near-duplicate dominant hex colors from RGBA image data", () => {
+    const pushPixels = (
+      out: number[],
+      r: number,
+      g: number,
+      b: number,
+      a: number,
+      count: number,
+    ) => {
+      for (let i = 0; i < count; i++) out.push(r, g, b, a);
+    };
+
+    const buf: number[] = [];
+    // Transparent pixels should be ignored
+    pushPixels(buf, 12, 34, 56, 0, 40);
+    // Primary red + near-duplicate red (should collapse into one)
+    pushPixels(buf, 240, 32, 32, 255, 30);
+    pushPixels(buf, 236, 36, 34, 255, 25);
+    // Distinct colors
+    pushPixels(buf, 16, 185, 129, 255, 22);
+    pushPixels(buf, 37, 99, 235, 255, 18);
+    pushPixels(buf, 245, 180, 40, 255, 14);
+    pushPixels(buf, 180, 120, 220, 255, 10);
+    // 6th distinct color (should be excluded by maxColors=5)
+    pushPixels(buf, 20, 20, 20, 255, 5);
+
+    const extracted = extractPaletteFromImageData(new Uint8ClampedArray(buf), 5);
+    expect(extracted).toHaveLength(5);
+    for (const hex of extracted) {
+      expect(hex).toMatch(/^#[0-9A-F]{6}$/);
+    }
+    // Verify no near-duplicates among extracted colors
+    for (let i = 0; i < extracted.length; i++) {
+      for (let j = i + 1; j < extracted.length; j++) {
+        const parse = (h: string) => [
+          parseInt(h.slice(1, 3), 16),
+          parseInt(h.slice(3, 5), 16),
+          parseInt(h.slice(5, 7), 16),
+        ];
+        const [r1, g1, b1] = parse(extracted[i]);
+        const [r2, g2, b2] = parse(extracted[j]);
+        const dist = Math.hypot(r1 - r2, g1 - g2, b1 - b2);
+        expect(dist).toBeGreaterThanOrEqual(44);
+      }
+    }
+
+    // Empty / transparent buffer returns empty array
+    expect(extractPaletteFromImageData(new Uint8ClampedArray(0), 5)).toEqual([]);
+    expect(
+      extractPaletteFromImageData(new Uint8ClampedArray([255, 0, 0, 0]), 5),
+    ).toEqual([]);
+  });
+
+  it("renders Export Handover (.ZIP) button, interactive specimen slider (16-44px) & input, and Extract Palette from Logo button when logo is present", () => {
+    const wsWithLogo = [
+      {
+        id: "brand-zip-test",
+        name: "Atlas Visual Studio",
+        category: "Branding & Visual Identity",
+        logoDataUrl: "data:image/png;base64,iVBORw0KGgo=",
+        typography: {
+          headingFont: { name: "Cairo Bold", fontId: 42, family: "Cairo" },
+          bodyFont: { name: "Tajawal Regular", fontId: 43, family: "Tajawal" },
+          previewHeading: "Atlas Headline Specimen",
+          previewBody: "Atlas body paragraph preview.",
+        },
+        palette: [{ name: "Coral", hex: "#F16B50", role: "primary" }],
+        tasks: [],
+      },
+    ];
+    localStorage.setItem("fontivo_workspaces", JSON.stringify(wsWithLogo));
+
+    const htmlEn = renderToString(
+      React.createElement(WorkspacesView, { fonts: [], isRtl: false }),
+    );
+    expect(htmlEn).toContain("Export Handover (.ZIP)");
+    expect(htmlEn).toContain("/api/workspaces/brand-zip-test/export-bundle");
+    expect(htmlEn).toContain("Extract Palette from Logo");
+    expect(htmlEn).toContain('data-testid="workspace-specimen-size-slider"');
+    expect(htmlEn).toContain('min="16"');
+    expect(htmlEn).toContain('max="44"');
+    expect(htmlEn).toContain('data-testid="workspace-specimen-input"');
+
+    const htmlAr = renderToString(
+      React.createElement(WorkspacesView, { fonts: [], isRtl: true }),
+    );
+    expect(htmlAr).toContain("تصدير حزمة التسليم (.ZIP)");
+    expect(htmlAr).toContain("استخراج الألوان من الشعار");
   });
 });

@@ -1924,6 +1924,227 @@ impl AppState {
         Ok((clean_display_path, removed_list))
     }
 
+    /// Safely renames a direct subfolder under `%LOCALAPPDATA%\Fontivo\Fonts\Imported\`,
+    /// updating all indexed font paths, sub_category labels, collections, and persisting the index.
+    /// Returns `(old_clean_path, new_clean_path, old_name, new_name, updated_count)`.
+    pub fn rename_imported_folder(
+        &mut self,
+        old_path: &str,
+        new_name: &str,
+    ) -> Result<(String, String, String, String, usize), (u16, String)> {
+        let raw_old = old_path.trim();
+        let raw_new = new_name.trim();
+
+        if raw_old.is_empty() || raw_old.contains("..") || raw_old.contains('\0') {
+            return Err((
+                400,
+                "Invalid oldPath: empty or contains forbidden traversal characters".to_string(),
+            ));
+        }
+
+        if raw_new.is_empty()
+            || raw_new.len() > 64
+            || raw_new.contains("..")
+            || raw_new.contains('/')
+            || raw_new.contains('\\')
+            || raw_new.contains('\0')
+            || raw_new
+                .chars()
+                .any(|c| matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control())
+        {
+            return Err((
+                400,
+                "Invalid newName: must be 1-64 safe characters without path separators or traversal"
+                    .to_string(),
+            ));
+        }
+
+        let trimmed_new = raw_new.trim().trim_matches('.').trim();
+        if trimmed_new.is_empty() {
+            return Err((400, "Invalid newName: cannot be empty or dots only".to_string()));
+        }
+
+        let upper = trimmed_new.to_ascii_uppercase();
+        let base_upper = upper.split('.').next().unwrap_or(&upper);
+        const RESERVED: &[&str] = &[
+            "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+            "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
+            "LPT9",
+        ];
+        if RESERVED.contains(&base_upper) {
+            return Err((
+                400,
+                format!("Invalid newName: '{}' is a reserved OS device name", trimmed_new),
+            ));
+        }
+
+        let imported_root = self.get_imported_fonts_dir();
+        let canon_imported_root = imported_root.canonicalize().map_err(|e| {
+            (
+                500,
+                format!("Failed to resolve Imported fonts root: {}", e),
+            )
+        })?;
+
+        let candidate = if Path::new(raw_old).is_absolute() {
+            PathBuf::from(raw_old)
+        } else {
+            if raw_old.contains(':') {
+                return Err((
+                    400,
+                    "Security violation: invalid drive prefix in relative oldPath".to_string(),
+                ));
+            }
+            let norm = raw_old.replace('\\', "/");
+            let trimmed = norm.trim_matches('/');
+            let low = trimmed.to_ascii_lowercase();
+            let rel = if low.starts_with("fonts/imported/") {
+                &trimmed["fonts/imported/".len()..]
+            } else if low.starts_with("imported/") {
+                &trimmed["imported/".len()..]
+            } else {
+                trimmed
+            };
+            if rel.is_empty() || rel.contains('/') {
+                return Err((
+                    400,
+                    "Security violation: oldPath must be a direct subfolder under Fonts/Imported/"
+                        .to_string(),
+                ));
+            }
+            imported_root.join(rel)
+        };
+
+        if !candidate.exists() || !candidate.is_dir() {
+            return Err((404, "Imported folder not found".to_string()));
+        }
+
+        let canon_old = candidate.canonicalize().map_err(|e| {
+            (
+                400,
+                format!("Failed to resolve oldPath directory: {}", e),
+            )
+        })?;
+
+        // Strictly enforce direct child of Fonts/Imported/
+        if canon_old.parent() != Some(canon_imported_root.as_path()) {
+            return Err((
+                400,
+                "Security violation: rename is strictly restricted to direct subfolders under Fonts/Imported/"
+                    .to_string(),
+            ));
+        }
+
+        let old_name = canon_old
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        if old_name.is_empty() {
+            return Err((400, "Could not determine existing folder name".to_string()));
+        }
+
+        let clean_old_path = strip_windows_verbatim_prefix(&canon_old);
+        let new_dir_canon = canon_imported_root.join(trimmed_new);
+
+        if old_name == trimmed_new {
+            let clean_str = clean_old_path.to_string_lossy().to_string();
+            return Ok((clean_str.clone(), clean_str, old_name.clone(), old_name, 0));
+        }
+
+        if new_dir_canon.exists() && !old_name.eq_ignore_ascii_case(trimmed_new) {
+            return Err((
+                409,
+                format!(
+                    "An Imported folder named '{}' already exists",
+                    trimmed_new
+                ),
+            ));
+        }
+
+        // Deactivate any active RAM fonts inside old_dir before renaming so OS releases handles
+        let old_key = normalize_font_path_key(&clean_old_path.to_string_lossy())
+            .trim_end_matches('\\')
+            .to_string();
+        let old_prefix = format!("{}\\", old_key);
+        let mut reactivate_ids: Vec<usize> = Vec::new();
+        for f in &self.fonts {
+            let fk = normalize_font_path_key(&f.path);
+            if fk == old_key || fk.starts_with(&old_prefix) {
+                if self.active_font_ids.contains(&f.id) || f.is_active {
+                    let _ = self.activator.deactivate_ram(&f.path);
+                    reactivate_ids.push(f.id);
+                }
+            }
+        }
+
+        // Perform atomic rename on disk
+        fs::rename(&canon_old, &new_dir_canon).map_err(|e| {
+            (
+                500,
+                format!("Failed to rename folder on disk: {}", e),
+            )
+        })?;
+
+        let clean_new_dir = strip_windows_verbatim_prefix(
+            &new_dir_canon
+                .canonicalize()
+                .unwrap_or_else(|_| new_dir_canon.clone()),
+        );
+        let clean_old_str = clean_old_path.to_string_lossy().to_string();
+        let clean_new_str = clean_new_dir.to_string_lossy().to_string();
+
+        // Update indexed font records whose paths reside inside old_dir
+        let mut updated_count = 0usize;
+        let old_prefix_len = old_prefix.len();
+        for f in &mut self.fonts {
+            let fk = normalize_font_path_key(&f.path);
+            if fk.starts_with(&old_prefix) {
+                let norm_orig = f.path.replace('/', "\\");
+                let stripped_orig = norm_orig.strip_prefix(r"\\?\").unwrap_or(&norm_orig);
+                let rel_tail = stripped_orig.get(old_prefix_len..).unwrap_or("");
+                let mut rebuilt = clean_new_dir.clone();
+                for seg in rel_tail.split('\\').filter(|s| !s.is_empty()) {
+                    rebuilt = rebuilt.join(seg);
+                }
+                f.path = rebuilt.to_string_lossy().to_string();
+                f.sub_category = Some(format!("Imported · {}", trimmed_new));
+                updated_count += 1;
+            }
+        }
+
+        // Re-activate fonts that were previously active in RAM at their new paths
+        for id in reactivate_ids {
+            if let Some(f) = self.fonts.iter().find(|x| x.id == id) {
+                let _ = self.activator.activate_ram(&f.path);
+            }
+        }
+
+        // Rename matching collection key cleanly
+        if let Some(old_ids) = self.collections.remove(&old_name) {
+            let entry = self
+                .collections
+                .entry(trimmed_new.to_string())
+                .or_default();
+            for id in old_ids {
+                if !entry.contains(&id) {
+                    entry.push(id);
+                }
+            }
+            self.save_collections();
+        }
+
+        self.save_user_library_index();
+
+        Ok((
+            clean_old_str,
+            clean_new_str,
+            old_name,
+            trimmed_new.to_string(),
+            updated_count,
+        ))
+    }
+
     /// Detects whether a candidate font already exists in the library (Local, Google, Cloud Pack, or System)
     /// by exact normalized path, SHA-256 content hash (O(1) filtered by file size), or font identity metadata.
     pub fn find_duplicate_font(

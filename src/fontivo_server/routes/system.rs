@@ -1595,3 +1595,182 @@ pub fn handle_toggle_autostart(mut req: Request, cors_origin: Header, json_heade
         }
     }
 }
+
+fn dir_usage_stats(path: &std::path::Path) -> (u64, usize) {
+    fn walk(dir: &std::path::Path, bytes: &mut u64, files: &mut usize) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    walk(&p, bytes, files);
+                } else if p.is_file() {
+                    *files += 1;
+                    if let Ok(meta) = p.metadata() {
+                        *bytes = bytes.saturating_add(meta.len());
+                    }
+                }
+            }
+        }
+    }
+    let mut bytes = 0u64;
+    let mut files = 0usize;
+    if path.exists() && path.is_dir() {
+        walk(path, &mut bytes, &mut files);
+    }
+    (bytes, files)
+}
+
+/// GET /api/system/storage: returns exact bytes and file counts across managed Fontivo buckets.
+pub fn handle_system_storage(
+    req: Request,
+    state: &Arc<RwLock<AppState>>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let data_dir = {
+        let st = state.read().unwrap();
+        st.data_dir.clone()
+    };
+
+    let fonts_root = data_dir.join("Fonts");
+    let imported_dir = fonts_root.join("Imported");
+    let custom_dir = fonts_root.join("Custom");
+    let google_dir = fonts_root.join("Google");
+    let packs_dir = fonts_root.join("Packs");
+    let cache_dir = data_dir.join("Cache");
+    let pack_archives_dir = cache_dir.join("PackArchives");
+    let workspaces_dir = data_dir.join("Workspaces");
+    let backups_dir = data_dir.join("Backups");
+
+    let (imported_bytes, imported_files) = dir_usage_stats(&imported_dir);
+    let (custom_bytes, custom_files) = dir_usage_stats(&custom_dir);
+    let (google_bytes, google_files) = dir_usage_stats(&google_dir);
+    let (packs_bytes, packs_files) = dir_usage_stats(&packs_dir);
+    let (cache_bytes, cache_files) = dir_usage_stats(&cache_dir);
+    let (pack_archives_bytes, pack_archives_files) = dir_usage_stats(&pack_archives_dir);
+    let (workspaces_bytes, workspaces_files) = dir_usage_stats(&workspaces_dir);
+    let (backups_bytes, backups_files) = dir_usage_stats(&backups_dir);
+
+    let total_bytes = imported_bytes
+        .saturating_add(custom_bytes)
+        .saturating_add(google_bytes)
+        .saturating_add(packs_bytes)
+        .saturating_add(cache_bytes)
+        .saturating_add(workspaces_bytes)
+        .saturating_add(backups_bytes);
+
+    let total_files = imported_files
+        + custom_files
+        + google_files
+        + packs_files
+        + cache_files
+        + workspaces_files
+        + backups_files;
+
+    respond_json(
+        req,
+        200,
+        serde_json::json!({
+            "success": true,
+            "imported": {
+                "bytes": imported_bytes,
+                "fileCount": imported_files,
+                "path": imported_dir.to_string_lossy().to_string()
+            },
+            "custom": {
+                "bytes": custom_bytes,
+                "fileCount": custom_files,
+                "path": custom_dir.to_string_lossy().to_string()
+            },
+            "google": {
+                "bytes": google_bytes,
+                "fileCount": google_files,
+                "path": google_dir.to_string_lossy().to_string()
+            },
+            "packs": {
+                "bytes": packs_bytes,
+                "fileCount": packs_files,
+                "path": packs_dir.to_string_lossy().to_string()
+            },
+            "cache": {
+                "bytes": cache_bytes,
+                "fileCount": cache_files,
+                "path": cache_dir.to_string_lossy().to_string(),
+                "packArchivesBytes": pack_archives_bytes,
+                "packArchivesFiles": pack_archives_files
+            },
+            "workspaces": {
+                "bytes": workspaces_bytes,
+                "fileCount": workspaces_files,
+                "path": workspaces_dir.to_string_lossy().to_string()
+            },
+            "backups": {
+                "bytes": backups_bytes,
+                "fileCount": backups_files,
+                "path": backups_dir.to_string_lossy().to_string()
+            },
+            "totalBytes": total_bytes,
+            "totalFiles": total_files
+        }),
+        cors_origin,
+        json_header,
+    );
+}
+
+/// POST /api/system/storage/cleanup: deletes leftover `.zip` and `.part` files inside
+/// `%LOCALAPPDATA%\Fontivo\Cache\PackArchives\` and returns `{ freedBytes, removedFiles }`.
+pub fn handle_system_storage_cleanup(
+    req: Request,
+    state: &Arc<RwLock<AppState>>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let data_dir = {
+        let st = state.read().unwrap();
+        st.data_dir.clone()
+    };
+
+    let archives_dir = data_dir.join("Cache").join("PackArchives");
+    let mut freed_bytes = 0u64;
+    let mut removed_files = 0usize;
+
+    fn cleanup_dir(dir: &std::path::Path, freed_bytes: &mut u64, removed_files: &mut usize) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    cleanup_dir(&p, freed_bytes, removed_files);
+                } else if p.is_file() {
+                    let ext = p
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    if matches!(ext.as_str(), "zip" | "part" | "tmp" | "temp" | "download") {
+                        let size = p.metadata().map(|m| m.len()).unwrap_or(0);
+                        if std::fs::remove_file(&p).is_ok() {
+                            *freed_bytes = freed_bytes.saturating_add(size);
+                            *removed_files += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if archives_dir.exists() && archives_dir.is_dir() {
+        cleanup_dir(&archives_dir, &mut freed_bytes, &mut removed_files);
+    }
+
+    respond_json(
+        req,
+        200,
+        serde_json::json!({
+            "success": true,
+            "freedBytes": freed_bytes,
+            "removedFiles": removed_files
+        }),
+        cors_origin,
+        json_header,
+    );
+}

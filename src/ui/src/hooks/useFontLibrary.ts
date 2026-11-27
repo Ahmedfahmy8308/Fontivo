@@ -1391,6 +1391,249 @@ export function useFontLibrary({
     ],
   );
 
+  const handleRenameFontFolder = useCallback(
+    async (
+      oldPath: string,
+      newName: string,
+    ): Promise<{
+      success: boolean;
+      newPath?: string;
+      newName?: string;
+      updatedCount?: number;
+      error?: string;
+    }> => {
+      const trimmed = (newName || "").trim();
+      if (!trimmed) {
+        return {
+          success: false,
+          error: isRtl ? "يرجى إدخال اسم جديد للمجلد." : "Please enter a new folder name.",
+        };
+      }
+      try {
+        const res = await safeFetch(`${API_BASE}/fonts/rename-folder`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ oldPath, newName: trimmed }),
+          timeoutMs: 12000,
+        });
+        if (!res) {
+          return {
+            success: false,
+            error: isRtl
+              ? "تعذر الاتصال بالخادم لإعادة تسمية المجلد."
+              : "Could not reach server to rename folder.",
+          };
+        }
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || data.success === false) {
+          return {
+            success: false,
+            error:
+              data?.error ||
+              (isRtl ? "تعذر إعادة تسمية هذا المجلد." : "Failed to rename folder."),
+          };
+        }
+
+        const nextPath = data.newPath || data.path;
+        if (
+          nextPath &&
+          customFolderPath &&
+          normalizeFolderPath(customFolderPath) === normalizeFolderPath(oldPath)
+        ) {
+          setCustomFolderPath(nextPath);
+        }
+
+        await Promise.all([
+          fetchStats(),
+          fetchCollections(),
+          fetchCustomBuckets(),
+          fetchData(true),
+        ]);
+
+        return {
+          success: true,
+          newPath: nextPath,
+          newName: data.newName || trimmed,
+          updatedCount: Number(data.updatedCount ?? data.count ?? 0),
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          error:
+            err?.message ||
+            (isRtl ? "حدث خطأ أثناء إعادة تسمية المجلد." : "Error renaming folder."),
+        };
+      }
+    },
+    [
+      customFolderPath,
+      fetchCollections,
+      fetchCustomBuckets,
+      fetchData,
+      fetchStats,
+      isRtl,
+    ],
+  );
+
+  const handlePreviewImportFolder = useCallback(
+    async (
+      folderPath: string,
+    ): Promise<{
+      folderName: string;
+      totalFiles: number;
+      newCount: number;
+      duplicateCount: number;
+      invalidCount: number;
+      totalBytes: number;
+    } | null> => {
+      const trimmed = (folderPath || "").trim();
+      if (!trimmed) return null;
+      try {
+        const res = await safeFetch(`${API_BASE}/fonts/preview-folder`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folderPath: trimmed }),
+          timeoutMs: 15000,
+        });
+        if (!res || !res.ok) return null;
+        const data = await res.json().catch(() => null);
+        if (!data || data.error) return null;
+        return {
+          folderName: String(
+            data.folderName || trimmed.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Imported",
+          ),
+          totalFiles: Number(data.totalFiles ?? 0),
+          newCount: Number(data.newCount ?? 0),
+          duplicateCount: Number(data.duplicateCount ?? 0),
+          invalidCount: Number(data.invalidCount ?? 0),
+          totalBytes: Number(data.totalBytes ?? 0),
+        };
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
+  const handleImportFolderWithCustomName = useCallback(
+    async (
+      folderPath: string,
+      customFolderName?: string,
+    ): Promise<{
+      success: boolean;
+      importedCount?: number;
+      skippedDuplicatesCount?: number;
+      error?: string;
+    }> => {
+      const opId = `import-folder-${Date.now()}`;
+      upsertLiveOperation({
+        id: opId,
+        title: "Importing Custom Font Folder",
+        titleAr: "استيراد مجلد خطوط خاصة",
+        category: "custom-import",
+        status: "running",
+        progressPercent: 30,
+        stepLabel: "Copying & indexing selected font folder...",
+        stepLabelAr: "جاري نسخ وفهرسة مجلد الخطوط المختار...",
+      });
+
+      try {
+        const payload: Record<string, string> = { folderPath: folderPath.trim() };
+        if (customFolderName && customFolderName.trim()) {
+          payload.customFolderName = customFolderName.trim();
+        }
+        const res = await safeFetch(`${API_BASE}/import-folder`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          timeoutMs: 30000,
+        });
+        if (!res) {
+          upsertLiveOperation({
+            id: opId,
+            status: "failed",
+            progressPercent: 100,
+            stepLabel: "Server unreachable",
+            stepLabelAr: "تعذر الاتصال بالخادم",
+          });
+          return {
+            success: false,
+            error: isRtl ? "تعذر الاتصال بالخادم." : "Could not reach server.",
+          };
+        }
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || data.success === false) {
+          const errMsg =
+            data?.error ||
+            (isRtl ? "فشل استيراد المجلد." : "Failed to import folder.");
+          upsertLiveOperation({
+            id: opId,
+            status: "failed",
+            progressPercent: 100,
+            stepLabel: errMsg,
+            stepLabelAr: errMsg,
+          });
+          return { success: false, error: errMsg };
+        }
+
+        const importedCount = Number(data.importedCount ?? data.count ?? 0);
+        const dupCount = Number(data.skippedDuplicatesCount ?? 0);
+        upsertLiveOperation({
+          id: opId,
+          status: "completed",
+          progressPercent: 100,
+          itemsDone: importedCount,
+          itemsTotal: importedCount + dupCount || 1,
+          stepLabel:
+            dupCount > 0
+              ? `Imported ${importedCount} fonts; skipped ${dupCount} duplicates`
+              : `Imported ${importedCount} fonts into library!`,
+          stepLabelAr:
+            dupCount > 0
+              ? `تم استيراد ${importedCount} خطاً وتجاهل ${dupCount} خطوط مكررة`
+              : `تم استيراد وفهرسة ${importedCount} خطاً بنجاح!`,
+        });
+
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("fontivo:import-result", {
+              detail: {
+                kind: "folder",
+                folderName: data.folderName || customFolderName || "",
+                managedPath: data.managedPath || "",
+                importedCount,
+                skippedDuplicatesCount: dupCount,
+                skippedInvalidCount: Number(data.skippedInvalidCount || 0),
+                duplicates: Array.isArray(data.duplicates) ? data.duplicates : [],
+              },
+            }),
+          );
+        }
+
+        await Promise.all([
+          fetchStats(),
+          fetchCollections(),
+          fetchCustomBuckets(),
+          fetchData(true),
+        ]);
+
+        return {
+          success: true,
+          importedCount,
+          skippedDuplicatesCount: dupCount,
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          error:
+            err?.message ||
+            (isRtl ? "حدث خطأ أثناء استيراد المجلد." : "Error importing folder."),
+        };
+      }
+    },
+    [fetchCollections, fetchCustomBuckets, fetchData, fetchStats, isRtl],
+  );
+
   return {
     stats,
     setStats,
@@ -1414,6 +1657,9 @@ export function useFontLibrary({
     customBucketCounts,
     fetchCustomBuckets,
     handleDeleteFontFolder,
+    handleRenameFontFolder,
+    handlePreviewImportFolder,
+    handleImportFolderWithCustomName,
     scriptFilter,
     setScriptFilter,
     sourceFilter,

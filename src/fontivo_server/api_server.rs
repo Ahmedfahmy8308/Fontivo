@@ -158,6 +158,14 @@ impl ApiServer {
                             let font_id: usize = id_str.parse().unwrap_or(0);
                             routes::fonts::handle_font_file(req, &state, font_id, cors_origin);
                         }
+                        ("GET", p)
+                            if p.starts_with("/api/fonts/") && p.ends_with("/file") =>
+                        {
+                            let id_str =
+                                &p["/api/fonts/".len()..p.len() - "/file".len()];
+                            let font_id: usize = id_str.parse().unwrap_or(0);
+                            routes::fonts::handle_font_file(req, &state, font_id, cors_origin);
+                        }
                         ("GET", p) if p.starts_with("/api/font-glyphs/") => {
                             let id_str = &p["/api/font-glyphs/".len()..];
                             let font_id: usize = id_str.parse().unwrap_or(0);
@@ -214,6 +222,14 @@ impl ApiServer {
                             cors_origin,
                             json_header,
                         ),
+                        ("POST", "/api/dialog/pick-folder-preview") => {
+                            routes::dialogs::handle_pick_folder_preview(
+                                req,
+                                &state,
+                                cors_origin,
+                                json_header,
+                            )
+                        }
                         ("POST", "/api/dialog/pick-directory") => {
                             routes::dialogs::handle_pick_directory(req, cors_origin, json_header)
                         }
@@ -415,6 +431,31 @@ impl ApiServer {
                             cors_origin,
                             json_header,
                         ),
+                        ("POST", "/api/fonts/preview-folder") => {
+                            routes::fonts::handle_preview_folder(
+                                req,
+                                &state,
+                                cors_origin,
+                                json_header,
+                            )
+                        }
+                        ("POST", "/api/fonts/rename-folder") => {
+                            routes::fonts::handle_rename_font_folder(
+                                req,
+                                &state,
+                                cors_origin,
+                                json_header,
+                            )
+                        }
+                        ("GET", "/api/fonts/export-folder") => {
+                            routes::fonts::handle_export_font_folder(
+                                req,
+                                &state,
+                                &query_params,
+                                cors_origin,
+                                json_header,
+                            )
+                        }
                         ("POST", "/api/fonts/import-file") => {
                             routes::fonts::handle_import_font_file(
                                 req,
@@ -613,6 +654,25 @@ impl ApiServer {
                                 cors_origin,
                             );
                         }
+                        ("GET", p)
+                            if p.starts_with("/api/workspaces/")
+                                && (p.ends_with("/export-bundle")
+                                    || p.ends_with("/export-zip")) =>
+                        {
+                            let suffix_len = if p.ends_with("/export-bundle") {
+                                "/export-bundle".len()
+                            } else {
+                                "/export-zip".len()
+                            };
+                            let id = &p["/api/workspaces/".len()..p.len() - suffix_len];
+                            routes::workspaces::export_workspace_handover_zip(
+                                req,
+                                &state,
+                                id,
+                                cors_origin,
+                                json_header,
+                            );
+                        }
                         ("GET", p) if p.starts_with("/api/workspaces/") => {
                             let id = &p["/api/workspaces/".len()..];
                             routes::workspaces::get_workspace_by_id(
@@ -774,6 +834,24 @@ impl ApiServer {
                         // System Health, Memory & Registry Diagnostics
                         ("GET", "/api/system/info") => {
                             routes::system::handle_system_info(req, cors_origin, json_header)
+                        }
+                        ("GET", "/api/system/storage-breakdown")
+                        | ("GET", "/api/system/storage") => {
+                            routes::system::handle_system_storage(
+                                req,
+                                &state,
+                                cors_origin,
+                                json_header,
+                            )
+                        }
+                        ("POST", "/api/system/cleanup-cache")
+                        | ("POST", "/api/system/storage/cleanup") => {
+                            routes::system::handle_system_storage_cleanup(
+                                req,
+                                &state,
+                                cors_origin,
+                                json_header,
+                            )
                         }
                         ("GET", "/api/system/admin-status") => {
                             routes::system::handle_admin_status(req, cors_origin, json_header)

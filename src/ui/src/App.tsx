@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, Suspense } from "react";
 import {
   Sidebar,
   Toolbar,
@@ -13,19 +13,34 @@ import {
   GlyphsView,
   PlaygroundView,
   DiscoverView,
-  LicensesView,
   AdobeBridgeView,
   SettingsView,
   GoogleFontsView,
   UiTypographyLabView,
-  SystemHealthView,
-  WorkspacesView,
-  WindowsFontsView,
-  RamInspectorView,
-  ColorStudioView,
   CloudPacksView,
 } from "./components/views";
+
+// Code-split heavy secondary views via React.lazy
+const WorkspacesView = React.lazy(
+  () => import("./components/views/WorkspacesView"),
+);
+const ColorStudioView = React.lazy(
+  () => import("./components/views/ColorStudioView"),
+);
+const WindowsFontsView = React.lazy(
+  () => import("./components/views/WindowsFontsView"),
+);
+const SystemHealthView = React.lazy(
+  () => import("./components/views/SystemHealthView"),
+);
+const LicensesView = React.lazy(
+  () => import("./components/views/LicensesView"),
+);
 import { ModalContainer } from "./components/modals";
+import ImportPreviewModal, {
+  type FolderImportPreview,
+  type ImportPreviewResult,
+} from "./components/modals/ImportPreviewModal";
 import {
   ErrorBoundary,
   OperationsCenter,
@@ -229,6 +244,8 @@ export default function App({
   const [isGitHubPackOpen, setIsGitHubPackOpen] = useState(false);
   const [isColorPaletteOpen, setIsColorPaletteOpen] = useState(false);
   const [isUiLabOpen, setIsUiLabOpen] = useState(false);
+  const [importPreview, setImportPreview] =
+    useState<FolderImportPreview | null>(null);
 
   // Photoshop PSD Drag and Drop Notification Banner
   const [designOverlayNotice, setDesignOverlayNotice] = useState<any>(null);
@@ -411,6 +428,28 @@ export default function App({
       fonts.length > 0 ? fonts : families.flatMap((fam) => fam.fonts || []),
     [fonts, families],
   );
+
+  const handlePickFolderWithPreview = async () => {
+    try {
+      const preview = await safeFetchJson<any>(
+        "/api/dialog/pick-folder-preview",
+        {
+          method: "POST",
+          timeoutMs: 120000,
+        },
+      );
+      if (preview && preview.folderPath) {
+        setImportPreview(preview as FolderImportPreview);
+        return;
+      }
+      if (preview && preview.cancelled) {
+        return;
+      }
+    } catch {
+      // Fallback to direct folder picker if preview endpoint unavailable
+    }
+    await handlePickFolder();
+  };
 
   const handleContextualBatch = async (
     action:
@@ -1316,7 +1355,7 @@ export default function App({
           collections={collections}
           onCreateCollection={handleCreateCollection}
           onDeleteCollection={handleDeleteCollection}
-          onPickFolder={handlePickFolder}
+          onPickFolder={handlePickFolderWithPreview}
           onAddCustomFonts={handleImportFontFiles}
           onQuickRamBoost={async () => {
             try {
@@ -1341,6 +1380,16 @@ export default function App({
             }}
             isRtl={isRtl}
           >
+            <Suspense
+              fallback={
+                <div className="flex-1 flex flex-col items-center justify-center p-10 gap-3 text-[var(--color-text-muted)]">
+                  <RefreshCw className="w-6 h-6 animate-spin text-[var(--color-action)]" />
+                  <span className="text-xs font-sans font-semibold">
+                    {isRtl ? "جاري تحميل الواجهة..." : "Loading view..."}
+                  </span>
+                </div>
+              }
+            >
             {activeTab === "library" || activeTab === "organize" ? (
               inspectedFamily ? (
                 <FamilyInspectorView
@@ -1549,7 +1598,7 @@ export default function App({
 
                             <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                               <button
-                                onClick={handlePickFolder}
+                                onClick={handlePickFolderWithPreview}
                                 className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-sans font-semibold text-[var(--color-text-header)] whitespace-nowrap cursor-pointer"
                               >
                                 <FolderPlus className="w-3.5 h-3.5 text-[var(--color-action)] shrink-0" />
@@ -2449,6 +2498,7 @@ export default function App({
                 </button>
               </div>
             )}
+            </Suspense>
           </ErrorBoundary>
         </div>
       </div>
@@ -2538,6 +2588,30 @@ export default function App({
             handleDeleteFont(target, { isRtl, skipConfirm: true });
           }
         }}
+      />
+
+      {/* 6. FOLDER IMPORT PREVIEW & CUSTOM SLICE MODAL */}
+      <ImportPreviewModal
+        isOpen={Boolean(importPreview)}
+        onClose={() => setImportPreview(null)}
+        preview={importPreview}
+        onImported={(result: ImportPreviewResult) => {
+          setImportPreview(null);
+          setImportBanner({
+            kind: "folder",
+            folderName: result.folderName,
+            managedPath: result.targetFolder,
+            importedCount: Number(result.imported || 0),
+            skippedDuplicatesCount: Number(result.skipped || 0),
+            skippedInvalidCount: 0,
+            duplicates: [],
+          });
+          fetchStats();
+          fetchCustomBuckets();
+          fetchData(true);
+        }}
+        isRtl={isRtl}
+        t={t}
       />
     </div>
   );

@@ -557,17 +557,36 @@ pub fn ingest_font_folder_into_library(
     folder: &Path,
     state: &Arc<RwLock<AppState>>,
 ) -> Result<FolderImportSummary, String> {
+    ingest_font_folder_into_library_with_name(folder, state, None)
+}
+
+/// Unified font-folder ingestion supporting an optional custom slice folder name under
+/// `%LOCALAPPDATA%\Fontivo\Fonts\Imported\<customFolderName>\<Family>\`.
+pub fn ingest_font_folder_into_library_with_name(
+    folder: &Path,
+    state: &Arc<RwLock<AppState>>,
+    custom_folder_name: Option<&str>,
+) -> Result<FolderImportSummary, String> {
     if !folder.exists() || !folder.is_dir() {
         return Err("Folder not found".to_string());
     }
 
     let path_str = folder.to_string_lossy().to_string();
-    let folder_name = folder
+    let default_folder_name = folder
         .file_name()
         .and_then(|s| s.to_str())
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("Imported Folder")
         .to_string();
+
+    let safe_folder_seg = match custom_folder_name.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        Some(custom) => sanitize_storage_segment(custom, "Imported"),
+        None => sanitize_storage_segment(&default_folder_name, "Imported"),
+    };
+    let folder_name = match custom_folder_name.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        Some(_) => safe_folder_seg.clone(),
+        None => default_folder_name,
+    };
 
     let candidate_paths = super::common::walk_fonts_in_dir(folder)
         .map_err(|e| format!("Failed to scan folder: {}", e))?;
@@ -577,8 +596,6 @@ pub fn ingest_font_folder_into_library(
     let mut duplicates: Vec<crate::server::state::DuplicateFontMatch> = Vec::new();
     let mut skipped_invalid_count = 0usize;
     let mut batch_hashes: HashSet<String> = HashSet::new();
-
-    let safe_folder_seg = sanitize_storage_segment(&folder_name, "Imported");
 
     let mut st = state.write().unwrap();
     let managed_fonts_root = st.get_local_fontivo_dir().join("Fonts");
@@ -770,14 +787,21 @@ pub fn handle_import_folder(
 ) {
     let body = read_body(&mut req);
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct ImportReq {
-        #[serde(rename = "folderPath")]
+        #[serde(alias = "path")]
         folder_path: String,
+        #[serde(default)]
+        custom_folder_name: Option<String>,
     }
 
     if let Ok(data) = serde_json::from_str::<ImportReq>(&body) {
         let folder = Path::new(&data.folder_path);
-        if let Ok(summary) = ingest_font_folder_into_library(folder, state) {
+        if let Ok(summary) = ingest_font_folder_into_library_with_name(
+            folder,
+            state,
+            data.custom_folder_name.as_deref(),
+        ) {
             respond_json_str(
                 req,
                 200,
@@ -796,6 +820,158 @@ pub fn handle_import_folder(
         cors_origin,
         json_header,
     );
+}
+
+/// Dry-run scan of a folder using existing OpenType header validation and SHA-256 deduplication
+/// without copying any files or mutating AppState.
+pub fn preview_font_folder(
+    folder: &Path,
+    state: &Arc<RwLock<AppState>>,
+) -> Result<serde_json::Value, (u16, String)> {
+    let raw = folder.to_string_lossy();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.contains('\0') || trimmed.contains("..") {
+        return Err((
+            400,
+            "Invalid folderPath: empty or contains forbidden traversal characters".to_string(),
+        ));
+    }
+
+    if !folder.exists() || !folder.is_dir() {
+        return Err((404, "Folder not found".to_string()));
+    }
+
+    let folder_name = folder
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("Imported Folder")
+        .to_string();
+
+    let candidate_paths = super::common::walk_fonts_in_dir(folder)
+        .map_err(|e| (500, format!("Failed to scan folder: {}", e)))?;
+
+    let st = state.read().unwrap();
+    let total_files = candidate_paths.len();
+    let mut new_count = 0usize;
+    let mut duplicate_count = 0usize;
+    let mut invalid_count = 0usize;
+    let mut total_bytes = 0u64;
+    let mut batch_hashes: HashSet<String> = HashSet::new();
+    let mut sample_families: Vec<String> = Vec::new();
+    let mut seen_families: HashSet<String> = HashSet::new();
+
+    for p in candidate_paths {
+        let size_u64 = fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+        total_bytes = total_bytes.saturating_add(size_u64);
+
+        let meta = match FontParser::parse_file(&p) {
+            Ok(m) => m,
+            Err(_) => {
+                invalid_count += 1;
+                continue;
+            }
+        };
+
+        let file_name = p
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("font")
+            .to_string();
+        let clean_name =
+            file_name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'], "_");
+
+        if st
+            .find_duplicate_font(
+                Some(&p),
+                None,
+                &clean_name,
+                Some(&meta.family),
+                Some(&meta.subfamily),
+                Some(&meta.postscript_name),
+                size_u64 as usize,
+            )
+            .is_some()
+        {
+            duplicate_count += 1;
+            continue;
+        }
+
+        if let Some(h) = crate::server::state::compute_file_sha256(&p) {
+            if !batch_hashes.insert(h) {
+                duplicate_count += 1;
+                continue;
+            }
+        }
+
+        new_count += 1;
+        let fam_clean = meta.family.trim();
+        if !fam_clean.is_empty() && sample_families.len() < 16 {
+            if seen_families.insert(fam_clean.to_ascii_lowercase()) {
+                sample_families.push(fam_clean.to_string());
+            }
+        }
+    }
+    drop(st);
+
+    let folder_path_str = folder.to_string_lossy().to_string();
+    let suggested_name = sanitize_storage_segment(&folder_name, "Imported Folder");
+    Ok(serde_json::json!({
+        "success": true,
+        "path": folder_path_str,
+        "folderPath": folder_path_str,
+        "folderName": folder_name,
+        "suggestedName": suggested_name,
+        "totalScanned": total_files,
+        "totalFiles": total_files,
+        "newCount": new_count,
+        "duplicateCount": duplicate_count,
+        "invalidCount": invalid_count,
+        "totalBytes": total_bytes,
+        "sampleFamilies": sample_families
+    }))
+}
+
+/// POST /api/fonts/preview-folder: dry-run scan of a folder using existing OpenType header validation
+/// and SHA-256 deduplication without copying any files or mutating AppState.
+pub fn handle_preview_folder(
+    mut req: Request,
+    state: &Arc<RwLock<AppState>>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let body = read_body(&mut req);
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct PreviewReq {
+        #[serde(alias = "path")]
+        folder_path: String,
+    }
+
+    let data = match serde_json::from_str::<PreviewReq>(&body) {
+        Ok(d) => d,
+        Err(_) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": "Invalid preview payload; expected { folderPath }" }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    match preview_font_folder(Path::new(&data.folder_path), state) {
+        Ok(val) => respond_json(req, 200, val, cors_origin, json_header),
+        Err((status, err)) => respond_json(
+            req,
+            status,
+            serde_json::json!({ "success": false, "error": err }),
+            cors_origin,
+            json_header,
+        ),
+    }
 }
 
 /// POST /api/fonts/import-file?fileName=...: imports a single font file with SHA-256 & metadata
@@ -2806,6 +2982,288 @@ pub fn handle_delete_font_folder(
             );
         }
     }
+}
+
+/// POST /api/fonts/rename-folder: renames a direct subfolder under `%LOCALAPPDATA%\Fontivo\Fonts\Imported\`,
+/// updating indexed font paths, sub_category, collection name, and persisting user-library-index.json.
+pub fn handle_rename_font_folder(
+    mut req: Request,
+    state: &Arc<RwLock<AppState>>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    let body = read_body(&mut req);
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RenameFolderReq {
+        #[serde(alias = "folderPath", alias = "path")]
+        old_path: String,
+        new_name: String,
+    }
+
+    let data = match serde_json::from_str::<RenameFolderReq>(&body) {
+        Ok(d) => d,
+        Err(_) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": "Invalid rename folder payload; expected { oldPath, newName }" }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let mut st = state.write().unwrap();
+    match st.rename_imported_folder(&data.old_path, &data.new_name) {
+        Ok((old_path, new_path, old_name, new_name, updated_count)) => {
+            respond_json(
+                req,
+                200,
+                serde_json::json!({
+                    "success": true,
+                    "oldPath": old_path,
+                    "newPath": new_path,
+                    "oldName": old_name,
+                    "newName": new_name,
+                    "updatedCount": updated_count
+                }),
+                cors_origin,
+                json_header,
+            );
+        }
+        Err((status, err)) => {
+            respond_json(
+                req,
+                status,
+                serde_json::json!({ "success": false, "error": err }),
+                cors_origin,
+                json_header,
+            );
+        }
+    }
+}
+
+/// GET /api/fonts/export-folder?path=<relOrAbsPath>: streams a valid `.zip` containing all font files
+/// in a managed folder slice sandboxed strictly inside Fontivo's managed `Fonts\` root.
+pub fn handle_export_font_folder(
+    req: Request,
+    state: &Arc<RwLock<AppState>>,
+    query_params: &std::collections::HashMap<String, String>,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    use std::io::{Cursor, Write};
+    use zip::write::SimpleFileOptions;
+
+    let raw = query_params
+        .get("path")
+        .or_else(|| query_params.get("folderPath"))
+        .map(|s| s.trim())
+        .unwrap_or("");
+
+    if raw.is_empty() || raw.contains("..") || raw.contains('\0') {
+        respond_json(
+            req,
+            400,
+            serde_json::json!({ "success": false, "error": "Invalid path: empty or contains forbidden traversal characters" }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let low_raw = raw.replace('/', "\\").to_ascii_lowercase();
+    if low_raw.contains("\\windows\\fonts")
+        || low_raw.contains("\\microsoft\\windows\\fonts")
+        || low_raw.starts_with("c:\\windows")
+        || low_raw.starts_with("c:\\program files")
+        || low_raw.starts_with("/etc")
+        || low_raw.starts_with("/bin")
+        || low_raw.starts_with("/usr")
+        || low_raw.starts_with("/var")
+        || low_raw.starts_with("/system")
+        || low_raw.starts_with("/library")
+    {
+        respond_json(
+            req,
+            403,
+            serde_json::json!({ "success": false, "error": "Security violation: exporting OS or system directories is forbidden" }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let managed_fonts_dir = {
+        let st = state.read().unwrap();
+        st.data_dir.join("Fonts")
+    };
+    let storage_fonts_dir = LibraryStorageManager::get_storage_dir();
+
+    let candidate = if Path::new(raw).is_absolute() {
+        std::path::PathBuf::from(raw)
+    } else {
+        if raw.contains(':') {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": "Security violation: invalid drive prefix in relative path" }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+        let norm = raw.replace('\\', "/");
+        let trimmed = norm.trim_matches('/');
+        let low_trimmed = trimmed.to_ascii_lowercase();
+        let rel_under_fonts = if low_trimmed == "fonts" {
+            ""
+        } else if low_trimmed.starts_with("fonts/") {
+            &trimmed[6..]
+        } else {
+            trimmed
+        };
+        let mut p = managed_fonts_dir.clone();
+        let mut alt_p = storage_fonts_dir.clone();
+        for seg in rel_under_fonts.split('/').filter(|s| !s.is_empty()) {
+            if seg == "." || seg == ".." {
+                respond_json(
+                    req,
+                    400,
+                    serde_json::json!({ "success": false, "error": "Invalid path segment" }),
+                    cors_origin,
+                    json_header,
+                );
+                return;
+            }
+            p = p.join(seg);
+            alt_p = alt_p.join(seg);
+        }
+        if !p.exists() && alt_p.exists() {
+            alt_p
+        } else {
+            p
+        }
+    };
+
+    if !candidate.exists() || !candidate.is_dir() {
+        respond_json(
+            req,
+            404,
+            serde_json::json!({ "success": false, "error": "Managed font folder not found" }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let canon_target = match candidate.canonicalize() {
+        Ok(c) => c,
+        Err(e) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": format!("Failed to resolve folder: {}", e) }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let allowed_user_roots = [
+        (managed_fonts_dir.join("Imported"), true),
+        (managed_fonts_dir.join("Custom"), false),
+        (storage_fonts_dir.join("Imported"), true),
+        (storage_fonts_dir.join("Custom"), false),
+    ];
+    let inside_user_folder = allowed_user_roots.iter().any(|(root, require_subfolder)| {
+        root.canonicalize()
+            .map(|cr| {
+                if *require_subfolder {
+                    canon_target.starts_with(&cr) && canon_target != cr
+                } else {
+                    canon_target.starts_with(&cr)
+                }
+            })
+            .unwrap_or(false)
+    });
+
+    if !inside_user_folder {
+        respond_json(
+            req,
+            403,
+            serde_json::json!({ "success": false, "error": "Security violation: export is restricted to user folders under Fonts/Imported/<name> or Fonts/Custom/" }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let font_files = match super::common::walk_fonts_in_dir(&canon_target) {
+        Ok(list) => list,
+        Err(e) => {
+            respond_json(
+                req,
+                500,
+                serde_json::json!({ "success": false, "error": format!("Failed to scan folder: {}", e) }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let folder_name = canon_target
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("fonts");
+    let safe_zip_stem = sanitize_storage_segment(folder_name, "fonts");
+
+    let mut cursor = Cursor::new(Vec::<u8>::new());
+    {
+        let mut zip_writer = zip::ZipWriter::new(&mut cursor);
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+
+        for fp in &font_files {
+            if let Ok(rel) = fp.strip_prefix(&canon_target) {
+                let entry_name = rel.to_string_lossy().replace('\\', "/");
+                if entry_name.is_empty() {
+                    continue;
+                }
+                if let Ok(bytes) = fs::read(fp) {
+                    if zip_writer.start_file(&entry_name, options).is_ok() {
+                        let _ = zip_writer.write_all(&bytes);
+                    }
+                }
+            }
+        }
+        if let Err(e) = zip_writer.finish() {
+            respond_json(
+                req,
+                500,
+                serde_json::json!({ "success": false, "error": format!("Failed to finalize ZIP archive: {}", e) }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    }
+
+    let zip_bytes = cursor.into_inner();
+    let content_type = Header::from_bytes(&b"Content-Type"[..], &b"application/zip"[..]).unwrap();
+    let disposition_val = format!("attachment; filename=\"{}.zip\"", safe_zip_stem);
+    let content_disp =
+        Header::from_bytes(&b"Content-Disposition"[..], disposition_val.as_bytes()).unwrap();
+    let mut res = tiny_http::Response::from_data(zip_bytes);
+    res.add_header(cors_origin);
+    res.add_header(content_type);
+    res.add_header(content_disp);
+    super::common::add_security_headers(&mut res);
+    let _ = req.respond(res);
 }
 
 pub fn handle_refresh_manifest(req: Request, cors_origin: Header, json_header: Header) {

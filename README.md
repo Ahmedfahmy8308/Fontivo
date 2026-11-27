@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<a href="https://ahmedfahmy8308.github.io/Fontivo-Site/">
+<a href="https://fontivo-app.github.io/">
   <img src="assets/social/og-image.svg" alt="Fontivo — Type. Design. Deliver. Native Desktop Font & Color Manager" width="900">
 </a>
 
@@ -16,7 +16,7 @@
 
 <br>
 
-[![Release](https://img.shields.io/badge/Release-v1.1.4-F16B50?style=for-the-badge&logo=github&labelColor=130C16)](https://github.com/Ahmedfahmy8308/Fontivo/releases/latest)
+[![Release](https://img.shields.io/badge/Release-v1.1.5-F16B50?style=for-the-badge&logo=github&labelColor=130C16)](https://github.com/Ahmedfahmy8308/Fontivo/releases/latest)
 [![Rust](https://img.shields.io/badge/Rust-Native_Core-291C2E?style=for-the-badge&logo=rust&logoColor=white&labelColor=130C16)](src/)
 [![React 19](https://img.shields.io/badge/React-19_Tailwind-F16B50?style=for-the-badge&logo=react&logoColor=130C16&labelColor=130C16)](src/ui/)
 [![Platform](https://img.shields.io/badge/Platform-Windows_%7C_macOS_%7C_Linux-B7A1D9?style=for-the-badge&labelColor=130C16)](#quick-start-install-in-30-seconds)
@@ -451,7 +451,7 @@ Fontivo was conceived, engineered, and designed by:
 
 - **Fontivo Desktop Repository**: [github.com/Ahmedfahmy8308/Fontivo](https://github.com/Ahmedfahmy8308/Fontivo)
 - **Fontivo-Fonts Cloud Repository**: [github.com/Ahmedfahmy8308/Fontivo-Fonts](https://github.com/Ahmedfahmy8308/Fontivo-Fonts)
-- **Official Project Website**: [ahmedfahmy8308.github.io/Fontivo-Site](https://ahmedfahmy8308.github.io/Fontivo-Site/)
+- **Official Project Website**: [fontivo-app.github.io](https://fontivo-app.github.io/)
 ---
 
 ## Community & Contributing

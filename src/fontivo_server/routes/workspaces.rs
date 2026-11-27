@@ -2526,6 +2526,232 @@ pub fn export_workspace_bundle(
     respond_json(req, 200, resp, cors_origin, json_header);
 }
 
+/// GET /api/workspaces/:id/export-bundle (and /export-zip):
+/// Packages `Fonts/`, `Palettes/palette.ase`, `Guidelines/styleguide.html`, and `Designs/`
+/// into a clean downloadable ZIP (`<workspace-id>-handover.zip`) with safe path traversal protection.
+pub fn export_workspace_handover_zip(
+    req: Request,
+    state: &Arc<RwLock<AppState>>,
+    id: &str,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    use std::io::{Cursor, Write};
+    use zip::write::SimpleFileOptions;
+
+    let safe_id = match validate_workspace_id(id) {
+        Ok(valid) => valid,
+        Err(err) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": err }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let (data_dir, ws_opt) = {
+        let st = state.read().unwrap();
+        let dir = get_workspaces_dir(&st.data_dir);
+        (st.data_dir.clone(), load_workspace_from_disk(&dir, safe_id))
+    };
+
+    let root_path = if let Some(custom) = ws_opt
+        .as_ref()
+        .and_then(|w| w.folder_path.as_deref())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        match resolve_workspace_root_path(safe_id, Some(custom)) {
+            Ok(p) => p,
+            Err(err) => {
+                respond_json(
+                    req,
+                    400,
+                    serde_json::json!({ "success": false, "error": err }),
+                    cors_origin,
+                    json_header,
+                );
+                return;
+            }
+        }
+    } else {
+        data_dir.join("Workspaces").join(safe_id)
+    };
+
+    if ws_opt.is_none() && !root_path.is_dir() {
+        respond_json(
+            req,
+            404,
+            serde_json::json!({ "success": false, "error": "Workspace not found" }),
+            cors_origin,
+            json_header,
+        );
+        return;
+    }
+
+    let canon_root = root_path.canonicalize().ok();
+
+    fn add_dir_to_zip<W: Write + std::io::Seek>(
+        zip_writer: &mut zip::ZipWriter<W>,
+        options: SimpleFileOptions,
+        canon_root: &Path,
+        dir: &Path,
+        zip_prefix: &str,
+        depth: usize,
+    ) {
+        if depth > 10 || !dir.is_dir() {
+            return;
+        }
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Ok(canon_entry) = path.canonicalize() else {
+                    continue;
+                };
+                if !canon_entry.starts_with(canon_root) {
+                    continue;
+                }
+                let fname = entry.file_name().to_string_lossy().to_string();
+                if fname.is_empty()
+                    || fname == "."
+                    || fname == ".."
+                    || fname.contains('/')
+                    || fname.contains('\\')
+                {
+                    continue;
+                }
+                let entry_zip_path = format!("{}/{}", zip_prefix, fname);
+                if canon_entry.is_dir() {
+                    add_dir_to_zip(
+                        zip_writer,
+                        options,
+                        canon_root,
+                        &canon_entry,
+                        &entry_zip_path,
+                        depth + 1,
+                    );
+                } else if canon_entry.is_file() {
+                    if let Ok(bytes) = fs::read(&canon_entry) {
+                        if zip_writer.start_file(&entry_zip_path, options).is_ok() {
+                            let _ = zip_writer.write_all(&bytes);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cursor = Cursor::new(Vec::<u8>::new());
+    {
+        let mut zip_writer = zip::ZipWriter::new(&mut cursor);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+        // 1. Package Fonts/ and Designs/ from workspace physical root
+        if let Some(ref c_root) = canon_root {
+            let fonts_dir = c_root.join("Fonts");
+            if fonts_dir.is_dir() {
+                add_dir_to_zip(&mut zip_writer, options, c_root, &fonts_dir, "Fonts", 0);
+            }
+            let designs_dir = c_root.join("Designs");
+            if designs_dir.is_dir() {
+                add_dir_to_zip(&mut zip_writer, options, c_root, &designs_dir, "Designs", 0);
+            }
+        }
+
+        // 2. Package Palettes/palette.ase (from disk if present & contained, else generated)
+        let mut wrote_ase = false;
+        if let Some(ref c_root) = canon_root {
+            let ase_disk = c_root.join("Palettes").join("palette.ase");
+            if let Ok(c_ase) = ase_disk.canonicalize() {
+                if c_ase.starts_with(c_root) && c_ase.is_file() {
+                    if let Ok(bytes) = fs::read(&c_ase) {
+                        if zip_writer
+                            .start_file("Palettes/palette.ase", options)
+                            .is_ok()
+                        {
+                            let _ = zip_writer.write_all(&bytes);
+                            wrote_ase = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !wrote_ase {
+            if let Some(ref ws) = ws_opt {
+                let ase_bytes = generate_ase_binary(&ws.palette);
+                if zip_writer
+                    .start_file("Palettes/palette.ase", options)
+                    .is_ok()
+                {
+                    let _ = zip_writer.write_all(&ase_bytes);
+                }
+            }
+        }
+
+        // 3. Package Guidelines/styleguide.html (from disk if present & contained, else generated)
+        let mut wrote_guide = false;
+        if let Some(ref c_root) = canon_root {
+            let guide_disk = c_root.join("Guidelines").join("styleguide.html");
+            if let Ok(c_guide) = guide_disk.canonicalize() {
+                if c_guide.starts_with(c_root) && c_guide.is_file() {
+                    if let Ok(bytes) = fs::read(&c_guide) {
+                        if zip_writer
+                            .start_file("Guidelines/styleguide.html", options)
+                            .is_ok()
+                        {
+                            let _ = zip_writer.write_all(&bytes);
+                            wrote_guide = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !wrote_guide {
+            if let Some(ref ws) = ws_opt {
+                let guide_html = generate_standalone_styleguide_html(ws);
+                if zip_writer
+                    .start_file("Guidelines/styleguide.html", options)
+                    .is_ok()
+                {
+                    let _ = zip_writer.write_all(guide_html.as_bytes());
+                }
+            }
+        }
+
+        if let Err(e) = zip_writer.finish() {
+            respond_json(
+                req,
+                500,
+                serde_json::json!({ "success": false, "error": format!("Failed to finalize workspace handover ZIP: {}", e) }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    }
+
+    let zip_bytes = cursor.into_inner();
+    let mut res =
+        tiny_http::Response::from_data(zip_bytes).with_status_code(tiny_http::StatusCode(200));
+    res.add_header(cors_origin);
+    if let Ok(ct) = Header::from_bytes(&b"Content-Type"[..], &b"application/zip"[..]) {
+        res.add_header(ct);
+    }
+    if let Ok(cd) = Header::from_bytes(
+        &b"Content-Disposition"[..],
+        format!("attachment; filename=\"{}-handover.zip\"", safe_id).as_bytes(),
+    ) {
+        res.add_header(cd);
+    }
+    super::common::add_security_headers(&mut res);
+    let _ = req.respond(res);
+}
+
 /// POST /api/ase/inspect: inspect Adobe Swatch Exchange (.ASE) binary file
 pub fn inspect_ase(
     mut req: Request,
@@ -4169,4 +4395,169 @@ pub fn delete_workspace_folder(
         cors_origin,
         json_header,
     );
+}
+
+/// GET /api/workspaces/:id/export-zip: zips the workspace's `Fonts/`, `Palettes/palette.ase`,
+/// `Guidelines/styleguide.html`, and `Designs/` into a downloadable `<workspace-id>-handover.zip`.
+pub fn export_workspace_zip(
+    req: Request,
+    state: &Arc<RwLock<AppState>>,
+    id: &str,
+    cors_origin: Header,
+    json_header: Header,
+) {
+    use std::io::{Cursor, Write};
+    use zip::write::SimpleFileOptions;
+
+    let safe_id = match validate_workspace_id(id) {
+        Ok(valid) => valid,
+        Err(err) => {
+            respond_json(
+                req,
+                400,
+                serde_json::json!({ "success": false, "error": err }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    let (data_dir, fonts_snapshot) = {
+        let st = state.read().unwrap();
+        (st.data_dir.clone(), st.fonts.clone())
+    };
+
+    let (ws_opt, root) = match resolve_existing_workspace_root(&data_dir, safe_id) {
+        Ok(r) => r,
+        Err((status, err)) => {
+            respond_json(
+                req,
+                status,
+                serde_json::json!({ "success": false, "error": err }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    };
+
+    // Ensure physical handover assets exist when workspace metadata is present
+    let palette_ase_path = root.join("Palettes").join("palette.ase");
+    let styleguide_path = root.join("Guidelines").join("styleguide.html");
+    if let Some(ref ws) = ws_opt {
+        if !palette_ase_path.is_file() || !styleguide_path.is_file() {
+            let _ = sync_workspace_physical_files(ws, &fonts_snapshot, ws.folder_path.as_deref());
+        }
+    }
+
+    fn add_dir_to_zip<W: Write + std::io::Seek>(
+        zip_writer: &mut zip::ZipWriter<W>,
+        base_dir: &Path,
+        zip_prefix: &str,
+        options: SimpleFileOptions,
+    ) {
+        fn walk<W: Write + std::io::Seek>(
+            zip_writer: &mut zip::ZipWriter<W>,
+            root: &Path,
+            curr: &Path,
+            zip_prefix: &str,
+            options: SimpleFileOptions,
+        ) {
+            if let Ok(entries) = fs::read_dir(curr) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        walk(zip_writer, root, &p, zip_prefix, options);
+                    } else if p.is_file() {
+                        if let Ok(rel) = p.strip_prefix(root) {
+                            let rel_str = rel.to_string_lossy().replace('\\', "/");
+                            if rel_str.is_empty() {
+                                continue;
+                            }
+                            let entry_name = format!("{}/{}", zip_prefix, rel_str);
+                            if let Ok(bytes) = fs::read(&p) {
+                                if zip_writer.start_file(&entry_name, options).is_ok() {
+                                    let _ = zip_writer.write_all(&bytes);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if base_dir.exists() && base_dir.is_dir() {
+            walk(zip_writer, base_dir, base_dir, zip_prefix, options);
+        }
+    }
+
+    let mut cursor = Cursor::new(Vec::<u8>::new());
+    {
+        let mut zip_writer = zip::ZipWriter::new(&mut cursor);
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+
+        // 1. Fonts/
+        add_dir_to_zip(&mut zip_writer, &root.join("Fonts"), "Fonts", options);
+
+        // 2. Palettes/palette.ase
+        if palette_ase_path.is_file() {
+            if let Ok(bytes) = fs::read(&palette_ase_path) {
+                if zip_writer.start_file("Palettes/palette.ase", options).is_ok() {
+                    let _ = zip_writer.write_all(&bytes);
+                }
+            }
+        } else if let Some(ref ws) = ws_opt {
+            let ase_bytes = generate_ase_binary(&ws.palette);
+            if zip_writer.start_file("Palettes/palette.ase", options).is_ok() {
+                let _ = zip_writer.write_all(&ase_bytes);
+            }
+        }
+
+        // 3. Guidelines/styleguide.html
+        if styleguide_path.is_file() {
+            if let Ok(bytes) = fs::read(&styleguide_path) {
+                if zip_writer
+                    .start_file("Guidelines/styleguide.html", options)
+                    .is_ok()
+                {
+                    let _ = zip_writer.write_all(&bytes);
+                }
+            }
+        } else if let Some(ref ws) = ws_opt {
+            let html = generate_standalone_styleguide_html(ws);
+            if zip_writer
+                .start_file("Guidelines/styleguide.html", options)
+                .is_ok()
+            {
+                let _ = zip_writer.write_all(html.as_bytes());
+            }
+        }
+
+        // 4. Designs/
+        add_dir_to_zip(&mut zip_writer, &root.join("Designs"), "Designs", options);
+
+        if let Err(e) = zip_writer.finish() {
+            respond_json(
+                req,
+                500,
+                serde_json::json!({ "success": false, "error": format!("Failed to finalize handover ZIP: {}", e) }),
+                cors_origin,
+                json_header,
+            );
+            return;
+        }
+    }
+
+    let zip_bytes = cursor.into_inner();
+    let content_type = Header::from_bytes(&b"Content-Type"[..], &b"application/zip"[..]).unwrap();
+    let disposition_val = format!("attachment; filename=\"{}-handover.zip\"", safe_id);
+    let content_disp =
+        Header::from_bytes(&b"Content-Disposition"[..], disposition_val.as_bytes()).unwrap();
+    let mut res = tiny_http::Response::from_data(zip_bytes);
+    res.add_header(cors_origin);
+    res.add_header(content_type);
+    res.add_header(content_disp);
+    super::common::add_security_headers(&mut res);
+    let _ = req.respond(res);
 }
