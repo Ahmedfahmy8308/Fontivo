@@ -35,6 +35,7 @@ import {
   Pin,
   ExternalLink,
   Maximize2,
+  Search,
   X,
 } from "lucide-react";
 import {
@@ -716,6 +717,7 @@ const INITIAL_WORKSPACES: Workspace[] = [
 
 export default function WorkspacesView({
   fonts = [],
+  onActivateFont,
   onRefreshStats,
   isRtl = false,
   initialModalOpen = false,
@@ -794,6 +796,11 @@ export default function WorkspacesView({
   const [notesDraft, setNotesDraft] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
   const [fetchedLibraryFonts, setFetchedLibraryFonts] = useState<any[]>([]);
+  const [libraryFontSearch, setLibraryFontSearch] = useState("");
+  const [librarySearchResults, setLibrarySearchResults] = useState<any[]>([]);
+  const [searchingLibraryFonts, setSearchingLibraryFonts] = useState(false);
+  const [projectFontQuery, setProjectFontQuery] = useState("");
+  const [designSearchQuery, setDesignSearchQuery] = useState("");
 
   const designInputRef = useRef<HTMLInputElement | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
@@ -1010,6 +1017,10 @@ export default function WorkspacesView({
     setLightboxDesign(null);
     setIsEditingNotes(false);
     setNotesDraft(activeWorkspace?.notes || "");
+    setLibraryFontSearch("");
+    setLibrarySearchResults([]);
+    setProjectFontQuery("");
+    setDesignSearchQuery("");
   }, [activeWorkspace?.id]);
 
   const workspaceFoldersList: string[] = React.useMemo(() => {
@@ -1049,16 +1060,204 @@ export default function WorkspacesView({
     const savedFonts = Array.isArray(activeWorkspace.projectFonts)
       ? activeWorkspace.projectFonts
       : [];
-    if (diskFonts.length > 0) return diskFonts;
-    return savedFonts.map((pf: any, i: number) => ({
-      id: pf.fontId ?? `pf-${i}`,
-      name: pf.name || pf.family || "Font",
-      family: pf.family || pf.name || "Font",
-      format: pf.style || "TTF",
-      path: pf.path || `Fonts\\${pf.name || "Font"}`,
-      isActive: Boolean(pf.isActive),
-    }));
-  }, [activeWorkspace.subfolders?.fonts, activeWorkspace.projectFonts]);
+
+    const merged: Array<{
+      id: string | number;
+      name: string;
+      family: string;
+      format: string;
+      path: string;
+      isActive: boolean;
+      roleLabel?: string;
+      sourceKind?: "disk" | "linked" | "typography" | "custom";
+    }> = [];
+    const seen = new Set<string>();
+
+    const makeKey = (name?: string, path?: string, id?: string | number) => {
+      const n = String(name || "").trim().toLowerCase();
+      const p = String(path || "").replace(/\\/g, "/").trim().toLowerCase();
+      if (id !== undefined && id !== null && !String(id).startsWith("pf-") && !String(id).startsWith("slot-")) {
+        return `id:${id}`;
+      }
+      return p && !p.startsWith("fonts/") ? `p:${p}` : `n:${n}`;
+    };
+
+    const pushUnique = (item: (typeof merged)[number]) => {
+      const cleanName = String(item.name || "").trim();
+      if (!cleanName || cleanName === "Unassigned") return;
+      const keyById = makeKey(cleanName, item.path, item.id);
+      const keyByName = `n:${cleanName.toLowerCase()}`;
+      if (seen.has(keyById) || seen.has(keyByName)) {
+        // Enrich existing entry with roleLabel if missing
+        const existing = merged.find(
+          (m) =>
+            m.name.toLowerCase() === cleanName.toLowerCase() ||
+            (m.id !== undefined && String(m.id) === String(item.id)),
+        );
+        if (existing && !existing.roleLabel && item.roleLabel) {
+          existing.roleLabel = item.roleLabel;
+        }
+        return;
+      }
+      seen.add(keyById);
+      seen.add(keyByName);
+      merged.push(item);
+    };
+
+    for (const df of diskFonts) {
+      pushUnique({
+        id: df.id ?? `disk-${df.name}`,
+        name: df.name || df.family || "Font",
+        family: df.family || df.name || "Font",
+        format: df.format || "TTF",
+        path: df.path || `Fonts\\${df.name || "Font"}`,
+        isActive: Boolean(df.isActive),
+        sourceKind: "disk",
+      });
+    }
+
+    for (let i = 0; i < savedFonts.length; i++) {
+      const pf: any = savedFonts[i];
+      pushUnique({
+        id: pf.fontId ?? `pf-${i}`,
+        name: pf.name || pf.family || "Font",
+        family: pf.family || pf.name || "Font",
+        format: pf.style || "TTF",
+        path: pf.path || `Fonts\\${pf.name || "Font"}`,
+        isActive: Boolean(pf.isActive),
+        sourceKind: "linked",
+      });
+    }
+
+    const typoSlots: Array<{
+      slot: TypographyFontObject | string | undefined;
+      ar: string;
+      en: string;
+      key: string;
+    }> = [
+      {
+        slot: activeWorkspace.typography?.headingFont,
+        ar: "العناوين",
+        en: "Heading",
+        key: "heading",
+      },
+      {
+        slot: activeWorkspace.typography?.bodyFont,
+        ar: "النصوص",
+        en: "Body",
+        key: "body",
+      },
+      {
+        slot: activeWorkspace.typography?.accentFont,
+        ar: "مساعد",
+        en: "Accent",
+        key: "accent",
+      },
+      {
+        slot: activeWorkspace.typography?.codeFont,
+        ar: "الكود",
+        en: "Code",
+        key: "code",
+      },
+    ];
+
+    for (const ts of typoSlots) {
+      const disp = getFontDisplayName(ts.slot);
+      if (!disp || disp === "Unassigned") continue;
+      const obj = typeof ts.slot === "object" && ts.slot ? ts.slot : null;
+      pushUnique({
+        id: obj?.fontId ?? `slot-${ts.key}-${disp}`,
+        name: disp,
+        family: obj?.family || disp,
+        format: obj?.style || "TTF",
+        path: obj?.path || `Fonts\\${disp}`,
+        isActive: false,
+        roleLabel: isRtl ? ts.ar : ts.en,
+        sourceKind: "typography",
+      });
+    }
+
+    if (Array.isArray(activeWorkspace.customFonts)) {
+      activeWorkspace.customFonts.forEach((cf, idx) => {
+        const disp = getFontDisplayName(cf);
+        if (!disp || disp === "Unassigned") return;
+        pushUnique({
+          id: cf.fontId ?? `slot-custom-${idx}-${disp}`,
+          name: disp,
+          family: cf.family || disp,
+          format: cf.style || "TTF",
+          path: cf.path || `Fonts\\${disp}`,
+          isActive: false,
+          roleLabel: cf.label || (isRtl ? "مخصص" : "Custom"),
+          sourceKind: "custom",
+        });
+      });
+    }
+
+    return merged;
+  }, [
+    activeWorkspace.subfolders?.fonts,
+    activeWorkspace.projectFonts,
+    activeWorkspace.typography,
+    activeWorkspace.customFonts,
+    isRtl,
+  ]);
+
+  // Live debounced full-library font search (searches all 10,939+ fonts in Rust backend)
+  useEffect(() => {
+    const q = libraryFontSearch.trim();
+    if (!q) {
+      setLibrarySearchResults([]);
+      setSearchingLibraryFonts(false);
+      return;
+    }
+    const localMatches = effectiveFonts
+      .filter((f: any) => {
+        const hay = `${f.displayName || ""} ${f.name || ""} ${f.family || ""} ${f.style || ""}`.toLowerCase();
+        return hay.includes(q.toLowerCase());
+      })
+      .slice(0, 40);
+    setLibrarySearchResults(localMatches);
+
+    if (
+      typeof window === "undefined" ||
+      (typeof navigator !== "undefined" &&
+        /jsdom|happy-dom/i.test(navigator.userAgent || ""))
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    setSearchingLibraryFonts(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await safeFetchJson<any>(
+          `/api/fonts?search=${encodeURIComponent(q)}&limit=60`,
+          { timeoutMs: 4500 },
+        );
+        if (cancelled) return;
+        const remoteList: any[] = Array.isArray(res)
+          ? res
+          : Array.isArray(res?.fonts)
+            ? res.fonts
+            : [];
+        const merged = new Map<string, any>();
+        for (const f of [...remoteList, ...localMatches]) {
+          if (!f) continue;
+          const key = String(f.id ?? f.path ?? f.name ?? "");
+          if (key && !merged.has(key)) merged.set(key, f);
+        }
+        setLibrarySearchResults(Array.from(merged.values()).slice(0, 60));
+      } finally {
+        if (!cancelled) setSearchingLibraryFonts(false);
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [libraryFontSearch, effectiveFonts]);
 
   const subfolders = {
     fonts: resolvedProjectFonts,
@@ -1481,10 +1680,11 @@ export default function WorkspacesView({
     });
   };
 
-  const handleAddFontToWorkspace = async (fontId: string) => {
-    const picked = effectiveFonts.find(
-      (f: any) => String(f.id) === String(fontId),
-    );
+  const handleAddFontToWorkspace = async (fontId: string, directFont?: any) => {
+    const picked =
+      directFont ||
+      librarySearchResults.find((f: any) => String(f.id) === String(fontId)) ||
+      effectiveFonts.find((f: any) => String(f.id) === String(fontId));
     if (!picked || !activeWorkspace) return;
     const existingFonts = subfolders.fonts || [];
     if (
@@ -2884,7 +3084,7 @@ export default function WorkspacesView({
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-3">
                 {[
                   {
                     folder: "Fonts" as const,
@@ -2991,503 +3191,499 @@ export default function WorkspacesView({
             </div>
           </div>
 
-          {/* Subfolder Content Section: Designs/ & Fonts/ */}
+          {/* Section 1: Dedicated FULL-WIDTH Color Palette Studio (Palettes/palette.ase) */}
           {(activeSubfolderTab === "all" ||
-            activeSubfolderTab === "Designs" ||
-            activeSubfolderTab === "Fonts") && (
-            <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
-              {/* Designs/ Subfolder, Preset Brand Folder Templates, Nested Folders & Design Files */}
-              <div
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  handleUploadDesigns(e.dataTransfer.files);
-                }}
-                className="p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs min-w-0"
-              >
-                <input
-                  ref={designInputRef}
-                  type="file"
-                  multiple
-                  accept=".psd,.ai,.indd,.pdf,.svg,.png,.jpg,.jpeg,.webp,.fig,.xd"
-                  onChange={(e) => {
-                    if (e.target.files?.length) {
-                      handleUploadDesigns(e.target.files);
-                      e.target.value = "";
-                    }
-                  }}
-                  className="hidden"
-                />
-
-                <div className="flex items-start sm:items-center justify-between gap-2.5 flex-wrap">
-                  <div className="min-w-0">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 leading-snug">
-                      <FileCheck className="w-4 h-4 text-[var(--color-action)] shrink-0" />
-                      <span>
-                        {isRtl ? (
-                          <>
-                            ملفات التصميم والمجلدات الفرعية (
-                            <bdi dir="ltr">Designs/</bdi>)
-                          </>
-                        ) : (
-                          "Discovered Design Files & Brand Folders (Designs/)"
-                        )}
-                      </span>
-                    </h3>
-                    <p className="text-[11px] font-sans text-[var(--color-text-dim)] mt-0.5 leading-snug">
-                      {isRtl
-                        ? "نظم ملفات العميل في قوالب مجلدات جاهزة أو أنشئ مجلدات متداخلة مع معاينة وتثبيت الملفات"
-                        : "Organize client deliverables in 1-click brand folder templates, pin key assets, and open files directly"}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => designInputRef.current?.click()}
-                      disabled={uploadingDesign}
-                      className="h-8 px-3 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                    >
-                      <Upload className="w-3.5 h-3.5 shrink-0" />
-                      <span>
-                        {uploadingDesign
-                          ? isRtl
-                            ? "جاري الرفع..."
-                            : "Uploading..."
-                          : isRtl
-                            ? "رفع تصميم"
-                            : "Upload Design"}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleOpenInExplorer(currentFolderPath || "Designs")
-                      }
-                      className="text-[11px] text-[var(--color-action)] hover:underline font-semibold cursor-pointer whitespace-nowrap shrink-0"
-                    >
+            activeSubfolderTab === "Palettes") && (
+            <section className="w-full p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
+                    <Palette className="w-4 h-4 text-[var(--color-action)] shrink-0" />
+                    <span>
                       {isRtl ? (
                         <>
-                          فتح{" "}
-                          <bdi dir="ltr">{currentFolderPath || "Designs"}/</bdi>
+                          لوحة ألوان المشروع (
+                          <bdi dir="ltr">Palettes/palette.ase</bdi>)
                         </>
                       ) : (
-                        `Open ${currentFolderPath || "Designs"}/`
+                        "Workspace Color Palette (Palettes/palette.ase)"
                       )}
-                    </button>
-                  </div>
+                    </span>
+                  </h3>
+                  <p className="text-[11px] font-sans text-[var(--color-text-dim)] mt-0.5 leading-snug">
+                    {isRtl
+                      ? "انقر على أي بطاقة لون لنسخ كود HEX فوراً، أو عدّل الأدوار وصدّرها لـ Adobe ASE و CSS و Tailwind"
+                      : "Click any swatch card to copy HEX instantly, edit brand roles, or export to Adobe ASE, CSS, and Tailwind"}
+                  </p>
                 </div>
-
-                {/* Folders Navigator: Breadcrumbs + 1-Click Brand Folder Templates + Subfolder Filter */}
-                <div className="p-3.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-1 text-[11px] font-sans font-semibold">
-                      <button
-                        type="button"
-                        onClick={() => setCurrentFolderPath("")}
-                        className={`px-2 py-1 rounded-md cursor-pointer transition ${
-                          currentFolderPath === ""
-                            ? "bg-[var(--color-action)]/15 text-[var(--color-action)] font-bold"
-                            : "hover:bg-[var(--color-control)] text-[var(--color-text-muted)]"
-                        }`}
-                      >
-                        {isRtl ? "كل المجلدات" : "All Folders"}
-                      </button>
-                      {currentFolderPath
-                        .split("/")
-                        .filter(Boolean)
-                        .map((seg, idx, arr) => {
-                          const targetRel = arr.slice(0, idx + 1).join("/");
-                          return (
-                            <React.Fragment key={targetRel}>
-                              {isRtl ? (
-                                <ChevronLeft className="w-3 h-3 text-[var(--color-text-dim)]" />
-                              ) : (
-                                <ChevronRight className="w-3 h-3 text-[var(--color-text-dim)]" />
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => setCurrentFolderPath(targetRel)}
-                                className={`px-2 py-1 rounded-md cursor-pointer transition ${
-                                  targetRel === currentFolderPath
-                                    ? "bg-[var(--color-action)]/15 text-[var(--color-action)] font-bold"
-                                    : "hover:bg-[var(--color-control)] text-[var(--color-text-muted)]"
-                                }`}
-                              >
-                                {getFriendlyFolderLabel(targetRel) || seg}
-                              </button>
-                            </React.Fragment>
-                          );
-                        })}
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
-                      <button
-                        type="button"
-                        onClick={() => setShowPinnedOnly((p) => !p)}
-                        className={`h-7 px-2.5 rounded-lg border text-[11px] font-sans font-semibold flex items-center gap-1 cursor-pointer transition whitespace-nowrap ${
-                          showPinnedOnly
-                            ? "bg-[var(--color-action)]/15 border-[var(--color-action)] text-[var(--color-action)]"
-                            : "bg-[var(--color-back-card)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)]"
-                        }`}
-                      >
-                        <Pin className="w-3 h-3 shrink-0" />
-                        <span>{isRtl ? "المثبتة" : "Pinned"}</span>
-                        {pinnedAssetSet.size > 0 && (
-                          <span dir="ltr" className="font-mono text-[10px]">
-                            ({pinnedAssetSet.size})
-                          </span>
-                        )}
-                      </button>
-                      <input
-                        type="text"
-                        dir="auto"
-                        value={newSubfolderName}
-                        onChange={(e) => setNewSubfolderName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            handleCreateNestedFolder();
-                          }
-                        }}
-                        placeholder={
-                          isRtl
-                            ? "اسم مجلد فرعي جديد..."
-                            : "New subfolder name..."
-                        }
-                        className="h-7 flex-1 sm:flex-none sm:w-40 min-w-0 bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-lg px-2.5 text-[11px] text-[var(--color-text-header)] outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleCreateNestedFolder}
-                        disabled={creatingSubfolder || !newSubfolderName.trim()}
-                        className="h-7 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-bold flex items-center gap-1 text-[var(--color-text-header)] cursor-pointer disabled:opacity-40 whitespace-nowrap shrink-0"
-                      >
-                        <FolderPlus className="w-3 h-3 text-[var(--color-action)] shrink-0" />
-                        <span>{isRtl ? "مجلد داخلي" : "Add Subfolder"}</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 1-Click Ready-Made Brand Folder Templates */}
-                  <div className="pt-2 border-t border-[var(--color-border-subtle)] space-y-1.5">
-                    <div className="text-[10px] font-sans font-semibold text-[var(--color-text-dim)]">
-                      {isRtl
-                        ? "قوالب مجلدات الهوية الجاهزة (ضغطة واحدة للإنشاء والفتح):"
-                        : "1-Click Brand Folder Templates:"}
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {BRAND_FOLDER_TEMPLATES.map((tpl) => {
-                        const isCreated = workspaceFoldersList.some(
-                          (f) => f.toLowerCase() === tpl.folderPath.toLowerCase(),
-                        );
-                        const isActive =
-                          currentFolderPath.toLowerCase() ===
-                          tpl.folderPath.toLowerCase();
-                        return (
-                          <button
-                            key={tpl.id}
-                            type="button"
-                            onClick={() => handleTemplateFolderClick(tpl)}
-                            disabled={creatingSubfolder}
-                            className={`h-7 px-2.5 rounded-lg border text-[11px] font-sans font-semibold inline-flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap ${
-                              isActive
-                                ? "bg-[var(--color-action)]/18 border-[var(--color-action)] text-[var(--color-action)]"
-                                : isCreated
-                                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:border-emerald-400"
-                                  : "bg-[var(--color-control)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:border-[var(--color-action)]/50"
-                            }`}
-                            title={
-                              isCreated
-                                ? isRtl
-                                  ? `فتح مجلد ${tpl.folderPath}`
-                                  : `Open ${tpl.folderPath}`
-                                : isRtl
-                                  ? `إنشاء مجلد ${tpl.folderPath} بضغطة واحدة`
-                                  : `Create ${tpl.folderPath} in 1 click`
-                            }
-                          >
-                            {isCreated ? (
-                              <Check className="w-3 h-3 shrink-0" />
-                            ) : (
-                              <FolderPlus className="w-3 h-3 shrink-0 text-[var(--color-action)]" />
-                            )}
-                            <span dir="ltr">{tpl.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Child Subfolders with Delete Subfolder Button */}
-                  {childFoldersInCurrentPath.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 pt-1.5 border-t border-[var(--color-border-subtle)]">
-                      {childFoldersInCurrentPath.map((relFolder) => {
-                        const label = getFriendlyFolderLabel(relFolder);
-                        const canDelete =
-                          !isProtectedRootFolder(relFolder) &&
-                          relFolder.split("/").filter(Boolean).length >= 2;
-                        return (
-                          <div
-                            key={relFolder}
-                            className="h-7 rounded-lg bg-[var(--color-control)] border border-[var(--color-border)] hover:border-[var(--color-action)]/50 flex items-center overflow-hidden transition"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => setCurrentFolderPath(relFolder)}
-                              className="h-full px-2.5 text-[11px] font-sans font-semibold text-[var(--color-text-header)] flex items-center gap-1.5 cursor-pointer hover:bg-[var(--color-action)]/15 transition"
-                            >
-                              <FolderOpen className="w-3 h-3 text-amber-400 shrink-0" />
-                              <span dir="auto">{label}</span>
-                            </button>
-                            {canDelete && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteSubfolder(relFolder);
-                                }}
-                                aria-label={
-                                  isRtl
-                                    ? `حذف المجلد ${label}`
-                                    : `Delete folder ${label}`
-                                }
-                                title={
-                                  isRtl
-                                    ? `حذف المجلد "${label}"`
-                                    : `Delete subfolder "${label}"`
-                                }
-                                className="h-full px-1.5 border-s border-[var(--color-border)] text-[var(--color-text-dim)] hover:text-rose-400 hover:bg-rose-500/15 flex items-center justify-center cursor-pointer transition"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* Design Files List */}
-                <div className="space-y-2.5 max-h-80 overflow-y-auto pe-1">
-                  {(() => {
-                    const visibleDesigns = (subfolders.designs || [])
-                      .filter((d) => {
-                        if (showPinnedOnly && !isDesignPinned(d)) {
-                          return false;
-                        }
-                        if (!currentFolderPath) return true;
-                        const sub = String(
-                          d.subfolder || d.relativePath || d.path || "",
-                        )
-                          .replace(/\\/g, "/")
-                          .toLowerCase();
-                        const target = currentFolderPath.toLowerCase();
-                        return sub === target || sub.startsWith(`${target}/`) || sub.includes(`/${target}`);
-                      })
-                      .sort((a, b) => {
-                        const ap = isDesignPinned(a) ? 1 : 0;
-                        const bp = isDesignPinned(b) ? 1 : 0;
-                        return bp - ap;
-                      });
-
-                    if (visibleDesigns.length === 0) {
-                      return (
-                        <div className="text-center py-6 px-4 text-xs text-[var(--color-text-dim)] border border-dashed border-[var(--color-border)] rounded-xl space-y-1.5">
-                          <p className="font-semibold text-[var(--color-text-muted)]">
-                            {showPinnedOnly
-                              ? isRtl
-                                ? "لا توجد ملفات مثبتة في هذا المجلد"
-                                : "No pinned assets in this folder"
-                              : isRtl
-                                ? "لا توجد ملفات تصميم في هذا المجلد بعد"
-                                : "No design files in this folder yet"}
-                          </p>
-                          <p className="text-[11px]">
-                            {isRtl
-                              ? "اسحب ملفات PSD / AI / PDF / PNG / SVG هنا أو اضغط على زر رفع تصميم."
-                              : "Drag PSD, AI, PDF, PNG, or SVG files here or click Upload Design."}
-                          </p>
-                        </div>
-                      );
-                    }
-
-                    return visibleDesigns.map((design, idx) => {
-                      const pinned = isDesignPinned(design);
-                      return (
-                        <div
-                          key={`${design.path}-${idx}`}
-                          className={`p-3 rounded-xl bg-[var(--color-back-main)] border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 min-w-0 transition ${
-                            pinned
-                              ? "border-[var(--color-action)]/60 bg-[var(--color-action)]/5"
-                              : "border-[var(--color-border-subtle)]"
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0 flex-1">
-                            {design.previewUrl && (
-                              <button
-                                type="button"
-                                onClick={() => setLightboxDesign(design)}
-                                className="relative group w-11 h-11 rounded-lg overflow-hidden border border-[var(--color-border)] shrink-0 cursor-pointer"
-                                title={
-                                  isRtl ? "معاينة الصورة" : "Preview image"
-                                }
-                              >
-                                <img
-                                  src={design.previewUrl}
-                                  alt={design.name}
-                                  className="w-full h-full object-cover"
-                                />
-                                <span className="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
-                                  <Maximize2 className="w-3.5 h-3.5 text-white" />
-                                </span>
-                              </button>
-                            )}
-                            <div className="min-w-0 flex-1 space-y-1">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span
-                                  dir="ltr"
-                                  className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-action)]/15 text-[var(--color-action)] shrink-0"
-                                >
-                                  {design.format || (design as any).extension}
-                                </span>
-                                <span
-                                  dir="auto"
-                                  title={design.name}
-                                  className="text-xs font-bold text-[var(--color-text-header)] truncate"
-                                >
-                                  {design.name}
-                                </span>
-                                {pinned && (
-                                  <span className="text-[10px] font-sans font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 shrink-0">
-                                    {isRtl ? "مثبت" : "Pinned"}
-                                  </span>
-                                )}
-                              </div>
-                              <div
-                                dir="ltr"
-                                className="text-[10px] font-mono text-[var(--color-text-dim)] truncate"
-                              >
-                                {design.relativePath || design.path}
-                                {(design.usedFonts || []).length > 0
-                                  ? ` • ${design.usedFonts.join(", ")}`
-                                  : ""}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                            {design.allActive !== false ? (
-                              <span
-                                className={`h-7 px-2.5 inline-flex items-center rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold whitespace-nowrap shrink-0 ${
-                                  isRtl ? "font-sans" : ""
-                                }`}
-                              >
-                                {isRtl
-                                  ? "كافة الخطوط مفعلة ✓"
-                                  : "Fonts Active ✓"}
-                              </span>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={handleActivateRam}
-                                className="h-7 px-2.5 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-[10px] font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0"
-                              >
-                                <Zap className="w-3 h-3 fill-current shrink-0" />
-                                <span>
-                                  {isRtl
-                                    ? "تفعيل الخطوط المفقودة"
-                                    : "Activate Missing Fonts"}
-                                </span>
-                              </button>
-                            )}
-
-                            {design.previewUrl && (
-                              <button
-                                type="button"
-                                onClick={() => setLightboxDesign(design)}
-                                aria-label={
-                                  isRtl
-                                    ? `معاينة ${design.name}`
-                                    : `Preview ${design.name}`
-                                }
-                                title={
-                                  isRtl ? "تكبير ومعاينة" : "Image Preview"
-                                }
-                                className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-action)]/20 text-[var(--color-text-muted)] hover:text-[var(--color-action)] flex items-center justify-center transition cursor-pointer shrink-0"
-                              >
-                                <Maximize2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => handleTogglePinDesign(design)}
-                              aria-pressed={pinned}
-                              aria-label={
-                                isRtl
-                                  ? `تثبيت ${design.name}`
-                                  : `Pin ${design.name}`
-                              }
-                              title={
-                                pinned
-                                  ? isRtl
-                                    ? "إلغاء تثبيت الملف"
-                                    : "Unpin Asset"
-                                  : isRtl
-                                    ? "تثبيت / حفظ في المفضلة"
-                                    : "Pin / Bookmark Asset"
-                              }
-                              className={`h-7 w-7 rounded-lg flex items-center justify-center transition cursor-pointer shrink-0 ${
-                                pinned
-                                  ? "bg-amber-500/20 text-amber-400 border border-amber-500/35"
-                                  : "bg-[var(--color-control)] hover:bg-amber-500/15 text-[var(--color-text-dim)] hover:text-amber-400"
-                              }`}
-                            >
-                              <Pin className="w-3.5 h-3.5" />
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleOpenDesignFile(design)}
-                              title={
-                                isRtl
-                                  ? "فتح الملف في البرنامج الافتراضي"
-                                  : "Open File in Default App"
-                              }
-                              className="h-7 px-2 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[var(--color-text-header)] text-[10px] font-sans font-semibold flex items-center gap-1 transition cursor-pointer whitespace-nowrap shrink-0"
-                            >
-                              <ExternalLink className="w-3 h-3 text-[var(--color-action)] shrink-0" />
-                              <span>{isRtl ? "فتح الملف" : "Open File"}</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteDesignFile(design)}
-                              aria-label={
-                                isRtl
-                                  ? `حذف ${design.name}`
-                                  : `Delete ${design.name}`
-                              }
-                              title={
-                                isRtl
-                                  ? "حذف ملف التصميم"
-                                  : "Delete design file"
-                              }
-                              className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-rose-500/15 text-[var(--color-text-dim)] hover:text-rose-400 flex items-center justify-center transition cursor-pointer shrink-0"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    });
-                  })()}
+                <div className="flex flex-wrap items-center gap-1.5 text-xs shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleSavePaletteToAse}
+                    disabled={savingPalette}
+                    className="h-8 px-3 rounded-lg text-[11px] font-bold bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                  >
+                    <Download className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      {isRtl ? (
+                        <>
+                          حفظ <bdi dir="ltr">palette.ase</bdi>
+                        </>
+                      ) : (
+                        "Save Palettes/palette.ase"
+                      )}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyCode("css")}
+                    className="h-8 px-3 rounded-lg text-[11px] font-mono bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] border border-[var(--color-border)] transition cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    {copiedCodeType === "css" ? "Copied CSS!" : "CSS"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyCode("tailwind")}
+                    className="h-8 px-3 rounded-lg text-[11px] font-mono bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] border border-[var(--color-border)] transition cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    {copiedCodeType === "tailwind" ? "Copied TW!" : "Tailwind"}
+                  </button>
                 </div>
               </div>
 
-              {/* Fonts/ Subfolder Files (.TTF / .OTF) with Smart Add & Remove */}
-              <div className="p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-3 shadow-xs min-w-0">
+              {/* Full-Width Auto-Fill Swatch Grid — Min 240px per card so cards NEVER collide on any desktop monitor */}
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
+                {(activeWorkspace.palette || []).map((color, idx) => {
+                  const ratio = getContrastRatio(color.hex, "#140D18");
+                  const wcag = getWcagRating(ratio);
+                  const isCopied = copiedHex === color.hex;
+                  const isEditing = editingSwatchIdx === idx;
+
+                  return (
+                    <div
+                      key={`${color.hex}-${idx}`}
+                      onClick={() => handleCopyHex(color.hex)}
+                      className={`p-3.5 rounded-xl bg-[var(--color-back-main)] border transition cursor-pointer flex flex-col justify-between gap-3 shadow-2xs relative min-w-0 ${
+                        isEditing
+                          ? "border-[var(--color-action)] ring-1 ring-[var(--color-action)]/40"
+                          : "border-[var(--color-border)] hover:border-[var(--color-action)]"
+                      }`}
+                    >
+                      {/* Top Color Banner + Role + Actions */}
+                      <div className="flex items-center justify-between gap-2 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div
+                            className="w-11 h-8 rounded-lg shrink-0 border border-black/15 ring-1 ring-inset ring-white/10 shadow-inner flex items-center justify-center"
+                            style={{ backgroundColor: color.hex }}
+                          >
+                            {isCopied && (
+                              <Check className="w-3.5 h-3.5 text-white drop-shadow-md" />
+                            )}
+                          </div>
+                          <span
+                            dir="auto"
+                            title={localizeSwatchRole(color.role, isRtl)}
+                            className="px-2 py-0.5 rounded-md text-[10px] font-sans font-semibold bg-[var(--color-control)] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] truncate max-w-[115px]"
+                          >
+                            {localizeSwatchRole(color.role, isRtl)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startEditSwatch(idx, color);
+                            }}
+                            aria-label={isRtl ? "تعديل اللون" : "Edit Swatch"}
+                            title={isRtl ? "تعديل اللون" : "Edit Swatch"}
+                            className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-action)]/20 text-[var(--color-text-muted)] hover:text-[var(--color-action)] flex items-center justify-center transition cursor-pointer"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                          {(activeWorkspace.palette || []).length > 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveSwatchFromWorkspace(idx);
+                              }}
+                              aria-label={
+                                isRtl ? "حذف اللون" : "Remove Swatch"
+                              }
+                              title={isRtl ? "حذف اللون" : "Remove Swatch"}
+                              className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-rose-500/20 text-[var(--color-text-muted)] hover:text-rose-400 flex items-center justify-center transition cursor-pointer"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Swatch Name & #HEX */}
+                      <div className="min-w-0 space-y-1">
+                        <div
+                          dir="auto"
+                          title={color.name}
+                          className="text-xs font-bold text-[var(--color-text-header)] truncate"
+                        >
+                          {color.name}
+                        </div>
+                        <div className="flex items-center justify-between gap-2 text-[11px] text-[var(--color-text-muted)]">
+                          <span
+                            dir="ltr"
+                            className="font-mono flex items-center gap-1.5"
+                          >
+                            <span>{color.hex}</span>
+                            <Copy className="w-2.5 h-2.5 opacity-60" />
+                          </span>
+                          <span className="text-[10px] font-sans text-[var(--color-text-dim)]">
+                            {isCopied
+                              ? isRtl
+                                ? "تم النسخ"
+                                : "Copied"
+                              : isRtl
+                                ? "نسخ"
+                                : "Copy"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Footer: WCAG Contrast */}
+                      <div className="flex items-center justify-between gap-2 text-[10px] pt-2 border-t border-[var(--color-border-subtle)]">
+                        <span className="font-sans text-[var(--color-text-dim)] truncate">
+                          {isRtl ? "تباين القراءة" : "WCAG Contrast"}
+                        </span>
+                        <span
+                          dir="ltr"
+                          className={`font-mono tabular-nums px-2 py-0.5 rounded font-bold border whitespace-nowrap shrink-0 ${
+                            wcag.isNormalPass
+                              ? "text-[#B7A1D9] bg-[#B7A1D9]/12 border-[#B7A1D9]/30"
+                              : "text-[var(--color-action)] bg-[var(--color-action)]/10 border-[var(--color-action)]/25"
+                          }`}
+                        >
+                          {wcag.normalText} {ratio}:1
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {editingSwatchIdx !== null && (
+                <div className="p-3.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-action)]/50 space-y-2.5 animate-in fade-in">
+                  <div className="text-[11px] font-bold text-[var(--color-text-header)] flex items-center justify-between">
+                    <span>
+                      {isRtl
+                        ? "تعديل بيانات اللون المحدد"
+                        : "Edit Selected Color Swatch"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEditingSwatchIdx(null)}
+                      className="text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] cursor-pointer text-[11px]"
+                    >
+                      {isRtl ? "إغلاق" : "Cancel"}
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="color"
+                      value={normalizeHexColor(editSwatchHex)}
+                      onChange={(e) =>
+                        setEditSwatchHex(e.target.value.toUpperCase())
+                      }
+                      className="w-8 h-8 rounded-lg cursor-pointer border border-[var(--color-border)] shrink-0"
+                    />
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={editSwatchHex}
+                      onChange={(e) => setEditSwatchHex(e.target.value)}
+                      placeholder="#F16B50"
+                      className="w-24 h-8 bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg px-2 text-xs font-mono text-[var(--color-text-header)] outline-none"
+                    />
+                    <input
+                      type="text"
+                      dir="auto"
+                      value={editSwatchName}
+                      onChange={(e) => setEditSwatchName(e.target.value)}
+                      placeholder={isRtl ? "اسم اللون..." : "Swatch name..."}
+                      className="flex-1 min-w-[140px] h-8 bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
+                    />
+                    <div className="relative">
+                      <select
+                        value={editSwatchRole}
+                        style={SELECT_APPEARANCE_STYLE}
+                        onChange={(e) => setEditSwatchRole(e.target.value)}
+                        className="h-8 appearance-none !appearance-none bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg ps-2.5 pe-7 text-xs font-sans text-[var(--color-text-header)] outline-none cursor-pointer"
+                      >
+                        {SWATCH_ROLE_OPTIONS.map((opt) => (
+                          <option key={opt.id} value={opt.id}>
+                            {isRtl ? opt.ar : opt.en}
+                          </option>
+                        ))}
+                        <option value="custom">
+                          {isRtl ? "ليبل مخصص" : "Custom Label"}
+                        </option>
+                      </select>
+                      <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2" />
+                    </div>
+                    {editSwatchRole === "custom" && (
+                      <input
+                        type="text"
+                        dir="auto"
+                        value={editSwatchCustomRole}
+                        onChange={(e) =>
+                          setEditSwatchCustomRole(e.target.value)
+                        }
+                        placeholder={isRtl ? "اسم الدور..." : "Custom role..."}
+                        className="w-28 h-8 bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleSaveEditedSwatch}
+                      className="h-8 px-3 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-xs font-bold cursor-pointer shrink-0"
+                    >
+                      {isRtl ? "حفظ التعديل" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Add Swatch Bar + Instant Harmony Suggestions */}
+              <div className="pt-3 border-t border-[var(--color-border-subtle)] flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+                  <input
+                    type="color"
+                    value={newSwatchHex}
+                    onChange={(e) =>
+                      setNewSwatchHex(e.target.value.toUpperCase())
+                    }
+                    className="w-8 h-8 rounded-lg cursor-pointer border border-[var(--color-border)] shrink-0"
+                  />
+                  <input
+                    type="text"
+                    dir="auto"
+                    value={newSwatchName}
+                    onChange={(e) => setNewSwatchName(e.target.value)}
+                    placeholder={
+                      isRtl ? "اسم اللون الجديد..." : "New swatch name..."
+                    }
+                    className="flex-1 min-w-[160px] h-8 bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
+                  />
+                  <div className="relative">
+                    <select
+                      value={newSwatchRole}
+                      style={SELECT_APPEARANCE_STYLE}
+                      onChange={(e) => setNewSwatchRole(e.target.value)}
+                      aria-label={isRtl ? "دور اللون" : "Color Role"}
+                      className="h-8 appearance-none !appearance-none bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-lg ps-2.5 pe-7 text-xs font-sans text-[var(--color-text-header)] outline-none cursor-pointer"
+                    >
+                      {SWATCH_ROLE_OPTIONS.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {isRtl ? opt.ar : opt.en}
+                        </option>
+                      ))}
+                      <option value="custom">
+                        {isRtl ? "ليبل مخصص" : "Custom"}
+                      </option>
+                    </select>
+                    <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2" />
+                  </div>
+                  {newSwatchRole === "custom" && (
+                    <input
+                      type="text"
+                      dir="auto"
+                      value={newSwatchCustomRole}
+                      onChange={(e) => setNewSwatchCustomRole(e.target.value)}
+                      placeholder={isRtl ? "ليبل..." : "Role label..."}
+                      className="w-28 h-8 bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleAddSwatchToWorkspace(newSwatchHex)}
+                    className="h-8 px-3.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-xs font-bold cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    + {isRtl ? "إضافة لون" : "Add Color"}
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-[10px] text-[var(--color-text-muted)] shrink-0">
+                  <span className="flex items-center gap-1 font-semibold">
+                    <Palette className="w-3 h-3 text-[var(--color-action)]" />
+                    <span>
+                      {isRtl
+                        ? "اقتراحات تناغم لوني فورية:"
+                        : "Harmony Suggestions:"}
+                    </span>
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {[
+                      ...harmonySuggestions.complementary,
+                      ...harmonySuggestions.splitComplementary,
+                      ...harmonySuggestions.triadic,
+                    ]
+                      .slice(1, 6)
+                      .map((sugHex, i) => (
+                        <button
+                          key={`${sugHex}-${i}`}
+                          type="button"
+                          onClick={() =>
+                            handleAddSwatchToWorkspace(
+                              sugHex,
+                              `Harmony ${sugHex}`,
+                              "accent",
+                            )
+                          }
+                          className="w-6 h-6 rounded-md border border-black/15 hover:scale-110 transition cursor-pointer"
+                          style={{ backgroundColor: sugHex }}
+                          title={
+                            isRtl
+                              ? `إضافة ${sugHex} للوحة المشروع`
+                              : `Add ${sugHex} to palette`
+                          }
+                        />
+                      ))}
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Section 2: Typography Lab & Project Fonts Studio (Fonts/) */}
+          {(activeSubfolderTab === "all" || activeSubfolderTab === "Fonts") && (
+            <section className="grid grid-cols-1 xl:grid-cols-12 gap-6 min-w-0">
+              {/* Left (5 cols): Live Interactive Typography Specimen & Custom Roles */}
+              <div className="xl:col-span-5 p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs min-w-0 flex flex-col justify-between">
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
+                      <Type className="w-4 h-4 text-[var(--color-action)] shrink-0" />
+                      <span>
+                        {isRtl ? "تناغم الخطوط والمعاينة" : "Typography Pairing"}
+                      </span>
+                    </h3>
+                    <div
+                      dir="ltr"
+                      className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-[var(--color-text-dim)] min-w-0"
+                    >
+                      <span className="truncate max-w-[160px]">
+                        H:{" "}
+                        {getFontDisplayName(
+                          activeWorkspace.typography?.headingFont,
+                        )}
+                      </span>
+                      <span>•</span>
+                      <span className="truncate max-w-[160px]">
+                        B:{" "}
+                        {getFontDisplayName(
+                          activeWorkspace.typography?.bodyFont,
+                        )}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] space-y-3.5">
+                    <div>
+                      <div
+                        dir="ltr"
+                        className="text-[10px] font-mono text-[var(--color-text-dim)] uppercase tracking-wider mb-1"
+                      >
+                        Heading Font —{" "}
+                        {getFontDisplayName(
+                          activeWorkspace.typography?.headingFont,
+                        )}
+                      </div>
+                      <h2
+                        dir="auto"
+                        className="text-xl font-bold text-[var(--color-text-header)] leading-tight tracking-tight"
+                      >
+                        {typeof activeWorkspace.typography?.previewHeading ===
+                        "string"
+                          ? activeWorkspace.typography.previewHeading
+                          : "Typographic Architecture & Hierarchy"}
+                      </h2>
+                    </div>
+
+                    <div className="pt-2.5 border-t border-[var(--color-border-subtle)]">
+                      <div
+                        dir="ltr"
+                        className="text-[10px] font-mono text-[var(--color-text-dim)] uppercase tracking-wider mb-1"
+                      >
+                        Body Font —{" "}
+                        {getFontDisplayName(
+                          activeWorkspace.typography?.bodyFont,
+                        )}
+                      </div>
+                      <p
+                        dir="auto"
+                        className="text-xs text-[var(--color-text-main)] leading-relaxed opacity-90"
+                      >
+                        {typeof activeWorkspace.typography?.previewBody ===
+                        "string"
+                          ? activeWorkspace.typography.previewBody
+                          : "High-performance legibility engineered for modern software surfaces, editorial spreads, and mathematical tabular systems."}
+                      </p>
+                    </div>
+
+                    {Boolean(
+                      getFontDisplayName(activeWorkspace.typography?.accentFont),
+                    ) && (
+                      <div className="pt-2 border-t border-[var(--color-border-subtle)] flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-[var(--color-text-dim)] font-sans font-semibold">
+                          {isRtl ? "الخط المساعد / الأرقام:" : "Accent / Code:"}
+                        </span>
+                        <span
+                          dir="auto"
+                          className="text-[var(--color-action)] font-sans font-semibold truncate"
+                        >
+                          {getFontDisplayName(
+                            activeWorkspace.typography?.accentFont,
+                          )}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {Array.isArray(activeWorkspace.customFonts) &&
+                    activeWorkspace.customFonts.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="text-[10px] font-sans font-bold uppercase tracking-wider text-[var(--color-text-dim)]">
+                          {isRtl
+                            ? "أدوار الخطوط المخصصة"
+                            : "Custom Font Roles"}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {activeWorkspace.customFonts.map((cf, idx) => (
+                            <div
+                              key={`${cf.id || cf.label}-${idx}`}
+                              className="p-2.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] flex items-center justify-between gap-2 min-w-0"
+                            >
+                              <span
+                                dir="auto"
+                                className="text-[11px] font-sans font-semibold text-[var(--color-text-muted)] truncate"
+                              >
+                                {cf.label}
+                              </span>
+                              <span
+                                dir="auto"
+                                className="text-[11px] font-bold text-[var(--color-action)] truncate"
+                              >
+                                {getFontDisplayName(cf)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                </div>
+              </div>
+
+              {/* Right (7 cols): Project Font Files (Fonts/) + Full-Library Live Search */}
+              <div className="xl:col-span-7 p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-3.5 shadow-xs min-w-0">
                 <div className="flex items-start sm:items-center justify-between gap-2 flex-wrap">
                   <div className="min-w-0">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 leading-snug">
@@ -3501,105 +3697,217 @@ export default function WorkspacesView({
                           "Project Font Files (Fonts/)"
                         )}
                       </span>
+                      <span
+                        dir="ltr"
+                        className="text-[10px] font-mono tabular-nums px-2 py-0.5 rounded-full bg-[var(--color-control)] border border-[var(--color-border)] text-[var(--color-text-muted)]"
+                      >
+                        {subfolders.fonts?.length || 0}
+                      </span>
                     </h3>
                     <p className="text-[11px] font-sans text-[var(--color-text-dim)] mt-0.5 leading-snug">
                       {isRtl
-                        ? "جميع الخطوط المرتبطة بالمشروع وتفعل تلقائياً عند العمل"
-                        : "Synced project font files ready for 1-click RAM activation"}
+                        ? "ابحث في كامل مكتبة الخطوط لإضافة أي خط للمشروع، أو أدر خطوط الهوية المرتبطة وفعلها في الرام"
+                        : "Search the entire font library to link any font, manage role assignments, and activate in RAM"}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenInExplorer("Fonts")}
-                      className="text-[11px] text-[#B7A1D9] hover:underline font-semibold cursor-pointer whitespace-nowrap"
-                    >
-                      {isRtl ? (
-                        <>
-                          فتح <bdi dir="ltr">Fonts/</bdi>
-                        </>
-                      ) : (
-                        "Open Fonts/"
-                      )}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenInExplorer("Fonts")}
+                    className="text-[11px] text-[#B7A1D9] hover:underline font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    {isRtl ? (
+                      <>
+                        فتح <bdi dir="ltr">Fonts/</bdi>
+                      </>
+                    ) : (
+                      "Open Fonts/"
+                    )}
+                  </button>
                 </div>
 
-                {effectiveFonts.length > 0 && (
-                  <div className="relative flex items-center">
-                    <select
-                      defaultValue=""
-                      style={SELECT_APPEARANCE_STYLE}
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          handleAddFontToWorkspace(e.target.value);
-                          e.target.value = "";
-                        }
-                      }}
-                      className="w-full appearance-none !appearance-none bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-lg ps-3 pe-8 py-2 text-xs text-[var(--color-text-header)] outline-none cursor-pointer"
-                    >
-                      <option value="">
-                        {isRtl
-                          ? "+ إضافة خط من المكتبة إلى المشروع..."
-                          : "+ Add a font from library to workspace..."}
-                      </option>
-                      {sortedLibraryFonts.nonSystem.length > 0 && (
-                        <optgroup
-                          label={
-                            isRtl
-                              ? "خطوط المستخدم والمشاريع"
-                              : "Library & Custom Fonts"
-                          }
-                        >
-                          {sortedLibraryFonts.nonSystem.map((f: any) => (
-                            <option key={`fs-ns-${f.id}`} value={String(f.id)}>
-                              {(f.displayName || f.name || f.family) +
-                                (f.style ? ` (${f.style})` : "")}
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                      {sortedLibraryFonts.system.length > 0 && (
-                        <optgroup label={isRtl ? "خطوط النظام" : "System Fonts"}>
-                          {sortedLibraryFonts.system.map((f: any) => (
-                            <option key={`fs-sys-${f.id}`} value={String(f.id)}>
-                              {(f.displayName || f.name || f.family) +
-                                (f.style ? ` (${f.style})` : "")}
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                    </select>
-                    <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2.5" />
+                {/* Live Full-Library Font Search Bar */}
+                <div className="space-y-2">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-[var(--color-text-dim)] pointer-events-none absolute top-1/2 -translate-y-1/2 start-3" />
+                    <input
+                      type="text"
+                      dir="auto"
+                      value={libraryFontSearch}
+                      onChange={(e) => setLibraryFontSearch(e.target.value)}
+                      placeholder={
+                        isRtl
+                          ? "ابحث في كامل مكتبة الخطوط لإضافة خط إلى المشروع (مثال: Cairo, Inter, Tajawal)..."
+                          : "Search entire font library to add a font to this workspace..."
+                      }
+                      aria-label={
+                        isRtl
+                          ? "البحث في كامل مكتبة الخطوط"
+                          : "Search full font library"
+                      }
+                      className="w-full h-9 bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-xl ps-9 pe-8 text-xs text-[var(--color-text-header)] placeholder-[var(--color-text-dim)] outline-none transition"
+                    />
+                    {libraryFontSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setLibraryFontSearch("")}
+                        aria-label={isRtl ? "مسح البحث" : "Clear search"}
+                        className="absolute top-1/2 -translate-y-1/2 end-2.5 text-[var(--color-text-dim)] hover:text-[var(--color-text-header)] cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Live Search Results Dropdown */}
+                  {libraryFontSearch.trim().length > 0 && (
+                    <div className="rounded-xl bg-[var(--color-back-main)] border border-[var(--color-action)]/45 max-h-52 overflow-y-auto divide-y divide-[var(--color-border-subtle)] shadow-lg">
+                      {searchingLibraryFonts &&
+                        librarySearchResults.length === 0 && (
+                          <div className="px-3 py-3 text-[11px] text-[var(--color-text-muted)] text-center">
+                            {isRtl
+                              ? "جاري البحث في كامل المكتبة..."
+                              : "Searching full font library..."}
+                          </div>
+                        )}
+                      {!searchingLibraryFonts &&
+                        librarySearchResults.length === 0 && (
+                          <div className="px-3 py-3 text-[11px] text-[var(--color-text-dim)] text-center">
+                            {isRtl
+                              ? `لا توجد نتائج مطابقة لـ "${libraryFontSearch}"`
+                              : `No fonts found matching "${libraryFontSearch}"`}
+                          </div>
+                        )}
+                      {librarySearchResults.map((f: any) => {
+                        const alreadyAdded = (subfolders.fonts || []).some(
+                          (ef: any) =>
+                            String(ef.id) === String(f.id) ||
+                            ef.name.toLowerCase() ===
+                              String(
+                                f.displayName || f.name || f.family || "",
+                              ).toLowerCase(),
+                        );
+                        return (
+                          <div
+                            key={`lib-res-${f.id || f.path || f.name}`}
+                            className="px-3 py-2 flex items-center justify-between gap-2 hover:bg-[var(--color-control)]/50 transition"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div
+                                dir="auto"
+                                className="text-xs font-bold text-[var(--color-text-header)] truncate"
+                              >
+                                {f.displayName || f.family || f.name}
+                              </div>
+                              <div
+                                dir="ltr"
+                                className="text-[10px] font-mono text-[var(--color-text-dim)] truncate"
+                              >
+                                {f.style || "Regular"} •{" "}
+                                {f.source || "library"}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={alreadyAdded}
+                              onClick={() => {
+                                handleAddFontToWorkspace(String(f.id), f);
+                                setLibraryFontSearch("");
+                              }}
+                              className={`h-7 px-2.5 rounded-lg text-[11px] font-bold flex items-center gap-1 transition shrink-0 whitespace-nowrap ${
+                                alreadyAdded
+                                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 cursor-default"
+                                  : "bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white cursor-pointer"
+                              }`}
+                            >
+                              {alreadyAdded ? (
+                                <>
+                                  <Check className="w-3 h-3" />
+                                  <span>{isRtl ? "مضاف" : "Added"}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Plus className="w-3 h-3" />
+                                  <span>{isRtl ? "إضافة" : "Add"}</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Quick Filter for Linked Project Fonts */}
+                {(subfolders.fonts || []).length > 3 && (
+                  <div className="relative">
+                    <Search className="w-3 h-3 text-[var(--color-text-dim)] pointer-events-none absolute top-1/2 -translate-y-1/2 start-2.5" />
+                    <input
+                      type="text"
+                      dir="auto"
+                      value={projectFontQuery}
+                      onChange={(e) => setProjectFontQuery(e.target.value)}
+                      placeholder={
+                        isRtl
+                          ? "تصفية خطوط المشروع المرتبطة..."
+                          : "Filter linked project fonts..."
+                      }
+                      className="w-full h-7 bg-[var(--color-back-main)]/70 border border-[var(--color-border-subtle)] focus:border-[var(--color-action)] rounded-lg ps-7 pe-3 text-[11px] text-[var(--color-text-header)] placeholder-[var(--color-text-dim)] outline-none"
+                    />
                   </div>
                 )}
 
-                <div className="space-y-2 max-h-60 overflow-y-auto pe-1">
-                  {(subfolders.fonts || []).length === 0 ? (
-                    <div className="text-center py-6 px-4 text-xs text-[var(--color-text-dim)] border border-dashed border-[var(--color-border)] rounded-xl space-y-1">
-                      <p className="font-semibold text-[var(--color-text-muted)]">
-                        {isRtl
-                          ? "لم يتم ربط خطوط بالمشروع بعد"
-                          : "No project fonts linked yet"}
-                      </p>
-                      <p className="text-[11px]">
-                        {isRtl
-                          ? "اختر خطاً من القائمة أعلاه لإضافته ونسخه إلى مجلد Fonts/."
-                          : "Select a font above to add and sync it into Fonts/."}
-                      </p>
-                    </div>
-                  ) : (
-                    (subfolders.fonts || []).map((f: any, idx: number) => (
+                {/* Linked & Discovered Project Fonts List */}
+                <div className="space-y-2 max-h-72 overflow-y-auto pe-1">
+                  {(() => {
+                    const q = projectFontQuery.trim().toLowerCase();
+                    const visibleFonts = (subfolders.fonts || []).filter(
+                      (f: any) =>
+                        !q ||
+                        `${f.name || ""} ${f.family || ""} ${f.roleLabel || ""} ${f.path || ""}`
+                          .toLowerCase()
+                          .includes(q),
+                    );
+
+                    if (visibleFonts.length === 0) {
+                      return (
+                        <div className="text-center py-6 px-4 text-xs text-[var(--color-text-dim)] border border-dashed border-[var(--color-border)] rounded-xl space-y-1">
+                          <p className="font-semibold text-[var(--color-text-muted)]">
+                            {q
+                              ? isRtl
+                                ? "لا توجد خطوط مطابقة للتصفية"
+                                : "No linked fonts match your filter"
+                              : isRtl
+                                ? "لم يتم ربط خطوط بالمشروع بعد"
+                                : "No project fonts linked yet"}
+                          </p>
+                          <p className="text-[11px]">
+                            {isRtl
+                              ? "استخدم شريط البحث أعلاه للبحث في كامل المكتبة وإضافة خطوط المشروع."
+                              : "Use the full-library search bar above to find and link workspace fonts."}
+                          </p>
+                        </div>
+                      );
+                    }
+
+                    return visibleFonts.map((f: any, idx: number) => (
                       <div
                         key={`${f.id || f.name}-${idx}`}
                         className="p-3 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] flex items-center justify-between gap-2.5 min-w-0"
                       >
-                        <div className="min-w-0 flex-1">
-                          <div
-                            dir="auto"
-                            className="text-xs font-bold text-[var(--color-text-header)] truncate"
-                          >
-                            {f.name}
+                        <div className="min-w-0 flex-1 space-y-0.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              dir="auto"
+                              className="text-xs font-bold text-[var(--color-text-header)] truncate"
+                            >
+                              {f.name}
+                            </span>
+                            {f.roleLabel && (
+                              <span className="px-2 py-0.5 rounded-md bg-[var(--color-action)]/12 border border-[var(--color-action)]/25 text-[10px] font-sans font-semibold text-[var(--color-action)] whitespace-nowrap shrink-0">
+                                {f.roleLabel}
+                              </span>
+                            )}
                           </div>
                           <div
                             dir="ltr"
@@ -3608,24 +3916,55 @@ export default function WorkspacesView({
                             {f.path} • {f.format || "TTF"}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap ${
-                              isRtl ? "font-sans" : "font-mono font-bold"
-                            } ${
-                              f.isActive
-                                ? "bg-[var(--color-action)]/15 text-[var(--color-action)]"
-                                : "bg-[var(--color-control)] text-[var(--color-text-muted)]"
-                            }`}
-                          >
-                            {f.isActive
-                              ? isRtl
-                                ? "نشط بالرام"
-                                : "Active"
-                              : isRtl
-                                ? "جاهز"
-                                : "Ready"}
-                          </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {typeof onActivateFont === "function" &&
+                          typeof f.id === "number" ? (
+                            <button
+                              type="button"
+                              onClick={() => onActivateFont(f.id)}
+                              className={`h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition whitespace-nowrap ${
+                                isRtl ? "font-sans" : "font-mono font-bold"
+                              } ${
+                                f.isActive
+                                  ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25"
+                                  : "bg-[var(--color-control)] hover:bg-[var(--color-action)] hover:text-white text-[var(--color-text-muted)]"
+                              }`}
+                              title={
+                                isRtl
+                                  ? "تفعيل/إلغاء تفعيل الخط بالرام"
+                                  : "Toggle RAM activation"
+                              }
+                            >
+                              <Zap className="w-3 h-3 shrink-0" />
+                              <span>
+                                {f.isActive
+                                  ? isRtl
+                                    ? "نشط بالرام"
+                                    : "Active"
+                                  : isRtl
+                                    ? "تفعيل"
+                                    : "Activate"}
+                              </span>
+                            </button>
+                          ) : (
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap ${
+                                isRtl ? "font-sans" : "font-mono font-bold"
+                              } ${
+                                f.isActive
+                                  ? "bg-[var(--color-action)]/15 text-[var(--color-action)]"
+                                  : "bg-[var(--color-control)] text-[var(--color-text-muted)]"
+                              }`}
+                            >
+                              {f.isActive
+                                ? isRtl
+                                  ? "نشط بالرام"
+                                  : "Active"
+                                : isRtl
+                                  ? "جاهز"
+                                  : "Ready"}
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleRemoveFontFromWorkspace(idx)}
@@ -3643,815 +3982,903 @@ export default function WorkspacesView({
                           </button>
                         </div>
                       </div>
-                    ))
-                  )}
+                    ));
+                  })()}
                 </div>
               </div>
-            </div>
+            </section>
           )}
 
-          {/* Grid: Typography Pairing & Palette Editor, Guidelines & Task Checklist */}
-          <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
-            {/* Section 1: Typography Pairing + Built-In Workspace Color Palette Editor */}
-            <div className="space-y-4 min-w-0">
-              <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
-                  <Type className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                  <span>{isRtl ? "تناغم الخطوط" : "Typography Pairing"}</span>
-                </h3>
-                <div
-                  dir="ltr"
-                  className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-[var(--color-text-dim)] min-w-0"
-                >
-                  <span className="truncate max-w-[180px]">
-                    H:{" "}
-                    {getFontDisplayName(activeWorkspace.typography?.headingFont)}
-                  </span>
-                  <span>•</span>
-                  <span className="truncate max-w-[180px]">
-                    B: {getFontDisplayName(activeWorkspace.typography?.bodyFont)}
-                  </span>
-                </div>
-              </div>
+          {/* Section 3: Dedicated FULL-WIDTH Design Assets & Brand Folders Studio (Designs/) */}
+          {(activeSubfolderTab === "all" ||
+            activeSubfolderTab === "Designs") && (
+            <section
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                handleUploadDesigns(e.dataTransfer.files);
+              }}
+              className="w-full p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs min-w-0"
+            >
+              <input
+                ref={designInputRef}
+                type="file"
+                multiple
+                accept=".psd,.ai,.indd,.pdf,.svg,.png,.jpg,.jpeg,.webp,.fig,.xd"
+                onChange={(e) => {
+                  if (e.target.files?.length) {
+                    handleUploadDesigns(e.target.files);
+                    e.target.value = "";
+                  }
+                }}
+                className="hidden"
+              />
 
-              {/* Live Interactive Specimen Card */}
-              <div className="p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs">
-                <div>
-                  <div
-                    dir="ltr"
-                    className="text-[10px] font-mono text-[var(--color-text-dim)] uppercase tracking-wider mb-1"
-                  >
-                    Heading Font —{" "}
-                    {getFontDisplayName(activeWorkspace.typography?.headingFont)}
-                  </div>
-                  <h2
-                    dir="auto"
-                    className="text-2xl font-bold text-[var(--color-text-header)] leading-tight tracking-tight"
-                  >
-                    {typeof activeWorkspace.typography?.previewHeading ===
-                    "string"
-                      ? activeWorkspace.typography.previewHeading
-                      : "Typographic Architecture & Hierarchy"}
-                  </h2>
-                </div>
-
-                <div className="pt-2 border-t border-[var(--color-border-subtle)]">
-                  <div
-                    dir="ltr"
-                    className="text-[10px] font-mono text-[var(--color-text-dim)] uppercase tracking-wider mb-1"
-                  >
-                    Body Font —{" "}
-                    {getFontDisplayName(activeWorkspace.typography?.bodyFont)}
-                  </div>
-                  <p
-                    dir="auto"
-                    className="text-xs text-[var(--color-text-main)] leading-relaxed opacity-90"
-                  >
-                    {typeof activeWorkspace.typography?.previewBody === "string"
-                      ? activeWorkspace.typography.previewBody
-                      : "High-performance legibility engineered for modern software surfaces, editorial spreads, and mathematical tabular systems."}
-                  </p>
-                </div>
-
-                {Boolean(
-                  getFontDisplayName(activeWorkspace.typography?.accentFont),
-                ) && (
-                  <div className="pt-2 border-t border-[var(--color-border-subtle)] flex items-center justify-between gap-2 text-[11px]">
-                    <span className="text-[var(--color-text-dim)] font-sans font-semibold">
-                      {isRtl ? "الخط المساعد / الأرقام:" : "Accent / Code:"}
-                    </span>
-                    <span
-                      dir="auto"
-                      className="text-[var(--color-action)] font-sans font-semibold"
-                    >
-                      {getFontDisplayName(
-                        activeWorkspace.typography?.accentFont,
-                      )}
-                    </span>
-                  </div>
-                )}
-
-                {Array.isArray(activeWorkspace.customFonts) &&
-                  activeWorkspace.customFonts.length > 0 && (
-                    <div className="pt-2.5 border-t border-[var(--color-border-subtle)] space-y-2">
-                      <div className="text-[10px] font-sans font-bold uppercase tracking-wider text-[var(--color-text-dim)]">
-                        {isRtl
-                          ? "أدوار الخطوط المخصصة"
-                          : "Custom Font Roles"}
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {activeWorkspace.customFonts.map((cf, idx) => (
-                          <div
-                            key={`${cf.id || cf.label}-${idx}`}
-                            className="p-2.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] flex items-center justify-between gap-2 min-w-0"
-                          >
-                            <span
-                              dir="auto"
-                              className="text-[11px] font-sans font-semibold text-[var(--color-text-muted)] truncate"
-                            >
-                              {cf.label}
-                            </span>
-                            <span
-                              dir="auto"
-                              className="text-[11px] font-bold text-[var(--color-action)] truncate"
-                            >
-                              {getFontDisplayName(cf)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-              </div>
-
-              {/* Built-in Workspace Color Palette Editor & Palettes/palette.ase */}
-              <div className="p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
-                    <Palette className="w-4 h-4 text-[var(--color-action)] shrink-0" />
+              <div className="flex items-start sm:items-center justify-between gap-2.5 flex-wrap">
+                <div className="min-w-0">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 leading-snug">
+                    <FileCheck className="w-4 h-4 text-[var(--color-action)] shrink-0" />
                     <span>
                       {isRtl ? (
                         <>
-                          لوحة ألوان المشروع (
-                          <bdi dir="ltr">Palettes/palette.ase</bdi>)
+                          ملفات التصميم والمجلدات الفرعية (
+                          <bdi dir="ltr">Designs/</bdi>)
                         </>
                       ) : (
-                        "Workspace Color Palette (Palettes/palette.ase)"
+                        "Discovered Design Files & Brand Folders (Designs/)"
                       )}
                     </span>
                   </h3>
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs shrink-0">
+                  <p className="text-[11px] font-sans text-[var(--color-text-dim)] mt-0.5 leading-snug">
+                    {isRtl
+                      ? "نظم ملفات العميل في قوالب مجلدات جاهزة أو أنشئ مجلدات متداخلة مع بحث ومعاينة وتثبيت الملفات"
+                      : "Organize client deliverables in 1-click brand folder templates, search assets, pin key files, and open directly"}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => designInputRef.current?.click()}
+                    disabled={uploadingDesign}
+                    className="h-8 px-3 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  >
+                    <Upload className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      {uploadingDesign
+                        ? isRtl
+                          ? "جاري الرفع..."
+                          : "Uploading..."
+                        : isRtl
+                          ? "رفع تصميم"
+                          : "Upload Design"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleOpenInExplorer(currentFolderPath || "Designs")
+                    }
+                    className="text-[11px] text-[var(--color-action)] hover:underline font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    {isRtl ? (
+                      <>
+                        فتح{" "}
+                        <bdi dir="ltr">{currentFolderPath || "Designs"}/</bdi>
+                      </>
+                    ) : (
+                      `Open ${currentFolderPath || "Designs"}/`
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Folders Navigator: Breadcrumbs + Search + Pinned + Add Subfolder + Templates */}
+              <div className="p-3.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex flex-wrap items-center gap-1 text-[11px] font-sans font-semibold">
                     <button
-                      onClick={handleSavePaletteToAse}
-                      disabled={savingPalette}
-                      className="h-7 px-2.5 rounded-lg text-[11px] font-bold bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white transition cursor-pointer flex items-center gap-1 whitespace-nowrap shrink-0"
+                      type="button"
+                      onClick={() => setCurrentFolderPath("")}
+                      className={`px-2 py-1 rounded-md cursor-pointer transition ${
+                        currentFolderPath === ""
+                          ? "bg-[var(--color-action)]/15 text-[var(--color-action)] font-bold"
+                          : "hover:bg-[var(--color-control)] text-[var(--color-text-muted)]"
+                      }`}
                     >
-                      <Download className="w-3 h-3 shrink-0" />
-                      <span>
-                        {isRtl ? (
-                          <>
-                            حفظ <bdi dir="ltr">palette.ase</bdi>
-                          </>
-                        ) : (
-                          "Save Palettes/palette.ase"
-                        )}
-                      </span>
+                      {isRtl ? "كل المجلدات" : "All Folders"}
                     </button>
+                    {currentFolderPath
+                      .split("/")
+                      .filter(Boolean)
+                      .map((seg, idx, arr) => {
+                        const targetRel = arr.slice(0, idx + 1).join("/");
+                        return (
+                          <React.Fragment key={targetRel}>
+                            {isRtl ? (
+                              <ChevronLeft className="w-3 h-3 text-[var(--color-text-dim)]" />
+                            ) : (
+                              <ChevronRight className="w-3 h-3 text-[var(--color-text-dim)]" />
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setCurrentFolderPath(targetRel)}
+                              className={`px-2 py-1 rounded-md cursor-pointer transition ${
+                                targetRel === currentFolderPath
+                                  ? "bg-[var(--color-action)]/15 text-[var(--color-action)] font-bold"
+                                  : "hover:bg-[var(--color-control)] text-[var(--color-text-muted)]"
+                              }`}
+                            >
+                              {getFriendlyFolderLabel(targetRel) || seg}
+                            </button>
+                          </React.Fragment>
+                        );
+                      })}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+                    <div className="relative flex-1 sm:flex-none sm:w-48 min-w-[140px]">
+                      <Search className="w-3 h-3 text-[var(--color-text-dim)] pointer-events-none absolute top-1/2 -translate-y-1/2 start-2.5" />
+                      <input
+                        type="text"
+                        dir="auto"
+                        value={designSearchQuery}
+                        onChange={(e) => setDesignSearchQuery(e.target.value)}
+                        placeholder={
+                          isRtl
+                            ? "بحث في ملفات التصميم..."
+                            : "Search design files..."
+                        }
+                        className="h-7 w-full bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-lg ps-7 pe-2.5 text-[11px] text-[var(--color-text-header)] outline-none"
+                      />
+                    </div>
                     <button
-                      onClick={() => handleCopyCode("css")}
-                      className="h-7 px-2.5 rounded-lg text-[11px] font-mono bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] border border-[var(--color-border)] transition cursor-pointer whitespace-nowrap shrink-0"
+                      type="button"
+                      onClick={() => setShowPinnedOnly((p) => !p)}
+                      className={`h-7 px-2.5 rounded-lg border text-[11px] font-sans font-semibold flex items-center gap-1 cursor-pointer transition whitespace-nowrap ${
+                        showPinnedOnly
+                          ? "bg-[var(--color-action)]/15 border-[var(--color-action)] text-[var(--color-action)]"
+                          : "bg-[var(--color-back-card)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)]"
+                      }`}
                     >
-                      {copiedCodeType === "css" ? "Copied CSS!" : "CSS"}
+                      <Pin className="w-3 h-3 shrink-0" />
+                      <span>{isRtl ? "المثبتة" : "Pinned"}</span>
+                      {pinnedAssetSet.size > 0 && (
+                        <span dir="ltr" className="font-mono text-[10px]">
+                          ({pinnedAssetSet.size})
+                        </span>
+                      )}
                     </button>
+                    <input
+                      type="text"
+                      dir="auto"
+                      value={newSubfolderName}
+                      onChange={(e) => setNewSubfolderName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleCreateNestedFolder();
+                        }
+                      }}
+                      placeholder={
+                        isRtl
+                          ? "اسم مجلد فرعي جديد..."
+                          : "New subfolder name..."
+                      }
+                      className="h-7 flex-1 sm:flex-none sm:w-40 min-w-0 bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-lg px-2.5 text-[11px] text-[var(--color-text-header)] outline-none"
+                    />
                     <button
-                      onClick={() => handleCopyCode("tailwind")}
-                      className="h-7 px-2.5 rounded-lg text-[11px] font-mono bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] border border-[var(--color-border)] transition cursor-pointer whitespace-nowrap shrink-0"
+                      type="button"
+                      onClick={handleCreateNestedFolder}
+                      disabled={creatingSubfolder || !newSubfolderName.trim()}
+                      className="h-7 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-bold flex items-center gap-1 text-[var(--color-text-header)] cursor-pointer disabled:opacity-40 whitespace-nowrap shrink-0"
                     >
-                      {copiedCodeType === "tailwind" ? "Copied TW!" : "Tailwind"}
+                      <FolderPlus className="w-3 h-3 text-[var(--color-action)] shrink-0" />
+                      <span>{isRtl ? "مجلد داخلي" : "Add Subfolder"}</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Redesigned Color Swatch Cards — Zero Clipping / Zero Overlap */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
-                  {(activeWorkspace.palette || []).map((color, idx) => {
-                    const ratio = getContrastRatio(color.hex, "#140D18");
-                    const wcag = getWcagRating(ratio);
-                    const isCopied = copiedHex === color.hex;
-                    const isEditing = editingSwatchIdx === idx;
+                {/* 1-Click Ready-Made Brand Folder Templates */}
+                <div className="pt-2 border-t border-[var(--color-border-subtle)] space-y-1.5">
+                  <div className="text-[10px] font-sans font-semibold text-[var(--color-text-dim)]">
+                    {isRtl
+                      ? "قوالب مجلدات الهوية الجاهزة (ضغطة واحدة للإنشاء والفتح):"
+                      : "1-Click Brand Folder Templates:"}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {BRAND_FOLDER_TEMPLATES.map((tpl) => {
+                      const isCreated = workspaceFoldersList.some(
+                        (f) => f.toLowerCase() === tpl.folderPath.toLowerCase(),
+                      );
+                      const isActive =
+                        currentFolderPath.toLowerCase() ===
+                        tpl.folderPath.toLowerCase();
+                      return (
+                        <button
+                          key={tpl.id}
+                          type="button"
+                          onClick={() => handleTemplateFolderClick(tpl)}
+                          disabled={creatingSubfolder}
+                          className={`h-7 px-2.5 rounded-lg border text-[11px] font-sans font-semibold inline-flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap ${
+                            isActive
+                              ? "bg-[var(--color-action)]/18 border-[var(--color-action)] text-[var(--color-action)]"
+                              : isCreated
+                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:border-emerald-400"
+                                : "bg-[var(--color-control)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:border-[var(--color-action)]/50"
+                          }`}
+                          title={
+                            isCreated
+                              ? isRtl
+                                ? `فتح مجلد ${tpl.folderPath}`
+                                : `Open ${tpl.folderPath}`
+                              : isRtl
+                                ? `إنشاء مجلد ${tpl.folderPath} بضغطة واحدة`
+                                : `Create ${tpl.folderPath} in 1 click`
+                          }
+                        >
+                          {isCreated ? (
+                            <Check className="w-3 h-3 shrink-0" />
+                          ) : (
+                            <FolderPlus className="w-3 h-3 shrink-0 text-[var(--color-action)]" />
+                          )}
+                          <span dir="ltr">{tpl.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
-                    return (
-                      <div
-                        key={`${color.hex}-${idx}`}
-                        onClick={() => handleCopyHex(color.hex)}
-                        className={`p-3.5 rounded-xl bg-[var(--color-back-main)] border transition cursor-pointer flex flex-col justify-between gap-2.5 shadow-2xs relative min-w-0 ${
-                          isEditing
-                            ? "border-[var(--color-action)] ring-1 ring-[var(--color-action)]/40"
-                            : "border-[var(--color-border)] hover:border-[var(--color-action)]"
-                        }`}
-                      >
-                        {/* Top Bar: Color Preview Pill + Role Badge + Edit/Delete */}
-                        <div className="flex items-center justify-between gap-2 min-w-0">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div
-                              className="w-10 h-7 rounded-lg shrink-0 border border-black/15 ring-1 ring-inset ring-white/10 shadow-inner flex items-center justify-center"
-                              style={{ backgroundColor: color.hex }}
-                            >
-                              {isCopied && (
-                                <Check className="w-3.5 h-3.5 text-white drop-shadow-md" />
-                              )}
-                            </div>
-                            <span
-                              dir="auto"
-                              title={localizeSwatchRole(color.role, isRtl)}
-                              className="px-2 py-0.5 rounded-md text-[10px] font-sans font-semibold bg-[var(--color-control)] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] truncate max-w-[115px]"
-                            >
-                              {localizeSwatchRole(color.role, isRtl)}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
+                {/* Child Subfolders with Delete Subfolder Button */}
+                {childFoldersInCurrentPath.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1.5 border-t border-[var(--color-border-subtle)]">
+                    {childFoldersInCurrentPath.map((relFolder) => {
+                      const label = getFriendlyFolderLabel(relFolder);
+                      const canDelete =
+                        !isProtectedRootFolder(relFolder) &&
+                        relFolder.split("/").filter(Boolean).length >= 2;
+                      return (
+                        <div
+                          key={relFolder}
+                          className="h-7 rounded-lg bg-[var(--color-control)] border border-[var(--color-border)] hover:border-[var(--color-action)]/50 flex items-center overflow-hidden transition"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setCurrentFolderPath(relFolder)}
+                            className="h-full px-2.5 text-[11px] font-sans font-semibold text-[var(--color-text-header)] flex items-center gap-1.5 cursor-pointer hover:bg-[var(--color-action)]/15 transition"
+                          >
+                            <FolderOpen className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span dir="auto">{label}</span>
+                          </button>
+                          {canDelete && (
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                startEditSwatch(idx, color);
+                                handleDeleteSubfolder(relFolder);
                               }}
-                              aria-label={isRtl ? "تعديل اللون" : "Edit Swatch"}
-                              title={isRtl ? "تعديل اللون" : "Edit Swatch"}
-                              className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-action)]/20 text-[var(--color-text-muted)] hover:text-[var(--color-action)] flex items-center justify-center transition cursor-pointer"
+                              aria-label={
+                                isRtl
+                                  ? `حذف المجلد ${label}`
+                                  : `Delete folder ${label}`
+                              }
+                              title={
+                                isRtl
+                                  ? `حذف المجلد "${label}"`
+                                  : `Delete subfolder "${label}"`
+                              }
+                              className="h-full px-1.5 border-s border-[var(--color-border)] text-[var(--color-text-dim)] hover:text-rose-400 hover:bg-rose-500/15 flex items-center justify-center cursor-pointer transition"
                             >
-                              <Pencil className="w-3 h-3" />
+                              <Trash2 className="w-3 h-3" />
                             </button>
-                            {(activeWorkspace.palette || []).length > 1 && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRemoveSwatchFromWorkspace(idx);
-                                }}
-                                aria-label={
-                                  isRtl ? "حذف اللون" : "Remove Swatch"
-                                }
-                                title={isRtl ? "حذف اللون" : "Remove Swatch"}
-                                className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-rose-500/20 text-[var(--color-text-muted)] hover:text-rose-400 flex items-center justify-center transition cursor-pointer"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            )}
-                          </div>
+                          )}
                         </div>
-
-                        {/* Middle Body: Full Visible Color Name + #HEX + Copy Hint */}
-                        <div className="min-w-0 space-y-1">
-                          <div
-                            dir="auto"
-                            title={color.name}
-                            className="text-xs font-bold text-[var(--color-text-header)] truncate"
-                          >
-                            {color.name}
-                          </div>
-                          <div className="flex items-center justify-between gap-2 text-[11px] text-[var(--color-text-muted)]">
-                            <span
-                              dir="ltr"
-                              className="font-mono flex items-center gap-1.5"
-                            >
-                              <span>{color.hex}</span>
-                              <Copy className="w-2.5 h-2.5 opacity-60" />
-                            </span>
-                            <span className="text-[10px] font-sans text-[var(--color-text-dim)]">
-                              {isCopied
-                                ? isRtl
-                                  ? "تم النسخ"
-                                  : "Copied"
-                                : isRtl
-                                  ? "نسخ"
-                                  : "Copy"}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Footer Strip: WCAG Contrast Badge */}
-                        <div className="flex items-center justify-between gap-2 text-[10px] pt-2 border-t border-[var(--color-border-subtle)]">
-                          <span className="font-sans text-[var(--color-text-dim)] truncate">
-                            {isRtl ? "تباين القراءة" : "WCAG Contrast"}
-                          </span>
-                          <span
-                            dir="ltr"
-                            className={`font-mono tabular-nums px-2 py-0.5 rounded font-bold border whitespace-nowrap shrink-0 ${
-                              wcag.isNormalPass
-                                ? "text-[#B7A1D9] bg-[#B7A1D9]/12 border-[#B7A1D9]/30"
-                                : "text-[var(--color-action)] bg-[var(--color-action)]/10 border-[var(--color-action)]/25"
-                            }`}
-                          >
-                            {wcag.normalText} {ratio}:1
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {editingSwatchIdx !== null && (
-                  <div className="p-3.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-action)]/50 space-y-2.5 animate-in fade-in">
-                    <div className="text-[11px] font-bold text-[var(--color-text-header)] flex items-center justify-between">
-                      <span>
-                        {isRtl
-                          ? "تعديل بيانات اللون المحدد"
-                          : "Edit Selected Color Swatch"}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setEditingSwatchIdx(null)}
-                        className="text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] cursor-pointer text-[11px]"
-                      >
-                        {isRtl ? "إغلاق" : "Cancel"}
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input
-                        type="color"
-                        value={normalizeHexColor(editSwatchHex)}
-                        onChange={(e) =>
-                          setEditSwatchHex(e.target.value.toUpperCase())
-                        }
-                        className="w-8 h-8 rounded-lg cursor-pointer border border-[var(--color-border)] shrink-0"
-                      />
-                      <input
-                        type="text"
-                        dir="ltr"
-                        value={editSwatchHex}
-                        onChange={(e) => setEditSwatchHex(e.target.value)}
-                        placeholder="#F16B50"
-                        className="w-24 h-8 bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg px-2 text-xs font-mono text-[var(--color-text-header)] outline-none"
-                      />
-                      <input
-                        type="text"
-                        dir="auto"
-                        value={editSwatchName}
-                        onChange={(e) => setEditSwatchName(e.target.value)}
-                        placeholder={isRtl ? "اسم اللون..." : "Swatch name..."}
-                        className="flex-1 min-w-[120px] h-8 bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
-                      />
-                      <div className="relative">
-                        <select
-                          value={editSwatchRole}
-                          style={SELECT_APPEARANCE_STYLE}
-                          onChange={(e) => setEditSwatchRole(e.target.value)}
-                          className="h-8 appearance-none !appearance-none bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg ps-2.5 pe-7 text-xs font-sans text-[var(--color-text-header)] outline-none cursor-pointer"
-                        >
-                          {SWATCH_ROLE_OPTIONS.map((opt) => (
-                            <option key={opt.id} value={opt.id}>
-                              {isRtl ? opt.ar : opt.en}
-                            </option>
-                          ))}
-                          <option value="custom">
-                            {isRtl ? "ليبل مخصص" : "Custom Label"}
-                          </option>
-                        </select>
-                        <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2" />
-                      </div>
-                      {editSwatchRole === "custom" && (
-                        <input
-                          type="text"
-                          dir="auto"
-                          value={editSwatchCustomRole}
-                          onChange={(e) =>
-                            setEditSwatchCustomRole(e.target.value)
-                          }
-                          placeholder={isRtl ? "اسم الدور..." : "Custom role..."}
-                          className="w-28 h-8 bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
-                        />
-                      )}
-                      <button
-                        type="button"
-                        onClick={handleSaveEditedSwatch}
-                        className="h-8 px-3 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-xs font-bold cursor-pointer shrink-0"
-                      >
-                        {isRtl ? "حفظ التعديل" : "Save"}
-                      </button>
-                    </div>
+                      );
+                    })}
                   </div>
                 )}
+              </div>
 
-                {/* Add Swatch (Color Picker + Name + Role Select + Add Color) + Harmonies */}
-                <div className="pt-2 border-t border-[var(--color-border-subtle)] space-y-2.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      type="color"
-                      value={newSwatchHex}
-                      onChange={(e) =>
-                        setNewSwatchHex(e.target.value.toUpperCase())
+              {/* Design Files Grid (2-column spacious cards on full width) */}
+              <div className="max-h-96 overflow-y-auto pe-1">
+                {(() => {
+                  const dq = designSearchQuery.trim().toLowerCase();
+                  const visibleDesigns = (subfolders.designs || [])
+                    .filter((d) => {
+                      if (showPinnedOnly && !isDesignPinned(d)) {
+                        return false;
                       }
-                      className="w-8 h-8 rounded-lg cursor-pointer border border-[var(--color-border)] shrink-0"
-                    />
-                    <input
-                      type="text"
-                      dir="auto"
-                      value={newSwatchName}
-                      onChange={(e) => setNewSwatchName(e.target.value)}
-                      placeholder={
-                        isRtl ? "اسم اللون الجديد..." : "New swatch name..."
+                      if (dq) {
+                        const hay = `${d.name || ""} ${d.relativePath || ""} ${d.format || ""} ${(d.usedFonts || []).join(" ")}`.toLowerCase();
+                        if (!hay.includes(dq)) return false;
                       }
-                      className="flex-1 min-w-[140px] h-8 bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
-                    />
-                    <div className="relative">
-                      <select
-                        value={newSwatchRole}
-                        style={SELECT_APPEARANCE_STYLE}
-                        onChange={(e) => setNewSwatchRole(e.target.value)}
-                        aria-label={isRtl ? "دور اللون" : "Color Role"}
-                        className="h-8 appearance-none !appearance-none bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-lg ps-2.5 pe-7 text-xs font-sans text-[var(--color-text-header)] outline-none cursor-pointer"
-                      >
-                        {SWATCH_ROLE_OPTIONS.map((opt) => (
-                          <option key={opt.id} value={opt.id}>
-                            {isRtl ? opt.ar : opt.en}
-                          </option>
-                        ))}
-                        <option value="custom">
-                          {isRtl ? "ليبل مخصص" : "Custom"}
-                        </option>
-                      </select>
-                      <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2" />
-                    </div>
-                    {newSwatchRole === "custom" && (
-                      <input
-                        type="text"
-                        dir="auto"
-                        value={newSwatchCustomRole}
-                        onChange={(e) => setNewSwatchCustomRole(e.target.value)}
-                        placeholder={isRtl ? "ليبل..." : "Role label..."}
-                        className="w-28 h-8 bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
-                      />
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => handleAddSwatchToWorkspace(newSwatchHex)}
-                      className="h-8 px-3 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-xs font-bold cursor-pointer whitespace-nowrap shrink-0"
-                    >
-                      + {isRtl ? "إضافة لون" : "Add Color"}
-                    </button>
-                  </div>
+                      if (!currentFolderPath) return true;
+                      const sub = String(
+                        d.subfolder || d.relativePath || d.path || "",
+                      )
+                        .replace(/\\/g, "/")
+                        .toLowerCase();
+                      const target = currentFolderPath.toLowerCase();
+                      return (
+                        sub === target ||
+                        sub.startsWith(`${target}/`) ||
+                        sub.includes(`/${target}`)
+                      );
+                    })
+                    .sort((a, b) => {
+                      const ap = isDesignPinned(a) ? 1 : 0;
+                      const bp = isDesignPinned(b) ? 1 : 0;
+                      return bp - ap;
+                    });
 
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[var(--color-text-muted)]">
-                    <span className="flex items-center gap-1 font-semibold">
-                      <Palette className="w-3 h-3 text-[var(--color-action)]" />
-                      <span>
-                        {isRtl
-                          ? "اقتراحات تناغم لوني فورية:"
-                          : "Harmony Suggestions:"}
-                      </span>
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      {[
-                        ...harmonySuggestions.complementary,
-                        ...harmonySuggestions.splitComplementary,
-                        ...harmonySuggestions.triadic,
-                      ]
-                        .slice(1, 6)
-                        .map((sugHex, i) => (
-                          <button
-                            key={`${sugHex}-${i}`}
-                            type="button"
-                            onClick={() =>
-                              handleAddSwatchToWorkspace(
-                                sugHex,
-                                `Harmony ${sugHex}`,
-                                "accent",
-                              )
-                            }
-                            className="w-5 h-5 rounded-md border border-black/15 hover:scale-110 transition cursor-pointer"
-                            style={{ backgroundColor: sugHex }}
-                            title={
-                              isRtl
-                                ? `إضافة ${sugHex} للوحة المشروع`
-                                : `Add ${sugHex} to palette`
-                            }
-                          />
-                        ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Section 3: Project Tasks, Deadlines & Guidelines/ */}
-            <div className="space-y-4 min-w-0">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2 min-w-0">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                    <span>
-                      {isRtl ? (
-                        <>
-                          مهام المشروع ودليل الهوية (
-                          <bdi dir="ltr">Guidelines/</bdi>)
-                        </>
-                      ) : (
-                        "Project Checklist & Guidelines (Guidelines/)"
-                      )}
-                    </span>
-                  </h3>
-                  <span
-                    dir="ltr"
-                    className="text-[10px] font-mono tabular-nums px-2 py-0.5 rounded-full bg-[var(--color-control)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0"
-                  >
-                    {completedTasks}/{currentTasks.length} ({progressPercent}%)
-                  </span>
-                </div>
-
-                {/* Filter Pills: Clean font-sans font-semibold (NEVER font-mono on Arabic) */}
-                <div className="flex flex-wrap items-center gap-1 text-[11px] font-sans font-semibold shrink-0">
-                  {[
-                    { id: "all", ar: "الكل", en: "All" },
-                    { id: "todo", ar: "قيد الانتظار", en: "Todo" },
-                    { id: "in_progress", ar: "جاري العمل", en: "In Progress" },
-                    { id: "done", ar: "مكتمل", en: "Done" },
-                  ].map((f) => (
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => setTaskFilter(f.id)}
-                      className={`px-2.5 py-1 rounded-lg transition cursor-pointer whitespace-nowrap font-sans font-semibold ${
-                        taskFilter === f.id
-                          ? "bg-[var(--color-action)] text-white font-bold"
-                          : "text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:bg-[var(--color-control)]"
-                      }`}
-                    >
-                      {isRtl ? f.ar : f.en}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="w-full h-1.5 bg-[var(--color-control)] rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-[var(--color-action)] transition-all duration-300"
-                  style={{ width: `${progressPercent}%` }}
-                />
-              </div>
-
-              {/* Add Task Form with Priority & Due Date */}
-              <form
-                onSubmit={handleAddTask}
-                className="flex flex-wrap items-center gap-2"
-              >
-                <input
-                  type="text"
-                  dir="auto"
-                  value={newTaskText}
-                  onChange={(e: any) => setNewTaskText(e.target.value)}
-                  placeholder={
-                    isRtl
-                      ? "إضافة مهمة جديدة للمشروع (اضغط Enter)..."
-                      : "Add new project task (press Enter)..."
-                  }
-                  className="flex-1 min-w-[180px] bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] text-xs text-[var(--color-text-header)] placeholder-[var(--color-text-dim)] px-3 py-2 rounded-xl outline-none transition"
-                />
-                <div className="relative">
-                  <select
-                    value={newTaskPriority}
-                    style={SELECT_APPEARANCE_STYLE}
-                    onChange={(e) =>
-                      setNewTaskPriority(e.target.value as WorkspaceTaskPriority)
-                    }
-                    aria-label={isRtl ? "أولوية المهمة" : "Task priority"}
-                    className="h-[34px] appearance-none !appearance-none bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-xl ps-2.5 pe-7 text-[11px] font-sans font-semibold text-[var(--color-text-header)] outline-none cursor-pointer"
-                  >
-                    <option value="high">
-                      {isRtl ? "أولوية عالية" : "High"}
-                    </option>
-                    <option value="medium">
-                      {isRtl ? "متوسطة" : "Medium"}
-                    </option>
-                    <option value="low">
-                      {isRtl ? "منخفضة" : "Low"}
-                    </option>
-                  </select>
-                  <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2" />
-                </div>
-                <input
-                  type="date"
-                  dir="ltr"
-                  value={newTaskDueDate}
-                  onChange={(e) => setNewTaskDueDate(e.target.value)}
-                  aria-label={isRtl ? "تاريخ الاستحقاق" : "Task due date"}
-                  title={isRtl ? "تاريخ استحقاق المهمة" : "Due Date"}
-                  className="h-[34px] bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-xl px-2.5 text-[11px] font-mono text-[var(--color-text-header)] outline-none"
-                />
-                <button
-                  type="submit"
-                  className="h-[34px] px-3.5 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-header)] border border-[var(--color-border)] text-xs font-semibold cursor-pointer shrink-0"
-                >
-                  {isRtl ? "إضافة" : "Add"}
-                </button>
-              </form>
-
-              <div className="space-y-2 max-h-80 overflow-y-auto pe-1">
-                {filteredTasks.length === 0 ? (
-                  <div className="text-center py-8 text-xs text-[var(--color-text-dim)] border border-dashed border-[var(--color-border)] rounded-xl">
-                    {isRtl
-                      ? "لا توجد مهام في هذا التصنيف"
-                      : "No tasks in this filter view."}
-                  </div>
-                ) : (
-                  filteredTasks.map((task) => {
-                    const isDone = task.status === "done";
-                    const isInProgress = task.status === "in_progress";
-                    const dueMeta = getDeadlineMeta(
-                      task.dueDate,
-                      isDone,
-                      isRtl,
+                  if (visibleDesigns.length === 0) {
+                    return (
+                      <div className="text-center py-7 px-4 text-xs text-[var(--color-text-dim)] border border-dashed border-[var(--color-border)] rounded-xl space-y-1.5">
+                        <p className="font-semibold text-[var(--color-text-muted)]">
+                          {dq
+                            ? isRtl
+                              ? `لا توجد ملفات تصميم مطابقة لـ "${designSearchQuery}"`
+                              : `No design files matching "${designSearchQuery}"`
+                            : showPinnedOnly
+                              ? isRtl
+                                ? "لا توجد ملفات مثبتة في هذا المجلد"
+                                : "No pinned assets in this folder"
+                              : isRtl
+                                ? "لا توجد ملفات تصميم في هذا المجلد بعد"
+                                : "No design files in this folder yet"}
+                        </p>
+                        <p className="text-[11px]">
+                          {isRtl
+                            ? "اسحب ملفات PSD / AI / PDF / PNG / SVG هنا أو اضغط على زر رفع تصميم."
+                            : "Drag PSD, AI, PDF, PNG, or SVG files here or click Upload Design."}
+                        </p>
+                      </div>
                     );
-                    const isEditingThisTask = editingTaskId === task.id;
+                  }
 
-                    if (isEditingThisTask) {
+                  return (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                      {visibleDesigns.map((design, idx) => {
+                        const pinned = isDesignPinned(design);
+                        return (
+                          <div
+                            key={`${design.path}-${idx}`}
+                            className={`p-3.5 rounded-xl bg-[var(--color-back-main)] border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 min-w-0 transition ${
+                              pinned
+                                ? "border-[var(--color-action)]/60 bg-[var(--color-action)]/5"
+                                : "border-[var(--color-border-subtle)]"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              {design.previewUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => setLightboxDesign(design)}
+                                  className="relative group w-11 h-11 rounded-lg overflow-hidden border border-[var(--color-border)] shrink-0 cursor-pointer"
+                                  title={
+                                    isRtl ? "معاينة الصورة" : "Preview image"
+                                  }
+                                >
+                                  <img
+                                    src={design.previewUrl}
+                                    alt={design.name}
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <span className="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                                    <Maximize2 className="w-3.5 h-3.5 text-white" />
+                                  </span>
+                                </button>
+                              )}
+                              <div className="min-w-0 flex-1 space-y-1">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span
+                                    dir="ltr"
+                                    className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-action)]/15 text-[var(--color-action)] shrink-0"
+                                  >
+                                    {design.format || (design as any).extension}
+                                  </span>
+                                  <span
+                                    dir="auto"
+                                    title={design.name}
+                                    className="text-xs font-bold text-[var(--color-text-header)] truncate"
+                                  >
+                                    {design.name}
+                                  </span>
+                                  {pinned && (
+                                    <span className="text-[10px] font-sans font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 shrink-0">
+                                      {isRtl ? "مثبت" : "Pinned"}
+                                    </span>
+                                  )}
+                                </div>
+                                <div
+                                  dir="ltr"
+                                  className="text-[10px] font-mono text-[var(--color-text-dim)] truncate"
+                                >
+                                  {design.relativePath || design.path}
+                                  {(design.usedFonts || []).length > 0
+                                    ? ` • ${design.usedFonts.join(", ")}`
+                                    : ""}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                              {design.allActive !== false ? (
+                                <span
+                                  className={`h-7 px-2.5 inline-flex items-center rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold whitespace-nowrap shrink-0 ${
+                                    isRtl ? "font-sans" : ""
+                                  }`}
+                                >
+                                  {isRtl
+                                    ? "كافة الخطوط مفعلة ✓"
+                                    : "Fonts Active ✓"}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={handleActivateRam}
+                                  className="h-7 px-2.5 rounded-lg bg-[var(--color-action)] hover:bg-[var(--color-action-hover)] text-white text-[10px] font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0"
+                                >
+                                  <Zap className="w-3 h-3 fill-current shrink-0" />
+                                  <span>
+                                    {isRtl
+                                      ? "تفعيل الخطوط المفقودة"
+                                      : "Activate Missing Fonts"}
+                                  </span>
+                                </button>
+                              )}
+
+                              {design.previewUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => setLightboxDesign(design)}
+                                  aria-label={
+                                    isRtl
+                                      ? `معاينة ${design.name}`
+                                      : `Preview ${design.name}`
+                                  }
+                                  title={
+                                    isRtl ? "تكبير ومعاينة" : "Image Preview"
+                                  }
+                                  className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-action)]/20 text-[var(--color-text-muted)] hover:text-[var(--color-action)] flex items-center justify-center transition cursor-pointer shrink-0"
+                                >
+                                  <Maximize2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => handleTogglePinDesign(design)}
+                                aria-pressed={pinned}
+                                aria-label={
+                                  isRtl
+                                    ? `تثبيت ${design.name}`
+                                    : `Pin ${design.name}`
+                                }
+                                title={
+                                  pinned
+                                    ? isRtl
+                                      ? "إلغاء تثبيت الملف"
+                                      : "Unpin Asset"
+                                    : isRtl
+                                      ? "تثبيت / حفظ في المفضلة"
+                                      : "Pin / Bookmark Asset"
+                                }
+                                className={`h-7 w-7 rounded-lg flex items-center justify-center transition cursor-pointer shrink-0 ${
+                                  pinned
+                                    ? "bg-amber-500/20 text-amber-400 border border-amber-500/35"
+                                    : "bg-[var(--color-control)] hover:bg-amber-500/15 text-[var(--color-text-dim)] hover:text-amber-400"
+                                }`}
+                              >
+                                <Pin className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenDesignFile(design)}
+                                title={
+                                  isRtl
+                                    ? "فتح الملف في البرنامج الافتراضي"
+                                    : "Open File in Default App"
+                                }
+                                className="h-7 px-2 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[var(--color-text-header)] text-[10px] font-sans font-semibold flex items-center gap-1 transition cursor-pointer whitespace-nowrap shrink-0"
+                              >
+                                <ExternalLink className="w-3 h-3 text-[var(--color-action)] shrink-0" />
+                                <span>
+                                  {isRtl ? "فتح الملف" : "Open File"}
+                                </span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteDesignFile(design)}
+                                aria-label={
+                                  isRtl
+                                    ? `حذف ${design.name}`
+                                    : `Delete ${design.name}`
+                                }
+                                title={
+                                  isRtl
+                                    ? "حذف ملف التصميم"
+                                    : "Delete design file"
+                                }
+                                className="h-7 w-7 rounded-lg bg-[var(--color-control)] hover:bg-rose-500/15 text-[var(--color-text-dim)] hover:text-rose-400 flex items-center justify-center transition cursor-pointer shrink-0"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            </section>
+          )}
+
+          {/* Section 4: Balanced Tasks & Brand Guidelines Studio (Guidelines/) */}
+          {(activeSubfolderTab === "all" ||
+            activeSubfolderTab === "Guidelines") && (
+            <section className="grid grid-cols-1 xl:grid-cols-12 gap-6 min-w-0">
+              {/* Left (7 cols): Project Tasks & Deadlines Card */}
+              <div className="xl:col-span-7 p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-[var(--color-action)] shrink-0" />
+                      <span>
+                        {isRtl ? (
+                          <>
+                            مهام المشروع ومواعيد التسليم (
+                            <bdi dir="ltr">Guidelines/</bdi>)
+                          </>
+                        ) : (
+                          "Project Checklist & Deadlines (Guidelines/)"
+                        )}
+                      </span>
+                    </h3>
+                    <span
+                      dir="ltr"
+                      className="text-[10px] font-mono tabular-nums px-2 py-0.5 rounded-full bg-[var(--color-control)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0"
+                    >
+                      {completedTasks}/{currentTasks.length} ({progressPercent}
+                      %)
+                    </span>
+                  </div>
+
+                  {/* Filter Pills: Clean font-sans font-semibold (NEVER font-mono on Arabic) */}
+                  <div className="flex flex-wrap items-center gap-1 text-[11px] font-sans font-semibold shrink-0">
+                    {[
+                      { id: "all", ar: "الكل", en: "All" },
+                      { id: "todo", ar: "قيد الانتظار", en: "Todo" },
+                      { id: "in_progress", ar: "جاري العمل", en: "In Progress" },
+                      { id: "done", ar: "مكتمل", en: "Done" },
+                    ].map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => setTaskFilter(f.id)}
+                        className={`px-2.5 py-1 rounded-lg transition cursor-pointer whitespace-nowrap font-sans font-semibold ${
+                          taskFilter === f.id
+                            ? "bg-[var(--color-action)] text-white font-bold"
+                            : "text-[var(--color-text-muted)] hover:text-[var(--color-text-header)] hover:bg-[var(--color-control)]"
+                        }`}
+                      >
+                        {isRtl ? f.ar : f.en}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="w-full h-1.5 bg-[var(--color-control)] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[var(--color-action)] transition-all duration-300"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+
+                {/* Add Task Form with Priority & Due Date */}
+                <form
+                  onSubmit={handleAddTask}
+                  className="flex flex-wrap items-center gap-2"
+                >
+                  <input
+                    type="text"
+                    dir="auto"
+                    value={newTaskText}
+                    onChange={(e: any) => setNewTaskText(e.target.value)}
+                    placeholder={
+                      isRtl
+                        ? "إضافة مهمة جديدة للمشروع (اضغط Enter)..."
+                        : "Add new project task (press Enter)..."
+                    }
+                    className="flex-1 min-w-[180px] bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] text-xs text-[var(--color-text-header)] placeholder-[var(--color-text-dim)] px-3 py-2 rounded-xl outline-none transition"
+                  />
+                  <div className="relative">
+                    <select
+                      value={newTaskPriority}
+                      style={SELECT_APPEARANCE_STYLE}
+                      onChange={(e) =>
+                        setNewTaskPriority(
+                          e.target.value as WorkspaceTaskPriority,
+                        )
+                      }
+                      aria-label={isRtl ? "أولوية المهمة" : "Task priority"}
+                      className="h-[34px] appearance-none !appearance-none bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-xl ps-2.5 pe-7 text-[11px] font-sans font-semibold text-[var(--color-text-header)] outline-none cursor-pointer"
+                    >
+                      <option value="high">
+                        {isRtl ? "أولوية عالية" : "High"}
+                      </option>
+                      <option value="medium">
+                        {isRtl ? "متوسطة" : "Medium"}
+                      </option>
+                      <option value="low">
+                        {isRtl ? "منخفضة" : "Low"}
+                      </option>
+                    </select>
+                    <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-2" />
+                  </div>
+                  <input
+                    type="date"
+                    dir="ltr"
+                    value={newTaskDueDate}
+                    onChange={(e) => setNewTaskDueDate(e.target.value)}
+                    aria-label={isRtl ? "تاريخ الاستحقاق" : "Task due date"}
+                    title={isRtl ? "تاريخ استحقاق المهمة" : "Due Date"}
+                    className="h-[34px] bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-xl px-2.5 text-[11px] font-mono text-[var(--color-text-header)] outline-none"
+                  />
+                  <button
+                    type="submit"
+                    className="h-[34px] px-3.5 rounded-xl bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] text-[var(--color-text-header)] border border-[var(--color-border)] text-xs font-semibold cursor-pointer shrink-0"
+                  >
+                    {isRtl ? "إضافة" : "Add"}
+                  </button>
+                </form>
+
+                <div className="space-y-2 max-h-80 overflow-y-auto pe-1">
+                  {filteredTasks.length === 0 ? (
+                    <div className="text-center py-8 text-xs text-[var(--color-text-dim)] border border-dashed border-[var(--color-border)] rounded-xl">
+                      {isRtl
+                        ? "لا توجد مهام في هذا التصنيف"
+                        : "No tasks in this filter view."}
+                    </div>
+                  ) : (
+                    filteredTasks.map((task) => {
+                      const isDone = task.status === "done";
+                      const isInProgress = task.status === "in_progress";
+                      const dueMeta = getDeadlineMeta(
+                        task.dueDate,
+                        isDone,
+                        isRtl,
+                      );
+                      const isEditingThisTask = editingTaskId === task.id;
+
+                      if (isEditingThisTask) {
+                        return (
+                          <div
+                            key={task.id}
+                            className="p-3 rounded-xl border border-[var(--color-action)] bg-[var(--color-back-main)] space-y-2"
+                          >
+                            <input
+                              type="text"
+                              dir="auto"
+                              value={editTaskText}
+                              onChange={(e) => setEditTaskText(e.target.value)}
+                              className="w-full h-8 bg-[var(--color-back-card)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
+                            />
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="relative">
+                                  <select
+                                    value={editTaskPriority}
+                                    style={SELECT_APPEARANCE_STYLE}
+                                    onChange={(e) =>
+                                      setEditTaskPriority(
+                                        e.target.value as WorkspaceTaskPriority,
+                                      )
+                                    }
+                                    className="h-7 appearance-none !appearance-none bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg ps-2 pe-6 text-[11px] font-sans font-semibold text-[var(--color-text-header)] outline-none cursor-pointer"
+                                  >
+                                    <option value="high">
+                                      {isRtl ? "أولوية عالية" : "High"}
+                                    </option>
+                                    <option value="medium">
+                                      {isRtl ? "متوسطة" : "Medium"}
+                                    </option>
+                                    <option value="low">
+                                      {isRtl ? "منخفضة" : "Low"}
+                                    </option>
+                                  </select>
+                                  <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-1.5" />
+                                </div>
+                                <div className="relative">
+                                  <select
+                                    value={editTaskStatus}
+                                    style={SELECT_APPEARANCE_STYLE}
+                                    onChange={(e) =>
+                                      setEditTaskStatus(
+                                        e.target
+                                          .value as WorkspaceTask["status"],
+                                      )
+                                    }
+                                    className="h-7 appearance-none !appearance-none bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg ps-2 pe-6 text-[11px] font-sans font-semibold text-[var(--color-text-header)] outline-none cursor-pointer"
+                                  >
+                                    <option value="todo">
+                                      {isRtl ? "قيد الانتظار" : "Todo"}
+                                    </option>
+                                    <option value="in_progress">
+                                      {isRtl ? "جاري العمل" : "In Progress"}
+                                    </option>
+                                    <option value="done">
+                                      {isRtl ? "مكتمل" : "Done"}
+                                    </option>
+                                  </select>
+                                  <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-1.5" />
+                                </div>
+                                <input
+                                  type="date"
+                                  dir="ltr"
+                                  value={editTaskDueDate}
+                                  onChange={(e) =>
+                                    setEditTaskDueDate(e.target.value)
+                                  }
+                                  className="h-7 bg-[var(--color-back-card)] border border-[var(--color-border)] rounded-lg px-2 text-[11px] font-mono text-[var(--color-text-header)] outline-none"
+                                />
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingTaskId(null)}
+                                  className="h-7 px-2.5 rounded-lg bg-[var(--color-control)] text-[11px] font-sans text-[var(--color-text-muted)] cursor-pointer"
+                                >
+                                  {isRtl ? "إلغاء" : "Cancel"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveInlineTask(task.id)}
+                                  className="h-7 px-2.5 rounded-lg bg-[var(--color-action)] text-white text-[11px] font-sans font-bold cursor-pointer flex items-center gap-1"
+                                >
+                                  <Check className="w-3 h-3" />
+                                  <span>{isRtl ? "حفظ" : "Save"}</span>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
                       return (
                         <div
                           key={task.id}
-                          className="p-3 rounded-xl border border-[var(--color-action)] bg-[var(--color-back-card)] space-y-2"
+                          className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition ${
+                            isDone
+                              ? "bg-[var(--color-back-main)]/50 border-[var(--color-border-subtle)] text-[var(--color-text-dim)]"
+                              : isInProgress
+                                ? "bg-[var(--color-back-main)] border-[var(--color-action)]/50 text-[var(--color-text-header)]"
+                                : "bg-[var(--color-back-main)] border-[var(--color-border-subtle)] text-[var(--color-text-main)]"
+                          }`}
                         >
-                          <input
-                            type="text"
-                            dir="auto"
-                            value={editTaskText}
-                            onChange={(e) => setEditTaskText(e.target.value)}
-                            className="w-full h-8 bg-[var(--color-back-main)] border border-[var(--color-border)] focus:border-[var(--color-action)] rounded-lg px-2.5 text-xs text-[var(--color-text-header)] outline-none"
-                          />
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <div className="relative">
-                                <select
-                                  value={editTaskPriority}
-                                  style={SELECT_APPEARANCE_STYLE}
-                                  onChange={(e) =>
-                                    setEditTaskPriority(
-                                      e.target.value as WorkspaceTaskPriority,
-                                    )
-                                  }
-                                  className="h-7 appearance-none !appearance-none bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-lg ps-2 pe-6 text-[11px] font-sans font-semibold text-[var(--color-text-header)] outline-none cursor-pointer"
-                                >
-                                  <option value="high">
-                                    {isRtl ? "أولوية عالية" : "High"}
-                                  </option>
-                                  <option value="medium">
-                                    {isRtl ? "متوسطة" : "Medium"}
-                                  </option>
-                                  <option value="low">
-                                    {isRtl ? "منخفضة" : "Low"}
-                                  </option>
-                                </select>
-                                <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-1.5" />
-                              </div>
-                              <div className="relative">
-                                <select
-                                  value={editTaskStatus}
-                                  style={SELECT_APPEARANCE_STYLE}
-                                  onChange={(e) =>
-                                    setEditTaskStatus(
-                                      e.target.value as WorkspaceTask["status"],
-                                    )
-                                  }
-                                  className="h-7 appearance-none !appearance-none bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-lg ps-2 pe-6 text-[11px] font-sans font-semibold text-[var(--color-text-header)] outline-none cursor-pointer"
-                                >
-                                  <option value="todo">
-                                    {isRtl ? "قيد الانتظار" : "Todo"}
-                                  </option>
-                                  <option value="in_progress">
-                                    {isRtl ? "جاري العمل" : "In Progress"}
-                                  </option>
-                                  <option value="done">
-                                    {isRtl ? "مكتمل" : "Done"}
-                                  </option>
-                                </select>
-                                <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] pointer-events-none absolute top-1/2 -translate-y-1/2 end-1.5" />
-                              </div>
-                              <input
-                                type="date"
-                                dir="ltr"
-                                value={editTaskDueDate}
-                                onChange={(e) =>
-                                  setEditTaskDueDate(e.target.value)
-                                }
-                                className="h-7 bg-[var(--color-back-main)] border border-[var(--color-border)] rounded-lg px-2 text-[11px] font-mono text-[var(--color-text-header)] outline-none"
-                              />
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => setEditingTaskId(null)}
-                                className="h-7 px-2.5 rounded-lg bg-[var(--color-control)] text-[11px] font-sans text-[var(--color-text-muted)] cursor-pointer"
-                              >
-                                {isRtl ? "إلغاء" : "Cancel"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleSaveInlineTask(task.id)}
-                                className="h-7 px-2.5 rounded-lg bg-[var(--color-action)] text-white text-[11px] font-sans font-bold cursor-pointer flex items-center gap-1"
-                              >
-                                <Check className="w-3 h-3" />
-                                <span>{isRtl ? "حفظ" : "Save"}</span>
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div
-                        key={task.id}
-                        className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition ${
-                          isDone
-                            ? "bg-[var(--color-back-card)]/40 border-[var(--color-border-subtle)] text-[var(--color-text-dim)]"
-                            : isInProgress
-                              ? "bg-[var(--color-back-card)] border-[var(--color-action)]/50 text-[var(--color-text-header)]"
-                              : "bg-[var(--color-back-card)] border-[var(--color-border)] text-[var(--color-text-main)]"
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleToggleTaskStatus(task.id)}
-                          className="flex items-center gap-2.5 flex-1 cursor-pointer group min-w-0"
-                        >
-                          {isDone ? (
-                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                          ) : isInProgress ? (
-                            <Clock className="w-4 h-4 text-[var(--color-action)] shrink-0 animate-pulse" />
-                          ) : (
-                            <Circle className="w-4 h-4 text-[var(--color-text-dim)] group-hover:text-[var(--color-text-header)] shrink-0" />
-                          )}
-                          <span
-                            dir="auto"
-                            className={`flex-1 min-w-0 text-start text-xs break-words ${isDone ? "line-through opacity-75" : "font-medium"}`}
-                          >
-                            {task.text}
-                          </span>
-                        </button>
-
-                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                          {renderPriorityBadge(task.priority)}
-                          {dueMeta && (
-                            <span
-                              title={dueMeta.formattedDate}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-sans font-semibold whitespace-nowrap ${
-                                dueMeta.tone === "overdue"
-                                  ? "bg-rose-500/15 text-rose-400 border-rose-500/30"
-                                  : dueMeta.tone === "soon"
-                                    ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
-                                    : dueMeta.tone === "ok"
-                                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                                      : "bg-[var(--color-control)] text-[var(--color-text-dim)] border-[var(--color-border-subtle)]"
-                              }`}
-                            >
-                              <Calendar className="w-2.5 h-2.5 shrink-0" />
-                              <span>{dueMeta.label}</span>
-                            </span>
-                          )}
                           <button
                             type="button"
                             onClick={() => handleToggleTaskStatus(task.id)}
-                            className={`text-[10px] px-2 py-0.5 rounded font-sans font-semibold whitespace-nowrap cursor-pointer transition ${
-                              isDone
-                                ? "bg-emerald-500/10 text-emerald-400"
-                                : isInProgress
-                                  ? "bg-[var(--color-action)]/15 text-[var(--color-action)]"
-                                  : "bg-[var(--color-control)] text-[var(--color-text-dim)] hover:text-[var(--color-text-header)]"
-                            }`}
-                            title={isRtl ? "تغيير الحالة" : "Cycle status"}
+                            className="flex items-center gap-2.5 flex-1 cursor-pointer group min-w-0"
                           >
-                            {isRtl
-                              ? isDone
-                                ? "مكتمل"
-                                : isInProgress
-                                  ? "جاري العمل"
-                                  : "قيد الانتظار"
-                              : task.status === "in_progress"
-                                ? "In Progress"
-                                : task.status === "done"
-                                  ? "Done"
-                                  : "Todo"}
+                            {isDone ? (
+                              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                            ) : isInProgress ? (
+                              <Clock className="w-4 h-4 text-[var(--color-action)] shrink-0 animate-pulse" />
+                            ) : (
+                              <Circle className="w-4 h-4 text-[var(--color-text-dim)] group-hover:text-[var(--color-text-header)] shrink-0" />
+                            )}
+                            <span
+                              dir="auto"
+                              className={`flex-1 min-w-0 text-start text-xs break-words ${isDone ? "line-through opacity-75" : "font-medium"}`}
+                            >
+                              {task.text}
+                            </span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => startInlineEditTask(task)}
-                            aria-label={isRtl ? "تعديل المهمة" : "Edit task"}
-                            title={isRtl ? "تعديل المهمة" : "Edit task"}
-                            className="text-[var(--color-text-dim)] hover:text-[var(--color-action)] p-1 transition cursor-pointer"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteTask(task.id)}
-                            aria-label={isRtl ? "حذف المهمة" : "Delete task"}
-                            className="text-[var(--color-text-dim)] hover:text-rose-400 p-1 transition cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+
+                          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                            {renderPriorityBadge(task.priority)}
+                            {dueMeta && (
+                              <span
+                                title={dueMeta.formattedDate}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-sans font-semibold whitespace-nowrap ${
+                                  dueMeta.tone === "overdue"
+                                    ? "bg-rose-500/15 text-rose-400 border-rose-500/30"
+                                    : dueMeta.tone === "soon"
+                                      ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                                      : dueMeta.tone === "ok"
+                                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                                        : "bg-[var(--color-control)] text-[var(--color-text-dim)] border-[var(--color-border-subtle)]"
+                                }`}
+                              >
+                                <Calendar className="w-2.5 h-2.5 shrink-0" />
+                                <span>{dueMeta.label}</span>
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleTaskStatus(task.id)}
+                              className={`text-[10px] px-2 py-0.5 rounded font-sans font-semibold whitespace-nowrap cursor-pointer transition ${
+                                isDone
+                                  ? "bg-emerald-500/10 text-emerald-400"
+                                  : isInProgress
+                                    ? "bg-[var(--color-action)]/15 text-[var(--color-action)]"
+                                    : "bg-[var(--color-control)] text-[var(--color-text-dim)] hover:text-[var(--color-text-header)]"
+                              }`}
+                              title={isRtl ? "تغيير الحالة" : "Cycle status"}
+                            >
+                              {isRtl
+                                ? isDone
+                                  ? "مكتمل"
+                                  : isInProgress
+                                    ? "جاري العمل"
+                                    : "قيد الانتظار"
+                                : task.status === "in_progress"
+                                  ? "In Progress"
+                                  : task.status === "done"
+                                    ? "Done"
+                                    : "Todo"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => startInlineEditTask(task)}
+                              aria-label={isRtl ? "تعديل المهمة" : "Edit task"}
+                              title={isRtl ? "تعديل المهمة" : "Edit task"}
+                              className="text-[var(--color-text-dim)] hover:text-[var(--color-action)] p-1 transition cursor-pointer"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTask(task.id)}
+                              aria-label={isRtl ? "حذف المهمة" : "Delete task"}
+                              className="text-[var(--color-text-dim)] hover:text-rose-400 p-1 transition cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })
-                )}
+                      );
+                    })
+                  )}
+                </div>
               </div>
 
-              {/* Section 4: Notes & Guidelines/styleguide.html */}
-              <div className="pt-2 space-y-2.5">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
-                    <FileCode className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                    <span>
+              {/* Right (5 cols): Brand Guidelines & Art Direction Card */}
+              <div className="xl:col-span-5 p-5 rounded-2xl bg-[var(--color-back-card)] border border-[var(--color-border)] space-y-4 shadow-xs min-w-0 flex flex-col justify-between">
+                <div className="space-y-3.5">
+                  <div className="flex items-start sm:items-center justify-between gap-2 flex-wrap">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
+                      <FileCode className="w-4 h-4 text-[var(--color-action)] shrink-0" />
+                      <span>
+                        {isRtl ? (
+                          <>
+                            دليل الهوية والتوجيه الفني (
+                            <bdi dir="ltr">Guidelines/</bdi>)
+                          </>
+                        ) : (
+                          "Brand Guidelines & Notes (Guidelines/)"
+                        )}
+                      </span>
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenInExplorer("Guidelines")}
+                      className="text-[11px] text-[var(--color-action)] hover:underline font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                    >
                       {isRtl ? (
                         <>
-                          دليل الهوية والتوجيه الفني (
-                          <bdi dir="ltr">Guidelines/</bdi>)
+                          فتح <bdi dir="ltr">Guidelines/</bdi>
                         </>
                       ) : (
-                        "Brand Guidelines & Notes (Guidelines/)"
+                        "Open Guidelines/"
                       )}
-                    </span>
-                  </h3>
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => {
@@ -4463,7 +4890,7 @@ export default function WorkspacesView({
                         }
                       }}
                       disabled={savingNotes}
-                      className="h-7 px-2.5 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text-header)] flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
+                      className="h-8 px-3 rounded-lg bg-[var(--color-control)] hover:bg-[var(--color-control-hover)] border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text-header)] flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
                     >
                       <Pencil className="w-3 h-3 text-[var(--color-action)] shrink-0" />
                       <span>
@@ -4484,79 +4911,89 @@ export default function WorkspacesView({
                       href={styleGuideAssetUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="h-7 px-2.5 rounded-lg bg-[var(--color-action)]/15 hover:bg-[var(--color-action)]/25 border border-[var(--color-action)]/40 text-[11px] font-sans font-bold text-[var(--color-action)] inline-flex items-center gap-1.5 transition whitespace-nowrap"
+                      className="h-8 px-3 rounded-lg bg-[var(--color-action)]/15 hover:bg-[var(--color-action)]/25 border border-[var(--color-action)]/40 text-[11px] font-sans font-bold text-[var(--color-action)] inline-flex items-center gap-1.5 transition whitespace-nowrap"
                     >
-                      <ExternalLink className="w-3 h-3 shrink-0" />
+                      <ExternalLink className="w-3.5 h-3.5 shrink-0" />
                       <span>
                         {isRtl
                           ? "فتح دليل الهوية (StyleGuide.html)"
                           : "Open StyleGuide.html"}
                       </span>
                     </a>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenInExplorer("Guidelines")}
-                      className="text-[11px] text-[var(--color-action)] hover:underline font-semibold cursor-pointer whitespace-nowrap shrink-0"
-                    >
-                      {isRtl ? (
-                        <>
-                          فتح <bdi dir="ltr">Guidelines/</bdi>
-                        </>
-                      ) : (
-                        "Open Guidelines/"
-                      )}
-                    </button>
                   </div>
-                </div>
-                {isEditingNotes ? (
-                  <div className="space-y-2">
-                    <textarea
-                      rows={4}
+
+                  {isEditingNotes ? (
+                    <div className="space-y-2">
+                      <textarea
+                        rows={6}
+                        dir="auto"
+                        value={notesDraft}
+                        onChange={(e) => setNotesDraft(e.target.value)}
+                        placeholder={
+                          isRtl
+                            ? "اكتب إرشادات الهوية البصرية واستخدام الخطوط والألوان..."
+                            : "Write brand guidelines, typography rules, and delivery notes..."
+                        }
+                        className="w-full p-3.5 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-action)] text-xs text-[var(--color-text-header)] leading-relaxed outline-none resize-y"
+                      />
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsEditingNotes(false);
+                            setNotesDraft(activeWorkspace.notes || "");
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-[var(--color-control)] text-[11px] text-[var(--color-text-muted)] cursor-pointer"
+                        >
+                          {isRtl ? "إلغاء" : "Cancel"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveNotesInline}
+                          disabled={savingNotes}
+                          className="px-3.5 py-1.5 rounded-lg bg-[var(--color-action)] text-white text-[11px] font-bold cursor-pointer"
+                        >
+                          {isRtl ? "حفظ في دليل الهوية" : "Save Guidelines"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
                       dir="auto"
-                      value={notesDraft}
-                      onChange={(e) => setNotesDraft(e.target.value)}
-                      placeholder={
-                        isRtl
-                          ? "اكتب إرشادات الهوية البصرية واستخدام الخطوط والألوان..."
-                          : "Write brand guidelines, typography rules, and delivery notes..."
-                      }
-                      className="w-full p-3.5 rounded-xl bg-[var(--color-back-card)] border border-[var(--color-action)] text-xs text-[var(--color-text-header)] leading-relaxed outline-none resize-y"
-                    />
-                    <div className="flex justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsEditingNotes(false);
-                          setNotesDraft(activeWorkspace.notes || "");
-                        }}
-                        className="px-3 py-1 rounded-lg bg-[var(--color-control)] text-[11px] text-[var(--color-text-muted)] cursor-pointer"
-                      >
-                        {isRtl ? "إلغاء" : "Cancel"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleSaveNotesInline}
-                        disabled={savingNotes}
-                        className="px-3.5 py-1 rounded-lg bg-[var(--color-action)] text-white text-[11px] font-bold cursor-pointer"
-                      >
-                        {isRtl ? "حفظ في دليل الهوية" : "Save Guidelines"}
-                      </button>
+                      className="p-4 rounded-xl bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] text-xs text-[var(--color-text-main)] leading-relaxed break-words min-h-[120px] whitespace-pre-wrap"
+                    >
+                      {activeWorkspace.notes ||
+                        (isRtl
+                          ? "لا توجد ملاحظات مضافة بعد — اضغط تعديل الملاحظات لإضافة قواعد الهوية والتوجيه الفني."
+                          : "No guidelines notes yet — click Edit Notes to add brand rules and art direction.")}
+                    </div>
+                  )}
+                </div>
+
+                {/* Quick Brand Spec Summary Footer */}
+                <div className="pt-3 border-t border-[var(--color-border-subtle)] grid grid-cols-2 gap-2 text-[11px]">
+                  <div className="p-2.5 rounded-lg bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] min-w-0">
+                    <div className="text-[10px] text-[var(--color-text-dim)]">
+                      {isRtl ? "الخطوط المرتبطة" : "Linked Fonts"}
+                    </div>
+                    <div className="font-bold text-[var(--color-text-header)] truncate">
+                      {subfolders.fonts?.length || 0}{" "}
+                      {isRtl ? "خطوط" : "fonts"}
                     </div>
                   </div>
-                ) : (
-                  <div
-                    dir="auto"
-                    className="p-3.5 rounded-xl bg-[var(--color-back-card)] border border-[var(--color-border)] text-xs text-[var(--color-text-main)] leading-relaxed break-words"
-                  >
-                    {activeWorkspace.notes ||
-                      (isRtl
-                        ? "لا توجد ملاحظات مضافة بعد — اضغط تعديل الملاحظات للإضافة."
-                        : "No guidelines notes yet — click Edit Notes to add.")}
+                  <div className="p-2.5 rounded-lg bg-[var(--color-back-main)] border border-[var(--color-border-subtle)] min-w-0">
+                    <div className="text-[10px] text-[var(--color-text-dim)]">
+                      {isRtl ? "درجات الألوان" : "Palette Swatches"}
+                    </div>
+                    <div className="font-bold text-[var(--color-text-header)] truncate">
+                      {activeWorkspace.palette?.length || 0}{" "}
+                      {isRtl ? "ألوان" : "swatches"}
+                    </div>
                   </div>
-                )}
+                </div>
               </div>
-            </div>
-          </div>
+            </section>
+          )}
         </div>
       </main>
 

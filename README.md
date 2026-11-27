@@ -16,7 +16,7 @@
 
 <br>
 
-[![Release](https://img.shields.io/badge/Release-v1.1.3-F16B50?style=for-the-badge&logo=github&labelColor=130C16)](https://github.com/Ahmedfahmy8308/Fontivo/releases/latest)
+[![Release](https://img.shields.io/badge/Release-v1.1.4-F16B50?style=for-the-badge&logo=github&labelColor=130C16)](https://github.com/Ahmedfahmy8308/Fontivo/releases/latest)
 [![Rust](https://img.shields.io/badge/Rust-Native_Core-291C2E?style=for-the-badge&logo=rust&logoColor=white&labelColor=130C16)](src/)
 [![React 19](https://img.shields.io/badge/React-19_Tailwind-F16B50?style=for-the-badge&logo=react&logoColor=130C16&labelColor=130C16)](src/ui/)
 [![Platform](https://img.shields.io/badge/Platform-Windows_%7C_macOS_%7C_Linux-B7A1D9?style=for-the-badge&labelColor=130C16)](#quick-start-install-in-30-seconds)

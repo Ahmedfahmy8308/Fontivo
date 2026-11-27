@@ -233,10 +233,14 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
       }),
     );
 
-    // Responsive swatch grid classes
+    // Full-width auto-fill swatch grid (min 240px per card — never collapses on desktop 1920px+)
     expect(html).toContain(
-      "grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3 gap-3",
+      "grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5",
     );
+
+    // Full-library live font search & design file search inputs
+    expect(html).toContain("ابحث في كامل مكتبة الخطوط لإضافة خط إلى المشروع");
+    expect(html).toContain("بحث في ملفات التصميم...");
 
     // Preset Brand Folder Templates
     for (const tpl of BRAND_FOLDER_TEMPLATES) {
@@ -288,7 +292,7 @@ describe("WorkspacesView Component & Workspace Switching Tests", () => {
     expect(html).toContain('type="color"');
     expect(html).toContain("Cairo — Bold");
     expect(html).toContain("Tajawal — Regular");
-    expect(html).toContain("Cairo-Bold.ttf (Bold)");
+    expect(html).toContain("ابحث في كامل مكتبة الخطوط لإضافة خط إلى المشروع");
     expect(html).toContain("pe-9");
     expect(html).toContain('dir="auto"');
     expect(html).toContain('appearance:none');

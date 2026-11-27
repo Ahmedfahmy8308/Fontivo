@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.4] - 2026-11-27
+
+### Fixed & Improved
+- **Full-Width Studio Architecture for `WorkspacesView`**: Promoted the Project Color Palette (`Palettes/palette.ase`) to a dedicated full-width studio section using `grid-cols-[repeat(auto-fill,minmax(240px,1fr))]` so color swatch cards stay spacious (`>= 240px`) with zero overlap across `1280px`, `1440px`, `1920px`, and ultra-wide monitors; restructured Typography Pairing + Project Fonts (`xl:col-span-5` / `xl:col-span-7`), full-width Design Assets & Brand Folders (`Designs/` with 2-column asset grid and search filter), and balanced Delivery Tasks + Brand Guidelines (`Guidelines/`, `xl:col-span-7` / `xl:col-span-5`) into cohesive studio sections.
+- **Complete Project Fonts Visibility & Live Full-Library Font Search**: Fixed `resolvedProjectFonts` to merge disk `Fonts/`, `projectFonts`, `typography` slots (`headingFont`, `bodyFont`, `accentFont`, `codeFont`), and `customFonts` with deduplication, localized role badges, and 1-click RAM activation; replaced the 180-item `<select>` cap with a real-time debounced full-library font search (`GET /api/fonts?search=<query>&limit=60`) plus instant linked-font and design-file search filters.
+
+---
+
 ## [1.1.3] - 2026-11-26
 
 ### Added & Improved
